@@ -54,7 +54,6 @@ const StrategyShape = ({ position, label, isSelected, onClick }: { position: [nu
                     color="white"
                     anchorX="center"
                     anchorY="middle"
-                    font="/fonts/Inter-Bold.ttf" // Fallback will use default if not found
                 >
                     {label}
                 </Text>
