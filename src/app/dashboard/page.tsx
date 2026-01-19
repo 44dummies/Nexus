@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTradingStore } from '@/store/tradingStore';
-import { Activity, Wallet, TrendingUp, TrendingDown } from 'lucide-react';
+import { Activity, Wallet, LogOut } from 'lucide-react';
 import { BotEngine } from '@/lib/bot/engine';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,14 +11,15 @@ import { Label } from '@/components/ui/label';
 import { motion, AnimatePresence, LayoutGroup } from 'framer-motion';
 import dynamic from 'next/dynamic';
 
-// Dynamic imports for 3D components (SSR disabled)
+// Dynamic imports for 3D & dashboard components
 const StrategySelector = dynamic(() => import('@/components/dashboard/StrategySelector'), { ssr: false });
 const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisualizer'), { ssr: false });
+const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
+const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr: false });
 
 const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID;
 const DEFAULT_SYMBOL = 'R_100';
 
-// Trade History Item Type
 interface TradeItem {
     id: string;
     type: 'CALL' | 'PUT';
@@ -31,118 +32,167 @@ interface TradeItem {
 export default function DashboardPage() {
     const router = useRouter();
     const {
+        accounts,
+        activeAccountId,
         userEmail,
         balance,
         currency,
         isAuthorized,
+        lastTick,
+        prevTick,
+        setAccounts,
         setUser,
         setBalance,
+        addTick,
         botRunning,
         baseStake,
         stopLoss,
         takeProfit,
         setBotRunning,
         setBotConfig,
+        logout,
     } = useTradingStore();
+
     const [isConnected, setIsConnected] = useState(false);
     const wsRef = useRef<WebSocket | null>(null);
     const engineRef = useRef<BotEngine | null>(null);
-
-    // Tick data for MarketVisualizer
-    const [lastTick, setLastTick] = useState(0);
-    const [prevTick, setPrevTick] = useState(0);
-
-    // Mock trade history (in production, this would be from the store or WS)
     const [tradeHistory, setTradeHistory] = useState<TradeItem[]>([]);
 
-    useEffect(() => {
-        let isMounted = true;
+    // Connect WebSocket with given token
+    const connectWebSocket = useCallback((token: string) => {
+        // Close existing connection
+        if (wsRef.current) {
+            wsRef.current.close();
+        }
 
-        const initConnection = async () => {
+        const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+            console.log('Connected to Deriv WS');
+            ws.send(JSON.stringify({ authorize: token }));
+        };
+
+        ws.onclose = () => {
+            setIsConnected(false);
+        };
+
+        ws.onmessage = (msg) => {
+            const response = JSON.parse(msg.data);
+
+            if (response.error) {
+                console.error('WS Error:', response.error);
+                if (response.error.code === 'InvalidToken') {
+                    logout();
+                    router.push('/');
+                }
+                return;
+            }
+
+            if (response.msg_type === 'authorize') {
+                const { email, balance, currency } = response.authorize;
+                console.log('Authorized:', email);
+                setUser(email, Number(balance), currency, token);
+                setIsConnected(true);
+
+                // Subscribe to updates
+                ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+                ws.send(JSON.stringify({ ticks: DEFAULT_SYMBOL, subscribe: 1 }));
+
+                engineRef.current = new BotEngine({
+                    ws,
+                    symbol: DEFAULT_SYMBOL,
+                });
+            }
+
+            if (response.msg_type === 'balance') {
+                setBalance(Number(response.balance.balance));
+                useTradingStore.setState({ currency: response.balance.currency });
+            }
+
+            if (response.msg_type === 'tick') {
+                const quote = Number(response.tick?.quote);
+                addTick(quote);
+                engineRef.current?.handleTick(quote);
+            }
+        };
+    }, [router, setUser, setBalance, addTick, logout]);
+
+    // Initial connection from session
+    useEffect(() => {
+        const initSession = async () => {
             try {
                 const res = await fetch('/api/auth/session');
                 const data = await res.json();
 
-                if (!data.authenticated || !data.token) {
-                    console.log('Not authenticated, redirecting...');
+                if (!data.authenticated) {
                     router.push('/');
                     return;
                 }
 
-                const token = data.token;
-                const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
-                wsRef.current = ws;
+                // Build accounts array from session
+                const accountsFromSession = [];
+                if (data.token && data.account) {
+                    accountsFromSession.push({
+                        id: data.account,
+                        token: data.token,
+                        currency: data.currency || 'USD',
+                        type: data.account.startsWith('CR') ? 'real' : 'demo' as 'real' | 'demo',
+                    });
+                }
+                if (data.demoToken && data.demoAccount) {
+                    accountsFromSession.push({
+                        id: data.demoAccount,
+                        token: data.demoToken,
+                        currency: data.demoCurrency || 'USD',
+                        type: 'demo' as const,
+                    });
+                }
 
-                ws.onopen = () => {
-                    console.log('Connected to Deriv WS');
-                    ws.send(JSON.stringify({ authorize: token }));
-                };
-
-                ws.onclose = () => {
-                    if (isMounted) setIsConnected(false);
-                };
-
-                ws.onmessage = (msg) => {
-                    const response = JSON.parse(msg.data);
-
-                    if (response.error) {
-                        console.error('WS Error:', response.error);
-                        if (response.error.code === 'InvalidToken') router.push('/');
-                        return;
-                    }
-
-                    if (response.msg_type === 'authorize') {
-                        const { email, balance, currency } = response.authorize;
-                        console.log('Authorized:', email);
-                        setUser(email, Number(balance), currency, token);
-                        if (isMounted) setIsConnected(true);
-
-                        ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
-                        ws.send(JSON.stringify({ ticks: DEFAULT_SYMBOL, subscribe: 1 }));
-
-                        engineRef.current = new BotEngine({
-                            ws,
-                            symbol: DEFAULT_SYMBOL,
-                        });
-                    }
-
-                    if (response.msg_type === 'balance') {
-                        const { balance, currency } = response.balance;
-                        setBalance(Number(balance));
-                        useTradingStore.setState({ currency });
-                    }
-
-                    if (response.msg_type === 'tick') {
-                        const quote = Number(response.tick?.quote);
-                        setPrevTick(lastTick);
-                        setLastTick(quote);
-                        engineRef.current?.handleTick(quote);
-                    }
-                };
+                if (accountsFromSession.length > 0) {
+                    setAccounts(accountsFromSession, data.email || '');
+                    connectWebSocket(accountsFromSession[0].token);
+                } else if (data.token) {
+                    // Fallback: single token
+                    connectWebSocket(data.token);
+                } else {
+                    router.push('/');
+                }
 
             } catch (err) {
-                console.error('Failed to initialize:', err);
+                console.error('Session init failed:', err);
                 router.push('/');
             }
         };
 
-        initConnection();
+        initSession();
 
         return () => {
-            isMounted = false;
             if (wsRef.current) {
                 wsRef.current.close();
                 wsRef.current = null;
             }
             engineRef.current = null;
         };
-    }, [router, setBalance, setUser, lastTick]);
+    }, [router, setAccounts, connectWebSocket]);
+
+    // Re-connect when account switches
+    useEffect(() => {
+        const activeAccount = accounts.find(a => a.id === activeAccountId);
+        if (activeAccount && wsRef.current) {
+            connectWebSocket(activeAccount.token);
+        }
+    }, [activeAccountId, accounts, connectWebSocket]);
+
+    const handleLogout = () => {
+        logout();
+        router.push('/');
+    };
 
     const tickDirection = lastTick > prevTick ? 'up' : lastTick < prevTick ? 'down' : 'neutral';
 
     return (
         <div className="min-h-screen bg-[#050508] text-white relative overflow-hidden">
-            {/* Background Particle Visualizer */}
             <MarketVisualizer lastTick={lastTick} prevTick={prevTick} />
 
             <div className="relative z-10 p-8">
@@ -157,11 +207,8 @@ export default function DashboardPage() {
                     </div>
 
                     {isAuthorized ? (
-                        <div className="flex gap-8 items-center">
-                            <div className="text-right">
-                                <p className="text-xs text-gray-500 uppercase tracking-widest">Account</p>
-                                <p className="font-mono font-medium text-sm">{userEmail || 'Loading...'}</p>
-                            </div>
+                        <div className="flex gap-6 items-center">
+                            <AccountSwitcher />
                             <div className="text-right">
                                 <p className="text-xs text-gray-500 uppercase tracking-widest">Balance</p>
                                 <div className="flex items-center justify-end gap-2 text-[#00f5ff] font-mono text-2xl">
@@ -169,10 +216,14 @@ export default function DashboardPage() {
                                     <span>{currency} {balance?.toFixed(2) || '0.00'}</span>
                                 </div>
                             </div>
-                            <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${tickDirection === 'up' ? 'bg-emerald-500/20 text-emerald-400' : tickDirection === 'down' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>
-                                {tickDirection === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                                <span className="font-mono text-sm">{lastTick.toFixed(2)}</span>
-                            </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={handleLogout}
+                                className="text-gray-400 hover:text-red-400"
+                            >
+                                <LogOut className="w-5 h-5" />
+                            </Button>
                         </div>
                     ) : (
                         <div className="text-amber-500 font-mono animate-pulse">Connecting...</div>
@@ -186,10 +237,9 @@ export default function DashboardPage() {
 
                 {/* Main Grid */}
                 <main className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Chart Placeholder */}
-                    <div className="lg:col-span-2 h-[400px] glass-panel rounded-2xl p-6 flex flex-col items-center justify-center text-gray-600">
-                        <Activity className="w-16 h-16 mb-4 opacity-30" />
-                        <span className="font-mono text-sm uppercase tracking-widest">Live Chart Coming Soon</span>
+                    {/* Live Feed - replaces chart placeholder */}
+                    <div className="lg:col-span-2">
+                        <LiveFeed />
                     </div>
 
                     {/* Right Column */}

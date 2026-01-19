@@ -69,6 +69,20 @@ export async function GET(request: NextRequest) {
                 path: '/',
                 sameSite: 'lax',
             });
+            cookieStore.set('deriv_demo_account', acct2 || '', {
+                httpOnly: false,
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 60 * 60 * 24 * 7,
+                path: '/',
+                sameSite: 'lax',
+            });
+            cookieStore.set('deriv_demo_currency', cur2 || 'USD', {
+                httpOnly: false,
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 60 * 60 * 24 * 7,
+                path: '/',
+                sameSite: 'lax',
+            });
         }
 
         // Redirect to Dashboard
