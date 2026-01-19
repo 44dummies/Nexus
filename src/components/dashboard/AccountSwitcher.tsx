@@ -14,7 +14,7 @@ export default function AccountSwitcher() {
     if (accounts.length <= 1) return null;
 
     return (
-        <div className="relative">
+        <div className="relative z-[100]">
             <button
                 onClick={() => setIsOpen(!isOpen)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
@@ -47,8 +47,8 @@ export default function AccountSwitcher() {
                                         setIsOpen(false);
                                     }}
                                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${account.id === activeAccountId
-                                            ? 'bg-[#00f5ff]/10 text-[#00f5ff]'
-                                            : 'hover:bg-white/5 text-white'
+                                        ? 'bg-[#00f5ff]/10 text-[#00f5ff]'
+                                        : 'hover:bg-white/5 text-white'
                                         }`}
                                 >
                                     <Circle
@@ -59,8 +59,8 @@ export default function AccountSwitcher() {
                                         <div className="text-xs text-gray-500">{account.currency}</div>
                                     </div>
                                     <span className={`text-xs uppercase px-2 py-0.5 rounded ${account.type === 'real'
-                                            ? 'bg-emerald-500/20 text-emerald-400'
-                                            : 'bg-amber-500/20 text-amber-400'
+                                        ? 'bg-emerald-500/20 text-emerald-400'
+                                        : 'bg-amber-500/20 text-amber-400'
                                         }`}>
                                         {account.type}
                                     </span>

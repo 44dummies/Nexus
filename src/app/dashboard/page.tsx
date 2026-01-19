@@ -16,6 +16,8 @@ const StrategySelector = dynamic(() => import('@/components/dashboard/StrategySe
 const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisualizer'), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
 const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr: false });
+const VoiceButton = dynamic(() => import('@/components/dashboard/VoiceButton'), { ssr: false });
+const PerformanceHeatmap = dynamic(() => import('@/components/analytics/PerformanceHeatmap'), { ssr: false });
 
 const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID;
 const DEFAULT_SYMBOL = 'R_100';
@@ -208,6 +210,7 @@ export default function DashboardPage() {
 
                     {isAuthorized ? (
                         <div className="flex gap-6 items-center">
+                            <VoiceButton />
                             <AccountSwitcher />
                             <div className="text-right">
                                 <p className="text-xs text-gray-500 uppercase tracking-widest">Balance</p>
@@ -233,6 +236,11 @@ export default function DashboardPage() {
                 {/* Strategy Selector */}
                 <section className="mb-8">
                     <StrategySelector />
+                </section>
+
+                {/* Performance Analytics */}
+                <section className="mb-8">
+                    <PerformanceHeatmap />
                 </section>
 
                 {/* Main Grid */}
