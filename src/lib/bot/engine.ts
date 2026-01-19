@@ -26,6 +26,7 @@ export class BotEngine {
     private durationUnit?: 't' | 'm' | 's' | 'h' | 'd';
     private ws: WebSocket;
     private symbol: string;
+    private lastLoggedRsi: number | null = null;
 
     constructor(options: BotEngineOptions) {
         this.ws = options.ws;
@@ -38,6 +39,10 @@ export class BotEngine {
         this.durationUnit = options.durationUnit;
     }
 
+    private addLog(type: 'info' | 'signal' | 'trade' | 'error' | 'result', message: string, data?: Record<string, unknown>) {
+        useTradingStore.getState().addLog(type, message, data);
+    }
+
     handleTick(price: number) {
         if (!Number.isFinite(price)) return;
 
@@ -48,11 +53,15 @@ export class BotEngine {
 
         const rsi = calculateRSI(this.tickBuffer, this.rsiPeriod);
         if (rsi === null) {
-            console.log(`RSI(${this.rsiPeriod}): calculating...`);
             return;
         }
 
-        console.log(`RSI(${this.rsiPeriod}): ${rsi.toFixed(2)}`);
+        // Log RSI every 10 ticks to avoid spam
+        const roundedRsi = Math.round(rsi);
+        if (this.lastLoggedRsi !== roundedRsi && this.tickBuffer.length % 10 === 0) {
+            this.addLog('info', `RSI(${this.rsiPeriod}): ${rsi.toFixed(2)}`, { rsi });
+            this.lastLoggedRsi = roundedRsi;
+        }
 
         let signal: TradeSignal | null = null;
         if (rsi < 30) signal = 'CALL';
@@ -60,17 +69,16 @@ export class BotEngine {
 
         if (!signal) return;
 
-        console.log(`Signal: ${signal}`);
-
         const store = useTradingStore.getState();
 
         if (!store.botRunning) {
-            console.log('Bot paused; signal ignored.');
             return;
         }
 
+        this.addLog('signal', `Signal: ${signal} (RSI: ${rsi.toFixed(2)})`, { signal, rsi });
+
         if (this.inFlight) {
-            console.log('Trade in flight; skipping signal.');
+            this.addLog('info', 'Trade in flight, skipping signal');
             return;
         }
 
@@ -86,28 +94,30 @@ export class BotEngine {
         });
 
         if (riskStatus === 'HALT') {
-            console.warn('Risk limit hit. Halting bot.');
+            this.addLog('error', 'Risk limit hit - BOT HALTED');
             store.setBotRunning(false);
             return;
         }
 
         if (riskStatus === 'COOLDOWN') {
-            console.log('Cooldown active. Waiting...');
+            const timeLeft = Math.ceil((this.cooldownMs - (Date.now() - (store.lastTradeTime || 0))) / 1000);
+            this.addLog('info', `Cooldown active (${timeLeft}s remaining)`);
             return;
         }
 
         let stake = store.baseStake;
         if (riskStatus === 'REDUCE_STAKE') {
             stake = maxStake;
-            console.warn(`Reducing stake to ${maxStake}.`);
+            this.addLog('info', `Reducing stake to $${maxStake}`);
         }
 
         if (this.ws.readyState !== WebSocket.OPEN) {
-            console.warn('WebSocket not open. Trade skipped.');
+            this.addLog('error', 'WebSocket not open - trade skipped');
             return;
         }
 
         this.inFlight = true;
+        this.addLog('trade', `Executing ${signal} - $${stake} stake`, { signal, stake });
 
         executeTrade(signal, {
             ws: this.ws,
@@ -116,8 +126,11 @@ export class BotEngine {
             duration: this.duration,
             durationUnit: this.durationUnit,
         })
+            .then((result) => {
+                this.addLog('trade', `Trade placed: Contract #${result.contractId}`, { contractId: result.contractId });
+            })
             .catch((error) => {
-                console.error('Trade execution failed:', error);
+                this.addLog('error', `Trade failed: ${error.message}`);
             })
             .finally(() => {
                 this.inFlight = false;

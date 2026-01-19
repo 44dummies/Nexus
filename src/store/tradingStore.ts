@@ -8,6 +8,14 @@ interface Account {
     type: 'real' | 'demo';
 }
 
+export interface BotLogEntry {
+    id: string;
+    timestamp: number;
+    type: 'info' | 'signal' | 'trade' | 'error' | 'result';
+    message: string;
+    data?: Record<string, unknown>;
+}
+
 interface TradingState {
     // Account Management
     accounts: Account[];
@@ -34,6 +42,9 @@ interface TradingState {
     currentContractId: number | null;
     potentialProfit: number | null;
 
+    // Logging
+    botLogs: BotLogEntry[];
+
     // Actions
     setAccounts: (accounts: Account[], email: string) => void;
     switchAccount: (accountId: string) => void;
@@ -46,10 +57,13 @@ interface TradingState {
     setTradeInfo: (contractId: number | null, potentialProfit: number | null) => void;
     recordTradeResult: (profit: number) => void;
     resetDailyStats: () => void;
+    addLog: (type: BotLogEntry['type'], message: string, data?: Record<string, unknown>) => void;
+    clearLogs: () => void;
     logout: () => void;
 }
 
 const MAX_TICK_HISTORY = 100;
+const MAX_LOGS = 50;
 
 export const useTradingStore = create<TradingState>()(
     persist(
@@ -73,6 +87,7 @@ export const useTradingStore = create<TradingState>()(
             lastTradeTime: null,
             currentContractId: null,
             potentialProfit: null,
+            botLogs: [],
 
             setAccounts: (accounts, email) => {
                 const firstAccount = accounts[0];
@@ -93,7 +108,7 @@ export const useTradingStore = create<TradingState>()(
                         activeAccountId: accountId,
                         accessToken: account.token,
                         currency: account.currency,
-                        balance: null, // Will be updated after re-auth
+                        balance: null,
                     });
                 }
             },
@@ -113,7 +128,10 @@ export const useTradingStore = create<TradingState>()(
                 });
             },
 
-            setBotRunning: (running) => set({ botRunning: running }),
+            setBotRunning: (running) => {
+                set({ botRunning: running });
+                get().addLog('info', running ? 'Bot STARTED' : 'Bot STOPPED');
+            },
 
             setBotConfig: (config) =>
                 set((state) => ({
@@ -127,14 +145,31 @@ export const useTradingStore = create<TradingState>()(
             setTradeInfo: (contractId, potentialProfit) =>
                 set({ currentContractId: contractId, potentialProfit }),
 
-            recordTradeResult: (profit) =>
+            recordTradeResult: (profit) => {
                 set((state) => ({
                     totalLossToday: profit < 0 ? state.totalLossToday + Math.abs(profit) : state.totalLossToday,
                     totalProfitToday: profit > 0 ? state.totalProfitToday + profit : state.totalProfitToday,
-                })),
+                }));
+                get().addLog('result', profit >= 0 ? `WIN: +$${profit.toFixed(2)}` : `LOSS: -$${Math.abs(profit).toFixed(2)}`, { profit });
+            },
 
             resetDailyStats: () =>
                 set({ totalLossToday: 0, totalProfitToday: 0 }),
+
+            addLog: (type, message, data) => {
+                const log: BotLogEntry = {
+                    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                    timestamp: Date.now(),
+                    type,
+                    message,
+                    data,
+                };
+                set((state) => ({
+                    botLogs: [log, ...state.botLogs].slice(0, MAX_LOGS),
+                }));
+            },
+
+            clearLogs: () => set({ botLogs: [] }),
 
             logout: () => set({
                 accounts: [],
@@ -156,6 +191,7 @@ export const useTradingStore = create<TradingState>()(
                 lastTradeTime: null,
                 currentContractId: null,
                 potentialProfit: null,
+                botLogs: [],
             }),
         }),
         {
