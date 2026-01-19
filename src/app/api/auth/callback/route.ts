@@ -3,59 +3,73 @@ import { cookies } from 'next/headers';
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
-    const code = searchParams.get('code');
-    const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID;
 
-    // NOTE: Deriv usually requires 'response_type=token' for implicit flow, which puts tokens in the URI fragment.
-    // However, since we requested 'response_type=code', we get a code that needs to be exchanged.
-    // We will attempt the exchange here. If this is a public client, we might not need a secret.
+    // Deriv uses IMPLICIT flow - tokens come directly in URL params
+    // Format: ?acct1=CR123&token1=xxx&cur1=USD&acct2=VRTC456&token2=yyy&cur2=USD
 
-    if (!code) {
-        return NextResponse.json({ error: 'No authorization code provided' }, { status: 400 });
+    const token1 = searchParams.get('token1');
+    const acct1 = searchParams.get('acct1');
+    const cur1 = searchParams.get('cur1');
+
+    // Optional: Second account (usually demo)
+    const token2 = searchParams.get('token2');
+    const acct2 = searchParams.get('acct2');
+    const cur2 = searchParams.get('cur2');
+
+    if (!token1) {
+        // Fallback: Check for authorization code (Code flow)
+        const code = searchParams.get('code');
+        if (!code) {
+            return NextResponse.json({
+                error: 'No token or authorization code provided',
+                received: Object.fromEntries(searchParams.entries())
+            }, { status: 400 });
+        }
+
+        // Handle code exchange if needed (currently Deriv doesn't use this)
+        return NextResponse.json({ error: 'Code flow not implemented' }, { status: 501 });
     }
 
     try {
-        // Attempt to exchange code for token
-        // The endpoint provided in the prompt is https://www.deriv.com/oauth2/token
-        // In many OAuth setups this would be a POST.
-
-        // NOTE: This logic assumes Deriv supports Code Grant for this App ID without a client secret,
-        // or that we can exchange it via public endpoint.
-        const tokenUrl = 'https://oauth.deriv.com/oauth2/token'; // Using standard API host
-
-        const response = await fetch(tokenUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams({
-                app_id: appId || '',
-                code: code,
-                grant_type: 'authorization_code',
-                // redirect_uri: process.env.NEXT_PUBLIC_REDIRECT_URI || '' // Sometimes required
-            }),
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            console.error('Deriv Token Exchange Error:', data);
-            // Fallback: If code flow fails (likely due to missing secret), we might need to tell user to switch to Implicit.
-            // But per prompt instructions, we persist with this pathway.
-            return NextResponse.json({ error: 'Failed to exchange token', details: data }, { status: 500 });
-        }
-
-        // data should contain access_token, refresh_token, etc.
-        const { access_token, refresh_token } = data;
-
-        // Store in HttpOnly cookie
+        // Store the first token (real account) in HttpOnly cookie
         const cookieStore = await cookies();
-        cookieStore.set('deriv_token', access_token, {
+
+        // Store primary token
+        cookieStore.set('deriv_token', token1, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             maxAge: 60 * 60 * 24 * 7, // 1 week
             path: '/',
+            sameSite: 'lax',
         });
+
+        // Store account info for reference
+        cookieStore.set('deriv_account', acct1 || '', {
+            httpOnly: false, // Allow client access
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 60 * 60 * 24 * 7,
+            path: '/',
+            sameSite: 'lax',
+        });
+
+        cookieStore.set('deriv_currency', cur1 || 'USD', {
+            httpOnly: false,
+            secure: process.env.NODE_ENV === 'production',
+            maxAge: 60 * 60 * 24 * 7,
+            path: '/',
+            sameSite: 'lax',
+        });
+
+        // If user has demo account, store that too
+        if (token2) {
+            cookieStore.set('deriv_demo_token', token2, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                maxAge: 60 * 60 * 24 * 7,
+                path: '/',
+                sameSite: 'lax',
+            });
+        }
 
         // Redirect to Dashboard
         return NextResponse.redirect(new URL('/dashboard', request.url));
