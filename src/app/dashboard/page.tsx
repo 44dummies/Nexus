@@ -199,7 +199,7 @@ export default function DashboardPage() {
 
             <div className="relative z-10 p-8">
                 {/* Header */}
-                <header className="flex justify-between items-center mb-8 glass-panel rounded-2xl p-6">
+                <header className="flex justify-between items-center mb-8 glass-panel rounded-2xl p-6 relative z-[200]">
                     <div>
                         <h1 className="text-3xl font-bold flex items-center gap-3">
                             <Activity className="text-[#00f5ff]" />
