@@ -21,16 +21,15 @@ export function GlassCard({ children, className }: GlassCardProps) {
             className={cn(
                 // Base glassmorphism - Frosted Glass
                 'relative overflow-hidden rounded-3xl',
-                'bg-white/[0.03] backdrop-blur-2xl', // More subtle background
-                'border border-white/[0.08]', // Thinner, subtler border
-                // Premium shadow - soft and deep
-                'shadow-[0_8px_32px_0_rgba(0,0,0,0.36)]',
+                'bg-card/90 backdrop-blur-md',
+                'border border-border/70',
+                'shadow-soft-lg',
                 'transition-all duration-500',
                 className
             )}
         >
             {/* Subtle top highlight */}
-            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent opacity-50" />
+            <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-border to-transparent opacity-60" />
 
             {/* Content */}
             <div className="relative z-10">

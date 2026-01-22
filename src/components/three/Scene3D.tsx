@@ -1,16 +1,34 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { PerspectiveCamera } from '@react-three/drei';
 import ParticleWave from './ParticleWave';
 
 export function Scene3D() {
+    const [enabled, setEnabled] = useState(true);
+    const [dpr, setDpr] = useState<[number, number]>([1, 2]);
+
+    useEffect(() => {
+        const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const isSmall = window.innerWidth < 900;
+        if (media.matches || isSmall) {
+            setEnabled(false);
+        }
+        if (window.devicePixelRatio && window.devicePixelRatio > 2) {
+            setDpr([1, 1.5]);
+        }
+    }, []);
+
+    if (!enabled) {
+        return <div className="fixed inset-0 -z-10 bg-gradient-to-br from-background to-muted" />;
+    }
+
     return (
         <div className="fixed inset-0 -z-10 bg-[#0a0a0f]">
             <Canvas
                 className="w-full h-full"
-                dpr={[1, 2]}
+                dpr={dpr}
                 gl={{
                     antialias: true,
                     alpha: true,
@@ -29,8 +47,8 @@ export function Scene3D() {
 
                     {/* Lighting */}
                     <ambientLight intensity={0.5} />
-                    <pointLight position={[10, 10, 10]} intensity={1} color="#00f5ff" />
-                    <pointLight position={[-10, -10, -10]} intensity={0.5} color="#a855f7" />
+                    <pointLight position={[10, 10, 10]} intensity={1} color="#2f81f7" />
+                    <pointLight position={[-10, -10, -10]} intensity={0.5} color="#0ea5e9" />
 
                     {/* Full Screen Particle Wave */}
                     <ParticleWave />

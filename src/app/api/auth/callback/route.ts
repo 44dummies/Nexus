@@ -1,8 +1,82 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SESSION_ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_KEY;
+
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+    })
+    : null;
+
+const buildCookieOptions = () => ({
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 60 * 60, // 1 hour
+    path: '/',
+    sameSite: 'strict' as const,
+});
+
+const buildStateClearOptions = () => ({
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 0,
+    path: '/',
+    sameSite: 'strict' as const,
+});
+
+const encryptToken = (token: string) => {
+    if (!SESSION_ENCRYPTION_KEY) return null;
+    const key = Buffer.from(SESSION_ENCRYPTION_KEY, 'base64');
+    if (key.length !== 32) return null;
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return {
+        iv: iv.toString('base64'),
+        tag: tag.toString('base64'),
+        ciphertext: ciphertext.toString('base64'),
+    };
+};
+
+const persistSession = async (payload: {
+    accountId: string;
+    accountType: 'real' | 'demo';
+    token: string;
+    currency?: string | null;
+}) => {
+    if (!supabaseAdmin) return;
+    const encrypted = encryptToken(payload.token);
+    if (!encrypted) return;
+
+    await supabaseAdmin.from('sessions').upsert({
+        account_id: payload.accountId,
+        account_type: payload.accountType,
+        currency: payload.currency ?? null,
+        token_encrypted: encrypted,
+        last_seen: new Date().toISOString(),
+    }, { onConflict: 'account_id' });
+};
+
+const persistAccount = async (payload: { accountId: string; accountType: 'real' | 'demo'; currency?: string | null }) => {
+    if (!supabaseAdmin) return;
+    await supabaseAdmin.from('accounts').upsert({
+        deriv_account_id: payload.accountId,
+        account_type: payload.accountType,
+        currency: payload.currency ?? null,
+    }, { onConflict: 'deriv_account_id' });
+};
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
+    const cookieStore = await cookies();
+    const stateParam = searchParams.get('state');
+    const stateCookie = cookieStore.get('deriv_oauth_state')?.value;
 
     // Deriv uses IMPLICIT flow - tokens come directly in URL params
     // Format: ?acct1=CR123&token1=xxx&cur1=USD&acct2=VRTC456&token2=yyy&cur2=USD
@@ -15,6 +89,15 @@ export async function GET(request: NextRequest) {
     const token2 = searchParams.get('token2');
     const acct2 = searchParams.get('acct2');
     const cur2 = searchParams.get('cur2');
+
+    if ((stateParam || stateCookie) && stateParam !== stateCookie) {
+        cookieStore.set('deriv_oauth_state', '', buildStateClearOptions());
+        return NextResponse.json({ error: 'Invalid OAuth state' }, { status: 400 });
+    }
+
+    if (stateCookie) {
+        cookieStore.set('deriv_oauth_state', '', buildStateClearOptions());
+    }
 
     if (!token1) {
         // Fallback: Check for authorization code (Code flow)
@@ -32,57 +115,46 @@ export async function GET(request: NextRequest) {
 
     try {
         // Store the first token (real account) in HttpOnly cookie
-        const cookieStore = await cookies();
-
         // Store primary token
-        cookieStore.set('deriv_token', token1, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7, // 1 week
-            path: '/',
-            sameSite: 'lax',
-        });
+        // Store primary token
+        const cookieOptions = buildCookieOptions();
+
+        cookieStore.set('deriv_token', token1, cookieOptions);
 
         // Store account info for reference
-        cookieStore.set('deriv_account', acct1 || '', {
-            httpOnly: false, // Allow client access
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7,
-            path: '/',
-            sameSite: 'lax',
-        });
+        cookieStore.set('deriv_account', acct1 || '', cookieOptions);
 
-        cookieStore.set('deriv_currency', cur1 || 'USD', {
-            httpOnly: false,
-            secure: process.env.NODE_ENV === 'production',
-            maxAge: 60 * 60 * 24 * 7,
-            path: '/',
-            sameSite: 'lax',
-        });
+        cookieStore.set('deriv_currency', cur1 || 'USD', cookieOptions);
+
+        const demoAvailable = Boolean(token2 && acct2);
+        const activeType = demoAvailable ? 'demo' : 'real';
+        const activeAccount = demoAvailable ? acct2 : acct1;
+        const activeCurrency = demoAvailable ? cur2 : cur1;
 
         // If user has demo account, store that too
         if (token2) {
-            cookieStore.set('deriv_demo_token', token2, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 60 * 60 * 24 * 7,
-                path: '/',
-                sameSite: 'lax',
-            });
-            cookieStore.set('deriv_demo_account', acct2 || '', {
-                httpOnly: false,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 60 * 60 * 24 * 7,
-                path: '/',
-                sameSite: 'lax',
-            });
-            cookieStore.set('deriv_demo_currency', cur2 || 'USD', {
-                httpOnly: false,
-                secure: process.env.NODE_ENV === 'production',
-                maxAge: 60 * 60 * 24 * 7,
-                path: '/',
-                sameSite: 'lax',
-            });
+            cookieStore.set('deriv_demo_token', token2, cookieOptions);
+            cookieStore.set('deriv_demo_account', acct2 || '', cookieOptions);
+            cookieStore.set('deriv_demo_currency', cur2 || 'USD', cookieOptions);
+        }
+
+        // Active account defaults to demo when available
+        cookieStore.set('deriv_active_type', activeType, cookieOptions);
+        cookieStore.set('deriv_active_account', activeAccount || '', cookieOptions);
+        cookieStore.set('deriv_active_currency', activeCurrency || 'USD', cookieOptions);
+
+        const sessionWrites: Promise<unknown>[] = [];
+        if (acct1 && token1) {
+            sessionWrites.push(persistSession({ accountId: acct1, accountType: 'real', token: token1, currency: cur1 }));
+            sessionWrites.push(persistAccount({ accountId: acct1, accountType: 'real', currency: cur1 }));
+        }
+        if (acct2 && token2) {
+            sessionWrites.push(persistSession({ accountId: acct2, accountType: 'demo', token: token2, currency: cur2 }));
+            sessionWrites.push(persistAccount({ accountId: acct2, accountType: 'demo', currency: cur2 }));
+        }
+
+        if (sessionWrites.length > 0) {
+            await Promise.allSettled(sessionWrites);
         }
 
         // Redirect to Dashboard

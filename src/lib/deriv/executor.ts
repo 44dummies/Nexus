@@ -1,4 +1,5 @@
 import { useTradingStore } from '@/store/tradingStore';
+import { showTradeToast } from '@/lib/toast';
 import type { TradeSignal } from '@/lib/bot/types';
 
 type DurationUnit = 't' | 'm' | 's' | 'h' | 'd';
@@ -136,6 +137,13 @@ function subscribeToContract(ws: WebSocket, contractId: number) {
 
         const profit = Number(data.proposal_open_contract?.profit ?? 0);
         useTradingStore.getState().recordTradeResult(profit);
+
+        // Show toast for trade result
+        if (profit >= 0) {
+            showTradeToast.win(profit);
+        } else {
+            showTradeToast.loss(profit);
+        }
 
         if (subscriptionId) {
             ws.send(JSON.stringify({ forget: subscriptionId }));

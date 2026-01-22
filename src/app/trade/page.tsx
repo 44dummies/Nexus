@@ -1,0 +1,56 @@
+'use client';
+
+import dynamic from 'next/dynamic';
+import { ErrorBoundary } from 'react-error-boundary';
+import { ErrorFallback } from '@/components/ui/ErrorFallback';
+import { useTradingStore } from '@/store/tradingStore';
+
+// Dynamic imports for heavy trading components
+const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisualizer'), { ssr: false });
+const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr: false });
+const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHeader').then(mod => mod.DashboardHeader), { ssr: false });
+
+function TradeContent() {
+    const {
+        lastTick,
+        prevTick,
+        isAuthorized,
+        currency,
+        balance,
+        isConnected,
+    } = useTradingStore();
+
+    return (
+        <div className="relative min-h-screen">
+            <MarketVisualizer lastTick={lastTick} prevTick={prevTick} />
+
+            <div className="relative z-10 p-4 lg:p-6">
+                <DashboardHeader
+                    isAuthorized={isAuthorized}
+                    isConnected={isConnected}
+                    currency={currency}
+                    balance={balance}
+                />
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+                    <div className="lg:col-span-2">
+                        <div className="glass-panel rounded-xl p-6 min-h-[400px] flex items-center justify-center">
+                            <p className="text-muted-foreground">Advanced Charting (Coming Soon)</p>
+                        </div>
+                    </div>
+                    <div>
+                        <LiveFeed />
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+export default function TradePage() {
+    return (
+        <ErrorBoundary FallbackComponent={ErrorFallback}>
+            <TradeContent />
+        </ErrorBoundary>
+    );
+}

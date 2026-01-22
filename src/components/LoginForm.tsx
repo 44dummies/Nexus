@@ -28,9 +28,16 @@ const itemVariants: Variants = {
 };
 
 export function LoginForm() {
-    const handleDerivConnect = () => {
-        // TODO: Implement Deriv OAuth flow
-        console.log('Connecting to Deriv...');
+    const handleDerivConnect = async () => {
+        try {
+            const res = await fetch('/api/auth/start', { method: 'POST' });
+            const data = await res.json();
+            if (data?.url) {
+                window.location.href = data.url;
+            }
+        } catch (err) {
+            console.error('Failed to start OAuth flow', err);
+        }
     };
 
     return (
@@ -44,17 +51,17 @@ export function LoginForm() {
                 {/* Minimal Brand */}
                 <motion.div variants={itemVariants} className="text-center space-y-6">
                     <motion.div
-                        className="inline-flex p-4 rounded-full bg-white/5 backdrop-blur-md border border-white/10 mb-2"
+                        className="inline-flex p-4 rounded-full bg-card/80 backdrop-blur-md border border-border mb-2"
                         whileHover={{ scale: 1.05 }}
                     >
-                        <Zap className="w-8 h-8 text-white" strokeWidth={1.5} />
+                        <Zap className="w-8 h-8 text-accent" strokeWidth={1.5} />
                     </motion.div>
 
                     <div className="space-y-2">
-                        <h1 className="text-4xl font-semibold tracking-tighter text-white">
+                        <h1 className="text-4xl font-semibold tracking-tighter text-foreground">
                             DerivNexus
                         </h1>
-                        <p className="text-white/40 text-sm font-medium tracking-widest uppercase">
+                        <p className="text-muted-foreground text-sm font-medium tracking-widest uppercase">
                             Algorithmic Trading Terminal
                         </p>
                     </div>
@@ -64,14 +71,14 @@ export function LoginForm() {
                 <motion.div variants={itemVariants} className="w-full max-w-xs space-y-6">
                     <Button
                         onClick={handleDerivConnect}
-                        className="w-full h-14 rounded-full bg-white text-black hover:bg-neutral-200 font-medium text-base tracking-wide transition-all duration-300"
+                        className="w-full h-14 rounded-full bg-accent text-accent-foreground hover:bg-accent/90 font-medium text-base tracking-wide transition-all duration-300"
                     >
                         <span>Continue with Deriv</span>
                         <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
 
                     {/* Trust Indicators */}
-                    <div className="flex items-center justify-center gap-6 opacity-40">
+                    <div className="flex items-center justify-center gap-6 text-muted-foreground">
                         <div className="flex items-center gap-2">
                             <ShieldCheck className="w-4 h-4" />
                             <span className="text-[10px] uppercase tracking-wider font-semibold">Secure</span>

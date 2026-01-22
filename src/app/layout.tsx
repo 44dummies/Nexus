@@ -1,11 +1,8 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { ThemeProvider } from "next-themes";
+import { Toaster } from "sonner";
+import AppLayout from "@/components/layout/AppLayout";
 import "./globals.css";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-});
 
 export const metadata: Metadata = {
   title: "DerivNexus | Automated Trading Terminal",
@@ -25,9 +22,33 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${inter.variable} font-sans antialiased`}>
-        {children}
+    <html lang="en" suppressHydrationWarning>
+      <body className="font-sans antialiased">
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="institutional"
+          themes={["institutional", "midnight", "cyberpunk"]}
+          enableSystem={false}
+        >
+          <AppLayout>{children}</AppLayout>
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: {
+                background: 'var(--toast-bg)',
+                color: 'var(--toast-fg)',
+                border: '1px solid var(--toast-border)',
+              },
+              classNames: {
+                error: 'toast-error',
+                success: 'toast-success',
+                warning: 'toast-warning',
+                info: 'toast-info',
+              },
+            }}
+            richColors
+          />
+        </ThemeProvider>
       </body>
     </html>
   );

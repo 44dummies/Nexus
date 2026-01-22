@@ -4,7 +4,6 @@ import { useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Text, useCursor, PerspectiveCamera, Environment } from '@react-three/drei';
 import * as THREE from 'three';
-import { useTradingStore } from '@/store/tradingStore';
 import { motion } from 'framer-motion';
 
 const StrategyShape = ({ position, label, isSelected, onClick }: { position: [number, number, number], label: string, isSelected: boolean, onClick: () => void }) => {
@@ -40,7 +39,7 @@ const StrategyShape = ({ position, label, isSelected, onClick }: { position: [nu
                 >
                     <icosahedronGeometry args={[1.2, 0]} />
                     <meshStandardMaterial
-                        color={isSelected ? "#00f5ff" : (hovered ? "#a855f7" : "#4b5563")}
+                        color={isSelected ? "#2f81f7" : (hovered ? "#0ea5e9" : "#6b7280")}
                         roughness={0.1}
                         metalness={0.8}
                         transparent
@@ -71,15 +70,15 @@ export default function StrategySelector() {
     return (
         <div className="w-full h-[300px] relative glass-panel rounded-2xl overflow-hidden">
             <div className="absolute top-4 left-6 z-10 pointer-events-none">
-                <h3 className="text-white/80 font-mono text-sm uppercase tracking-widest">Strategy Matrix</h3>
-                <h2 className="text-2xl font-bold text-[#00f5ff] mt-1">{activeStrategy}</h2>
+                <h3 className="text-muted-foreground font-mono text-sm uppercase tracking-widest">Strategy Matrix</h3>
+                <h2 className="text-2xl font-bold text-accent mt-1">{activeStrategy}</h2>
             </div>
 
             <Canvas gl={{ antialias: true, alpha: true }}>
                 <PerspectiveCamera makeDefault position={[0, 0, 8]} />
                 <ambientLight intensity={0.5} />
-                <pointLight position={[10, 10, 10]} intensity={1} color="#00f5ff" />
-                <pointLight position={[-10, -5, -10]} intensity={0.5} color="#a855f7" />
+                <pointLight position={[10, 10, 10]} intensity={1} color="#2f81f7" />
+                <pointLight position={[-10, -5, -10]} intensity={0.5} color="#0ea5e9" />
 
                 {/* Strategy Nodes */}
                 <StrategyShape
@@ -111,7 +110,7 @@ export default function StrategySelector() {
                 animate={{ opacity: 1, x: 0 }}
                 className="absolute bottom-4 right-6 text-right z-10 pointer-events-none"
             >
-                <div className="text-xs text-gray-500 mb-1">WIN RATE</div>
+                <div className="text-xs text-muted-foreground mb-1">WIN RATE</div>
                 <div className="text-xl font-mono text-emerald-400">
                     {activeStrategy === 'RSI' ? '76%' : activeStrategy === 'BOLLINGER' ? '68%' : '71%'}
                 </div>

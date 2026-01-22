@@ -1,6 +1,5 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
 import { motion, Variants } from 'framer-motion';
 import { ArrowRight, Zap, ShieldCheck, Activity } from 'lucide-react';
 import { Scene3D } from '@/components/three/Scene3D';
@@ -31,22 +30,24 @@ const itemVariants: Variants = {
 
 export default function LoginPage() {
   const handleLogin = () => {
-    const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID;
-    const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI;
-
-    if (!appId || !redirectUri) {
-      console.error('Missing Deriv configuration');
-      return;
-    }
-
-    // Construct OAuth URL with response_type=code
-    const oauthUrl = `https://oauth.deriv.com/oauth2/authorize?app_id=${appId}&l=EN&redirect_uri=${redirectUri}&response_type=code&scope=read+trade`;
-
-    window.location.href = oauthUrl;
+    fetch('/api/auth/start', { method: 'POST' })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error('Auth start failed');
+        }
+        const data = await res.json();
+        if (!data?.url) {
+          throw new Error('Missing OAuth URL');
+        }
+        window.location.href = data.url;
+      })
+      .catch((err) => {
+        console.error('Login failed', err);
+      });
   };
 
   return (
-    <div className="relative min-h-screen flex flex-col items-center justify-center p-4 overflow-hidden">
+    <div className="relative min-h-screen flex flex-col items-center justify-center px-6 py-10 overflow-hidden">
       {/* 3D Background */}
       <Scene3D />
 
@@ -60,16 +61,16 @@ export default function LoginPage() {
         {/* Logo/Brand Section */}
         <motion.div variants={itemVariants} className="space-y-4">
           <motion.div
-            className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl mb-6 shadow-[0_0_40px_-10px_rgba(0,245,255,0.3)]"
+            className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-card/80 border border-border/60 backdrop-blur-md mb-6 shadow-soft-lg"
             whileHover={{ scale: 1.05 }}
           >
-            <Zap className="w-8 h-8 text-[#00f5ff]" />
+            <Zap className="w-7 h-7 text-accent" />
           </motion.div>
 
-          <h1 className="text-6xl md:text-7xl font-bold tracking-tight text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">
+          <h1 className="text-5xl md:text-6xl font-semibold tracking-tight text-foreground">
             DerivNexus
           </h1>
-          <p className="text-lg md:text-xl text-gray-400 uppercase tracking-[0.2em] font-light">
+          <p className="text-sm md:text-base text-muted-foreground uppercase tracking-[0.2em] font-light">
             Algorithmic Trading Terminal
           </p>
         </motion.div>
@@ -78,13 +79,13 @@ export default function LoginPage() {
         <motion.div variants={itemVariants} className="w-full max-w-sm space-y-8">
           <button
             onClick={handleLogin}
-            className="group relative w-full flex items-center justify-center gap-3 bg-white text-black px-8 py-5 rounded-full font-semibold text-lg hover:bg-[#00f5ff] hover:text-black transition-all duration-300 hover:shadow-[0_0_40px_-5px_rgba(0,245,255,0.4)]"
+            className="group relative w-full flex items-center justify-center gap-3 bg-accent text-accent-foreground px-8 py-4 rounded-xl font-semibold text-base hover:bg-accent/90 transition-all duration-300 shadow-soft-lg"
           >
             <span>Continue with Deriv</span>
             <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
           </button>
 
-          <div className="flex justify-center gap-8 text-sm text-gray-500 font-medium">
+          <div className="flex justify-center gap-8 text-sm text-muted-foreground font-medium">
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4" />
               <span>Secure OAuth 2.0</span>
@@ -102,7 +103,7 @@ export default function LoginPage() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 1, duration: 1 }}
-        className="absolute bottom-8 text-xs text-gray-600 tracking-wider"
+        className="absolute bottom-8 text-xs text-muted-foreground tracking-wider"
       >
         POWERED BY DERIV API
       </motion.div>

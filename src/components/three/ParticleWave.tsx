@@ -4,12 +4,16 @@ import { useRef, useMemo, useEffect } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
-const PARTICLE_COUNT = 6000;
+const PARTICLE_COUNT = 3000; // Reduced from 6000 for better performance
+
+// Pre-allocated objects to avoid per-frame allocations
+const tempVector = new THREE.Vector3();
+const tempDirection = new THREE.Vector3();
+const mouseWorldPos = new THREE.Vector3();
 
 export default function ParticleWave() {
     const meshRef = useRef<THREE.Points>(null);
-    const { camera, viewport } = useThree();
-
+    const { camera } = useThree();
     // Track mouse in Normalized Device Coordinates (-1 to 1) using native listeners
     // This ensures tracking works regardless of R3F overlay/canvas issues
     const mouseNDC = useRef({ x: 0, y: 0 });
@@ -42,20 +46,14 @@ export default function ParticleWave() {
             const y = radius * Math.sin(phi) * Math.sin(theta);
             const z = radius * Math.cos(phi);
 
-            // Add some random fuzz to make it a volumetric cloud/blob, not just a shell
-            const fuzz = 0.8 + Math.random() * 0.4; // 0.8 to 1.2
+            // Deterministic initial state (perfect sphere)
+            positions[i * 3] = x;
+            positions[i * 3 + 1] = y;
+            positions[i * 3 + 2] = z;
 
-            const finalX = x * fuzz;
-            const finalY = y * fuzz;
-            const finalZ = z * fuzz;
-
-            positions[i * 3] = finalX;
-            positions[i * 3 + 1] = finalY;
-            positions[i * 3 + 2] = finalZ;
-
-            originalPositions[i * 3] = finalX;
-            originalPositions[i * 3 + 1] = finalY;
-            originalPositions[i * 3 + 2] = finalZ;
+            originalPositions[i * 3] = x;
+            originalPositions[i * 3 + 1] = y;
+            originalPositions[i * 3 + 2] = z;
         }
 
         return { positions, originalPositions };
@@ -64,11 +62,12 @@ export default function ParticleWave() {
     // Colors
     const colors = useMemo(() => {
         const colors = new Float32Array(PARTICLE_COUNT * 3);
-        const color1 = new THREE.Color('#00f5ff'); // Cyan
-        const color2 = new THREE.Color('#a855f7'); // Purple
+        const color1 = new THREE.Color('#2f81f7');
+        const color2 = new THREE.Color('#0ea5e9');
 
         for (let i = 0; i < PARTICLE_COUNT; i++) {
-            const t = Math.random();
+            // Deterministic initial colors (gradient based on index)
+            const t = i / PARTICLE_COUNT;
             const c = color1.clone().lerp(color2, t);
             colors[i * 3] = c.r;
             colors[i * 3 + 1] = c.g;
@@ -84,6 +83,58 @@ export default function ParticleWave() {
         return geo;
     }, [positions, colors]);
 
+    // Apply random fuzz and colors on client mount
+    useEffect(() => {
+        const posAttr = geometry.getAttribute('position');
+        const colAttr = geometry.getAttribute('color');
+        const posArray = posAttr.array as Float32Array;
+        const colArray = colAttr.array as Float32Array;
+        const color1 = new THREE.Color('#2f81f7');
+        const color2 = new THREE.Color('#0ea5e9');
+
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            // Add random fuzz
+            const fuzz = 0.8 + Math.random() * 0.4;
+
+            // We need original base position for fuzzing correctly, but we can just fuzz current position 
+            // since current is deterministic sphere.
+            // BUT originalPositions needs to be updated too for animation!
+            // We can read from originalPositions (which is same ref as positions initially? No, separate arrays).
+            // We should update originalPositions too.
+            // Wait, originalPositions is not in geometry attribute, it's a separate array returned from useMemo.
+            // We need access to it.
+
+            const i3 = i * 3;
+            const x = originalPositions[i3];
+            const y = originalPositions[i3 + 1];
+            const z = originalPositions[i3 + 2];
+
+            const finalX = x * fuzz;
+            const finalY = y * fuzz;
+            const finalZ = z * fuzz;
+
+            // Update both
+            posArray[i3] = finalX;
+            posArray[i3 + 1] = finalY;
+            posArray[i3 + 2] = finalZ;
+
+            originalPositions[i3] = finalX;
+            originalPositions[i3 + 1] = finalY;
+            originalPositions[i3 + 2] = finalZ;
+
+            // Random color mix
+            const t = Math.random();
+            const c = color1.clone().lerp(color2, t);
+            colArray[i3] = c.r;
+            colArray[i3 + 1] = c.g;
+            colArray[i3 + 2] = c.b;
+        }
+
+        posAttr.needsUpdate = true;
+        colAttr.needsUpdate = true;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [geometry]); // originalPositions is stable from useMemo
+
     useFrame((state) => {
         if (!meshRef.current) return;
         const time = state.clock.getElapsedTime();
@@ -91,15 +142,11 @@ export default function ParticleWave() {
         const array = positionAttribute.array as Float32Array;
 
         // Convert mouse NDC to world coordinates at Z=0
-        // Simple unproject is complex with perspective camera depth, 
-        // but for Z=0 plane and fixed camera, we can convert roughly or use logic below.
-
-        // Better approach: Vector3 unproject
-        const vector = new THREE.Vector3(mouseNDC.current.x, mouseNDC.current.y, 0.5);
-        vector.unproject(camera);
-        const dir = vector.sub(camera.position).normalize();
-        const distance = -camera.position.z / dir.z;
-        const mouseWorld = camera.position.clone().add(dir.multiplyScalar(distance));
+        tempVector.set(mouseNDC.current.x, mouseNDC.current.y, 0.5);
+        tempVector.unproject(camera);
+        tempDirection.copy(tempVector).sub(camera.position).normalize();
+        const distance = -camera.position.z / tempDirection.z;
+        mouseWorldPos.copy(camera.position).add(tempDirection.multiplyScalar(distance));
 
         // Apply very slow rotation to the entire blob
         const rotationSpeed = 0.1;
@@ -110,7 +157,7 @@ export default function ParticleWave() {
         for (let i = 0; i < PARTICLE_COUNT; i++) {
             const i3 = i * 3;
             let ox = originalPositions[i3];
-            let oy = originalPositions[i3 + 1];
+            const oy = originalPositions[i3 + 1]; // FIX: const
             let oz = originalPositions[i3 + 2];
 
             // Apply rotation
@@ -120,8 +167,8 @@ export default function ParticleWave() {
             oz = rz;
 
             // Mouse Distance
-            const dx = ox - mouseWorld.x;
-            const dy = oy - mouseWorld.y;
+            const dx = ox - mouseWorldPos.x;
+            const dy = oy - mouseWorldPos.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
             // Interaction - Push away/ripple
