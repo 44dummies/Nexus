@@ -26,9 +26,20 @@ async function incrementUpstash(ip: string) {
 export async function proxy(request: NextRequest) {
     // Rate limit for /api routes
     if (request.nextUrl.pathname.startsWith('/api')) {
+        const forwardedFor = request.headers.get('x-forwarded-for');
+        const forwardedIp = forwardedFor ? forwardedFor.split(',')[0]?.trim() : null;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ip = (request as any).ip ?? '127.0.0.1';
+        const ip = forwardedIp || (request as any).ip || '0.0.0.0';
         let count: number | null = null;
+        const now = Date.now();
+
+        if (rateLimit.size > 5000) {
+            for (const [key, entry] of rateLimit.entries()) {
+                if (now > entry.resetAt) {
+                    rateLimit.delete(key);
+                }
+            }
+        }
 
         if (UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN) {
             try {
@@ -39,7 +50,6 @@ export async function proxy(request: NextRequest) {
         }
 
         if (count === null) {
-            const now = Date.now();
             const entry = rateLimit.get(ip);
             if (!entry || now > entry.resetAt) {
                 rateLimit.set(ip, { count: 1, resetAt: now + WINDOW_MS });

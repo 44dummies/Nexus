@@ -278,7 +278,11 @@ export class BotEngine {
             this.addLog('info', `Hybrid timeout - fallback market`);
         }
 
-        this.executeSignal(pending.signal, pending.stake, pending.duration, pending.durationUnit);
+        this.executeSignal(pending.signal, pending.stake, pending.duration, pending.durationUnit, {
+            mode: 'HYBRID_LIMIT_MARKET',
+            targetPrice: pending.targetPrice,
+            slippagePct: pending.slippagePct,
+        });
         this.pendingEntry = null;
         this.stopProposalPolling();
     }
@@ -324,7 +328,17 @@ export class BotEngine {
         this.stopProposalPolling();
     }
 
-    private executeSignal(signal: TradeSignal, stake: number, duration?: number, durationUnit?: 't' | 'm' | 's' | 'h' | 'd') {
+    private executeSignal(
+        signal: TradeSignal,
+        stake: number,
+        duration?: number,
+        durationUnit?: 't' | 'm' | 's' | 'h' | 'd',
+        entryMeta?: {
+            mode?: 'HYBRID_LIMIT_MARKET' | 'MARKET';
+            targetPrice?: number;
+            slippagePct?: number;
+        }
+    ) {
         const store = useTradingStore.getState();
 
         if (this.ws.readyState !== WebSocket.OPEN) {
@@ -345,6 +359,9 @@ export class BotEngine {
             botId: store.selectedBotId ?? 'rsi',
             botRunId: store.activeRunId ?? undefined,
             entryProfileId: store.entryProfileId ?? undefined,
+            entryMode: entryMeta?.mode ?? this.entryMode,
+            entryTargetPrice: entryMeta?.targetPrice,
+            entrySlippagePct: entryMeta?.slippagePct,
         })
             .then((result) => {
                 this.addLog('trade', `Trade placed: Contract #${result.contractId}`, { contractId: result.contractId });
@@ -501,6 +518,6 @@ export class BotEngine {
             return;
         }
 
-        this.executeSignal(signal, stake, effectiveDuration, effectiveDurationUnit);
+        this.executeSignal(signal, stake, effectiveDuration, effectiveDurationUnit, { mode: 'MARKET' });
     }
 }

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "env -u NODE_OPTIONS NODE_NO_WARNINGS=1 next build",
+    "build": "env -u NODE_OPTIONS NODE_OPTIONS=--localstorage-file=.next/localstorage next build",
     "start": "next start",
     "lint": "eslint"
   },

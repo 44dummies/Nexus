@@ -25,6 +25,205 @@ const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
     })
     : null;
 
+interface RiskConfig {
+    stopLoss: number;
+    takeProfit: number;
+    dailyLossLimitPct: number;
+    drawdownLimitPct: number;
+    maxConsecutiveLosses: number;
+    lossCooldownMs: number;
+}
+
+const RISK_DEFAULTS: RiskConfig = {
+    stopLoss: 0,
+    takeProfit: 0,
+    dailyLossLimitPct: 2,
+    drawdownLimitPct: 6,
+    maxConsecutiveLosses: 3,
+    lossCooldownMs: 2 * 60 * 60 * 1000,
+};
+
+const toNumber = (value: unknown, fallback = 0) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+    return fallback;
+};
+
+const getUtcDayRange = () => {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
+    return {
+        startIso: start.toISOString(),
+        endIso: end.toISOString(),
+        dateKey: start.toISOString().slice(0, 10),
+        now,
+    };
+};
+
+async function getSettingValue(accountId: string, key: string) {
+    if (!supabaseAdmin) return null;
+    const { data } = await supabaseAdmin
+        .from('settings')
+        .select('value')
+        .eq('account_id', accountId)
+        .eq('key', key)
+        .maybeSingle();
+    return data?.value ?? null;
+}
+
+async function getRiskConfig(accountId: string, botRunId?: string | null) {
+    if (!supabaseAdmin) return null;
+    let runConfig: { risk?: Partial<RiskConfig> } | null = null;
+
+    if (botRunId) {
+        const { data } = await supabaseAdmin
+            .from('bot_runs')
+            .select('config')
+            .eq('account_id', accountId)
+            .eq('id', botRunId)
+            .maybeSingle();
+        runConfig = data?.config ?? null;
+    }
+
+    if (!runConfig) {
+        const { data } = await supabaseAdmin
+            .from('bot_runs')
+            .select('config')
+            .eq('account_id', accountId)
+            .eq('run_status', 'running')
+            .order('started_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        runConfig = data?.config ?? null;
+    }
+
+    const risk = runConfig && typeof runConfig === 'object' ? (runConfig as { risk?: Partial<RiskConfig> }).risk : null;
+    return risk ?? null;
+}
+
+async function enforceServerRisk(accountId: string, botRunId?: string | null) {
+    if (!supabaseAdmin) {
+        throw new Error('Risk engine unavailable - database not configured');
+    }
+
+    const [riskConfig, riskStateValue, balanceSnapshot] = await Promise.all([
+        getRiskConfig(accountId, botRunId),
+        getSettingValue(accountId, 'risk_state'),
+        getSettingValue(accountId, 'balance_snapshot'),
+    ]);
+
+    const risk: RiskConfig = {
+        stopLoss: toNumber(riskConfig?.stopLoss, RISK_DEFAULTS.stopLoss),
+        takeProfit: toNumber(riskConfig?.takeProfit, RISK_DEFAULTS.takeProfit),
+        dailyLossLimitPct: toNumber(riskConfig?.dailyLossLimitPct, RISK_DEFAULTS.dailyLossLimitPct),
+        drawdownLimitPct: toNumber(riskConfig?.drawdownLimitPct, RISK_DEFAULTS.drawdownLimitPct),
+        maxConsecutiveLosses: Math.max(0, Math.floor(toNumber(riskConfig?.maxConsecutiveLosses, RISK_DEFAULTS.maxConsecutiveLosses))),
+        lossCooldownMs: toNumber(riskConfig?.lossCooldownMs, RISK_DEFAULTS.lossCooldownMs),
+    };
+
+    const { startIso, endIso, dateKey, now } = getUtcDayRange();
+
+    const { data: trades } = await supabaseAdmin
+        .from('trades')
+        .select('profit, created_at')
+        .eq('account_id', accountId)
+        .gte('created_at', startIso)
+        .lt('created_at', endIso)
+        .order('created_at', { ascending: false })
+        .limit(2000);
+
+    let totalLossToday = 0;
+    let totalProfitToday = 0;
+    let lossStreak = 0;
+    let lastLossTime: number | null = null;
+
+    (trades || []).forEach((trade, index) => {
+        const profit = toNumber((trade as { profit?: number | string }).profit, 0);
+        if (profit > 0) {
+            totalProfitToday += profit;
+        } else if (profit < 0) {
+            totalLossToday += Math.abs(profit);
+        }
+        if (index === lossStreak && profit < 0) {
+            lossStreak += 1;
+            if (!lastLossTime) {
+                const createdAt = (trade as { created_at?: string }).created_at;
+                if (createdAt) {
+                    lastLossTime = new Date(createdAt).getTime();
+                }
+            }
+        }
+    });
+
+    const riskState = riskStateValue && typeof riskStateValue === 'object' ? riskStateValue as {
+        date?: string;
+        dailyStartEquity?: number;
+        equityPeak?: number;
+    } : null;
+    const balanceValue = balanceSnapshot && typeof balanceSnapshot === 'object'
+        ? toNumber((balanceSnapshot as { balance?: number }).balance, 0)
+        : 0;
+
+    let dailyStartEquity = riskState?.date === dateKey ? toNumber(riskState.dailyStartEquity, 0) : 0;
+    let equityPeak = riskState?.date === dateKey ? toNumber(riskState.equityPeak, 0) : 0;
+
+    if (!dailyStartEquity && balanceValue > 0) {
+        dailyStartEquity = balanceValue;
+    }
+    if (!equityPeak && dailyStartEquity > 0) {
+        equityPeak = dailyStartEquity;
+    }
+
+    const equityEstimate = dailyStartEquity > 0
+        ? dailyStartEquity + totalProfitToday - totalLossToday
+        : null;
+    if (equityEstimate !== null && equityEstimate > 0) {
+        equityPeak = equityPeak > 0 ? Math.max(equityPeak, equityEstimate) : equityEstimate;
+    }
+
+    if (risk.stopLoss > 0 && totalLossToday >= risk.stopLoss) {
+        throw new Error('Stop loss reached');
+    }
+    if (risk.takeProfit > 0 && totalProfitToday >= risk.takeProfit) {
+        throw new Error('Take profit reached');
+    }
+    if (risk.dailyLossLimitPct > 0 && dailyStartEquity > 0) {
+        const lossPct = (totalLossToday / dailyStartEquity) * 100;
+        if (lossPct >= risk.dailyLossLimitPct) {
+            throw new Error('Daily loss cap reached');
+        }
+    }
+    if (risk.drawdownLimitPct > 0 && equityPeak > 0 && equityEstimate !== null) {
+        const drawdownPct = ((equityPeak - equityEstimate) / equityPeak) * 100;
+        if (drawdownPct >= risk.drawdownLimitPct) {
+            throw new Error('Drawdown cap reached');
+        }
+    }
+    if (risk.maxConsecutiveLosses > 0 && lossStreak >= risk.maxConsecutiveLosses && lastLossTime) {
+        if (risk.lossCooldownMs > 0 && now.getTime() - lastLossTime < risk.lossCooldownMs) {
+            throw new Error('Loss streak cooldown active');
+        }
+    }
+
+    if (dailyStartEquity > 0 && equityPeak > 0) {
+        const nowIso = now.toISOString();
+        await supabaseAdmin.from('settings').upsert({
+            account_id: accountId,
+            key: 'risk_state',
+            value: {
+                date: dateKey,
+                dailyStartEquity,
+                equityPeak,
+            },
+            updated_at: nowIso,
+        }, { onConflict: 'account_id,key' });
+    }
+}
 
 interface TradeResult {
     contractId: number;
@@ -144,6 +343,11 @@ export async function executeTradeServer(signal: 'CALL' | 'PUT', params: Execute
     if (!token) {
         throw new Error('User not authenticated');
     }
+    if (!accountId) {
+        throw new Error('Account not available');
+    }
+
+    await enforceServerRisk(accountId, params.botRunId ?? null);
 
     return new Promise((resolve, reject) => {
         const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
@@ -174,7 +378,13 @@ export async function executeTradeServer(signal: 'CALL' | 'PUT', params: Execute
         });
 
         ws.on('message', (data) => {
-            const response = JSON.parse(data.toString()) as DerivResponse;
+            let response: DerivResponse | null = null;
+            try {
+                response = JSON.parse(data.toString()) as DerivResponse;
+            } catch {
+                return;
+            }
+            if (!response) return;
 
             if (response.error) {
                 persistOrderStatus({
@@ -216,6 +426,9 @@ export async function executeTradeServer(signal: 'CALL' | 'PUT', params: Execute
                 // 3. Buy
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const proposal = response.proposal as any;
+                const entryMode = params.entryMode;
+                const entryTargetPrice = params.entryTargetPrice;
+                const entrySlippagePct = params.entrySlippagePct;
                 timestamps.proposalReceivedAt = Date.now();
                 const proposalLatency = timestamps.proposalRequestedAt
                     ? timestamps.proposalReceivedAt - timestamps.proposalRequestedAt
@@ -231,6 +444,38 @@ export async function executeTradeServer(signal: 'CALL' | 'PUT', params: Execute
                         payout: proposal.payout,
                     },
                 }).catch((err) => console.error('Order status persist failed', err));
+
+                if (
+                    entryMode === 'HYBRID_LIMIT_MARKET'
+                    && typeof entryTargetPrice === 'number'
+                    && Number.isFinite(entryTargetPrice)
+                    && typeof entrySlippagePct === 'number'
+                    && Number.isFinite(entrySlippagePct)
+                    && entryTargetPrice > 0
+                ) {
+                    const spot = Number(proposal.spot);
+                    if (Number.isFinite(spot)) {
+                        const slippagePct = Math.abs((spot - entryTargetPrice) / entryTargetPrice) * 100;
+                        if (slippagePct > entrySlippagePct) {
+                            persistOrderStatus({
+                                accountId,
+                                event: 'slippage_reject',
+                                status: 'slippage_exceeded',
+                                price: proposal.ask_price ?? null,
+                                payload: {
+                                    spot,
+                                    entryTargetPrice,
+                                    slippagePct,
+                                    tolerancePct: entrySlippagePct,
+                                },
+                            }).catch((err) => console.error('Order status persist failed', err));
+                            cleanup();
+                            clearTimeout(timeout);
+                            reject(new Error('Slippage exceeded tolerance'));
+                            return;
+                        }
+                    }
+                }
                 const buyReq = {
                     buy: proposal.id,
                     price: proposal.ask_price,

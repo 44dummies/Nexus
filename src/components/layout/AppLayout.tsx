@@ -55,6 +55,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
     const connectWebSocket = useCallback(() => {
         if (isConnectingRef.current) return;
+        if (engineRef.current) {
+            engineRef.current.shutdown();
+            engineRef.current = null;
+        }
         if (wsRef.current) wsRef.current.close();
 
         isConnectingRef.current = true;
@@ -83,6 +87,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
         ws.onclose = () => {
             setConnectionStatus(false);
             isConnectingRef.current = false;
+            if (engineRef.current) {
+                engineRef.current.shutdown();
+                engineRef.current = null;
+            }
             if (pathname !== '/') {
                 reconnectTimerRef.current = setTimeout(() => {
                     connectWebSocket();

@@ -1,12 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import WebSocket from 'ws';
+import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'nodejs';
 
 const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const AUTH_CACHE_TTL_MS = 30_000;
 const authCache = new Map<string, { data: DerivAuthorizeResponse['authorize']; expiresAt: number }>();
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+        auth: { persistSession: false },
+    })
+    : null;
 
 interface DerivAuthorizeResponse {
     msg_type: 'authorize';
@@ -72,6 +81,49 @@ async function authorizeTokenCached(token: string) {
     const data = await authorizeToken(token);
     authCache.set(token, { data, expiresAt: Date.now() + AUTH_CACHE_TTL_MS });
     return data;
+}
+
+async function persistRiskSnapshots(accountId: string, balance: number) {
+    if (!supabaseAdmin) return;
+    const dateKey = new Date().toISOString().slice(0, 10);
+    const now = new Date().toISOString();
+
+    await supabaseAdmin.from('settings').upsert({
+        account_id: accountId,
+        key: 'balance_snapshot',
+        value: { balance, asOf: now },
+        updated_at: now,
+    }, { onConflict: 'account_id,key' });
+
+    const { data } = await supabaseAdmin
+        .from('settings')
+        .select('id, value')
+        .eq('account_id', accountId)
+        .eq('key', 'risk_state')
+        .maybeSingle();
+
+    const existing = data?.value && typeof data.value === 'object' ? data.value as {
+        date?: string;
+        dailyStartEquity?: number;
+        equityPeak?: number;
+    } : null;
+
+    const nextRiskState = {
+        date: dateKey,
+        dailyStartEquity: existing?.date === dateKey && typeof existing?.dailyStartEquity === 'number'
+            ? existing.dailyStartEquity
+            : balance,
+        equityPeak: existing?.date === dateKey && typeof existing?.equityPeak === 'number'
+            ? Math.max(existing.equityPeak, balance)
+            : balance,
+    };
+
+    await supabaseAdmin.from('settings').upsert({
+        account_id: accountId,
+        key: 'risk_state',
+        value: nextRiskState,
+        updated_at: now,
+    }, { onConflict: 'account_id,key' });
 }
 
 type CookieStore = Awaited<ReturnType<typeof cookies>>;
@@ -158,6 +210,13 @@ export async function GET(request: NextRequest) {
             : typeof balanceValue === 'string'
                 ? Number(balanceValue)
                 : null;
+
+        if (typeof balance === 'number' && Number.isFinite(balance)) {
+            const accountIdForSnapshot = derivedActiveAccount || authorize?.loginid || null;
+            if (accountIdForSnapshot) {
+                persistRiskSnapshots(accountIdForSnapshot, balance).catch(() => undefined);
+            }
+        }
 
         return NextResponse.json({
             authenticated: true,

@@ -10,6 +10,9 @@ export const ExecuteTradeParamsSchema = z.object({
     botId: z.string().min(1).optional(),
     botRunId: z.string().uuid().optional(),
     entryProfileId: z.string().min(1).optional(),
+    entryMode: z.enum(['HYBRID_LIMIT_MARKET', 'MARKET']).optional(),
+    entryTargetPrice: z.number().positive().optional(),
+    entrySlippagePct: z.number().min(0).optional(),
 });
 
 export const BotConfigSchema = z.object({

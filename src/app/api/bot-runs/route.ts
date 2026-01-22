@@ -34,12 +34,26 @@ export async function POST(request: Request) {
     if (action === 'start') {
         const botId = typeof body.botId === 'string' ? body.botId : null;
         const config = body.config ?? null;
+        const now = new Date().toISOString();
+
+        // Ensure only one running bot per account
+        const { error: stopError } = await supabaseAdmin
+            .from('bot_runs')
+            .update({ run_status: 'stopped', stopped_at: now })
+            .eq('account_id', activeAccount)
+            .eq('run_status', 'running');
+
+        if (stopError) {
+            return NextResponse.json({ error: stopError.message }, { status: 500 });
+        }
+
         const { data, error } = await supabaseAdmin
             .from('bot_runs')
             .insert({
                 account_id: activeAccount,
                 bot_id: botId,
                 run_status: 'running',
+                started_at: now,
                 config,
             })
             .select('id')
