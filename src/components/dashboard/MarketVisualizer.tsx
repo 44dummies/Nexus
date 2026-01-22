@@ -152,17 +152,35 @@ function MarketVisualizer({ lastTick = 0, prevTick = 0 }: MarketVisualizerProps)
     const [enabled, setEnabled] = useState(true);
     const [dpr, setDpr] = useState<[number, number]>([1, 1.5]);
     const [palette, setPalette] = useState<ThemePalette>(DEFAULT_PALETTE);
+    const [contextLost, setContextLost] = useState(false);
+    const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
 
     useEffect(() => {
         const media = window.matchMedia('(prefers-reduced-motion: reduce)');
         const isSmall = window.innerWidth < 900;
-        if (media.matches || isSmall) {
+        const deviceMemory = 'deviceMemory' in navigator ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined;
+        const cpuCores = navigator.hardwareConcurrency;
+        const lowPower = (deviceMemory && deviceMemory <= 4) || (cpuCores && cpuCores <= 4);
+        if (media.matches || isSmall || lowPower) {
             setEnabled(false);
         }
         if (window.devicePixelRatio && window.devicePixelRatio > 2) {
             setDpr([1, 1.25]);
         }
     }, []);
+
+    useEffect(() => {
+        if (!canvasEl) return;
+        const handleContextLost = (event: Event) => {
+            event.preventDefault();
+            setContextLost(true);
+        };
+
+        canvasEl.addEventListener('webglcontextlost', handleContextLost, { passive: false });
+        return () => {
+            canvasEl.removeEventListener('webglcontextlost', handleContextLost);
+        };
+    }, [canvasEl]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -179,7 +197,7 @@ function MarketVisualizer({ lastTick = 0, prevTick = 0 }: MarketVisualizerProps)
         });
     }, [theme]);
 
-    if (!enabled) {
+    if (!enabled || contextLost) {
         return null;
     }
     // Determine direction and speed
@@ -193,8 +211,9 @@ function MarketVisualizer({ lastTick = 0, prevTick = 0 }: MarketVisualizerProps)
         <div className="fixed inset-0 -z-5 pointer-events-none">
             <Canvas
                 dpr={dpr}
-                gl={{ antialias: false, alpha: true, powerPreference: 'high-performance' }}
+                gl={{ antialias: false, alpha: true, powerPreference: 'low-power' }}
                 camera={{ position: [0, 0, 20], fov: 60 }}
+                onCreated={({ gl }) => setCanvasEl(gl.domElement)}
             >
                 <MarketParticles tickDirection={tickDirection} tickSpeed={tickSpeed} palette={palette} />
                 <ambientLight intensity={0.2} />

@@ -15,12 +15,12 @@ function buildCookieOptions() {
 }
 
 export async function POST() {
-    const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID;
+    const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID?.trim();
     if (!appId) {
         return NextResponse.json({ error: 'Missing Deriv app id' }, { status: 500 });
     }
 
-    const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI;
+    const redirectUri = process.env.NEXT_PUBLIC_REDIRECT_URI?.trim();
     const state = crypto.randomBytes(16).toString('hex');
 
     const url = new URL('https://oauth.deriv.com/oauth2/authorize');

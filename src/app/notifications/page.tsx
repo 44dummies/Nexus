@@ -4,6 +4,7 @@ import { Bell, Search, Filter, Inbox, Check } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { useTradingStore } from '@/store/tradingStore';
 
 interface NotificationRow {
     id: string;
@@ -30,6 +31,7 @@ const typeClasses: Record<string, string> = {
 };
 
 export default function NotificationsPage() {
+    const { isAuthorized, activeAccountId } = useTradingStore();
     const [items, setItems] = useState<NotificationRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
@@ -39,9 +41,21 @@ export default function NotificationsPage() {
 
     useEffect(() => {
         let mounted = true;
+        if (!isAuthorized || !activeAccountId) {
+            setItems([]);
+            setLoading(false);
+            return () => {
+                mounted = false;
+            };
+        }
+
+        setLoading(true);
         const loadNotifications = async () => {
             try {
-                const res = await fetch('/api/notifications?limit=100');
+                const res = await fetch('/api/notifications?limit=100', { cache: 'no-store' });
+                if (!res.ok) {
+                    throw new Error('Failed to load notifications');
+                }
                 const data = await res.json();
                 if (!mounted) return;
                 setItems(Array.isArray(data.notifications) ? data.notifications : []);
@@ -57,7 +71,7 @@ export default function NotificationsPage() {
         return () => {
             mounted = false;
         };
-    }, []);
+    }, [isAuthorized, activeAccountId]);
 
     const filteredItems = useMemo(() => {
         let list = items;
@@ -90,7 +104,7 @@ export default function NotificationsPage() {
             setMarkingIds((prev) => ids.reduce((acc, id) => ({ ...acc, [id]: true }), { ...prev }));
         }
         try {
-            await fetch('/api/notifications', {
+            const res = await fetch('/api/notifications', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -99,6 +113,9 @@ export default function NotificationsPage() {
                     ids: ids === 'all' ? undefined : ids,
                 }),
             });
+            if (!res.ok) {
+                throw new Error('Failed to mark notifications');
+            }
             const now = new Date().toISOString();
             setItems((prev) => prev.map((item) => {
                 if (ids === 'all') {

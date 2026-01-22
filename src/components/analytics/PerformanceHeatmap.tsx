@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
+import { useTradingStore } from '@/store/tradingStore';
 
 interface DayData {
     date: string;
@@ -29,16 +30,30 @@ function getColorForPnL(pnl: number): string {
 }
 
 function PerformanceHeatmap() {
+    const { isAuthorized, activeAccountId } = useTradingStore();
     const [hoveredDay, setHoveredDay] = useState<DayData | null>(null);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
     const [data, setData] = useState<DayData[]>([]);
     const [loading, setLoading] = useState(true);
+    const rafRef = useRef<number | null>(null);
 
     useEffect(() => {
         let mounted = true;
+        if (!isAuthorized || !activeAccountId) {
+            setData([]);
+            setLoading(false);
+            return () => {
+                mounted = false;
+            };
+        }
+
+        setLoading(true);
         const loadTrades = async () => {
             try {
-                const res = await fetch('/api/trades?limit=1000');
+                const res = await fetch('/api/trades?limit=1000', { cache: 'no-store' });
+                if (!res.ok) {
+                    throw new Error('Failed to load trades');
+                }
                 const payload = await res.json();
                 const trades = Array.isArray(payload.trades) ? payload.trades as TradeRow[] : [];
 
@@ -78,6 +93,24 @@ function PerformanceHeatmap() {
         loadTrades();
         return () => {
             mounted = false;
+        };
+    }, [isAuthorized, activeAccountId]);
+
+    const scheduleTooltipUpdate = useCallback((x: number, y: number) => {
+        if (rafRef.current) {
+            cancelAnimationFrame(rafRef.current);
+        }
+        rafRef.current = requestAnimationFrame(() => {
+            setTooltipPos({ x, y });
+            rafRef.current = null;
+        });
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current);
+            }
         };
     }, []);
 
@@ -141,8 +174,12 @@ function PerformanceHeatmap() {
                                 onMouseEnter={(e) => {
                                     if (day.date) {
                                         setHoveredDay(day);
-                                        const rect = e.currentTarget.getBoundingClientRect();
-                                        setTooltipPos({ x: rect.left, y: rect.top - 60 });
+                                        scheduleTooltipUpdate(e.clientX, e.clientY - 60);
+                                    }
+                                }}
+                                onMouseMove={(e) => {
+                                    if (day.date) {
+                                        scheduleTooltipUpdate(e.clientX, e.clientY - 60);
                                     }
                                 }}
                                 onMouseLeave={() => setHoveredDay(null)}
@@ -180,17 +217,17 @@ function PerformanceHeatmap() {
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                className="fixed glass-panel px-3 py-2 rounded-lg text-sm pointer-events-none z-50"
-                style={{ left: tooltipPos.x, top: tooltipPos.y }}
-            >
-                <div className="font-mono text-foreground">{hoveredDay.date}</div>
-                <div className={`font-bold ${hoveredDay.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                    {hoveredDay.pnl >= 0 ? '+' : ''}{hoveredDay.pnl.toFixed(2)}
-                </div>
-                {hoveredDay.strategy && (
-                    <div className="text-xs text-muted-foreground">{hoveredDay.strategy}</div>
-                )}
-            </motion.div>
+                    className="fixed glass-panel px-3 py-2 rounded-lg text-sm pointer-events-none z-50"
+                    style={{ left: tooltipPos.x, top: tooltipPos.y }}
+                >
+                    <div className="font-mono text-foreground">{hoveredDay.date}</div>
+                    <div className={`font-bold ${hoveredDay.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                        {hoveredDay.pnl >= 0 ? '+' : ''}{hoveredDay.pnl.toFixed(2)}
+                    </div>
+                    {hoveredDay.strategy && (
+                        <div className="text-xs text-muted-foreground">{hoveredDay.strategy}</div>
+                    )}
+                </motion.div>
             )}
         </div>
     );

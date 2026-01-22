@@ -1,21 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import WebSocket from 'ws';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
 
 export const runtime = 'nodejs';
 
 const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const AUTH_CACHE_TTL_MS = 30_000;
 const authCache = new Map<string, { data: DerivAuthorizeResponse['authorize']; expiresAt: number }>();
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false },
-    })
-    : null;
+const { client: supabaseAdmin } = getSupabaseAdmin();
 
 interface DerivAuthorizeResponse {
     msg_type: 'authorize';

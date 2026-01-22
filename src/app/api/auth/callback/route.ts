@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import crypto from 'crypto';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SESSION_ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_KEY;
 
-const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false },
-    })
-    : null;
+const { client: supabaseAdmin } = getSupabaseAdmin();
 
 const buildCookieOptions = () => ({
     httpOnly: true,

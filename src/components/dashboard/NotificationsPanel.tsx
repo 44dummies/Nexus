@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
+import { useTradingStore } from '@/store/tradingStore';
 
 interface NotificationRow {
     id: string;
@@ -12,14 +13,27 @@ interface NotificationRow {
 }
 
 export default function NotificationsPanel() {
+    const { isAuthorized, activeAccountId } = useTradingStore();
     const [items, setItems] = useState<NotificationRow[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         let mounted = true;
+        if (!isAuthorized || !activeAccountId) {
+            setItems([]);
+            setLoading(false);
+            return () => {
+                mounted = false;
+            };
+        }
+
+        setLoading(true);
         const loadNotifications = async () => {
             try {
-                const res = await fetch('/api/notifications?limit=6');
+                const res = await fetch('/api/notifications?limit=6', { cache: 'no-store' });
+                if (!res.ok) {
+                    throw new Error('Failed to load notifications');
+                }
                 const data = await res.json();
                 if (!mounted) return;
                 setItems(Array.isArray(data.notifications) ? data.notifications : []);
@@ -35,7 +49,7 @@ export default function NotificationsPanel() {
         return () => {
             mounted = false;
         };
-    }, []);
+    }, [isAuthorized, activeAccountId]);
 
     return (
         <div className="glass-panel rounded-xl p-6">

@@ -7,20 +7,38 @@ import ParticleWave from './ParticleWave';
 
 export function Scene3D() {
     const [enabled, setEnabled] = useState(true);
-    const [dpr, setDpr] = useState<[number, number]>([1, 2]);
+    const [dpr, setDpr] = useState<[number, number]>([1, 1.5]);
+    const [contextLost, setContextLost] = useState(false);
+    const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
 
     useEffect(() => {
         const media = window.matchMedia('(prefers-reduced-motion: reduce)');
         const isSmall = window.innerWidth < 900;
-        if (media.matches || isSmall) {
+        const deviceMemory = 'deviceMemory' in navigator ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined;
+        const cpuCores = navigator.hardwareConcurrency;
+        const lowPower = (deviceMemory && deviceMemory <= 4) || (cpuCores && cpuCores <= 4);
+        if (media.matches || isSmall || lowPower) {
             setEnabled(false);
         }
         if (window.devicePixelRatio && window.devicePixelRatio > 2) {
-            setDpr([1, 1.5]);
+            setDpr([1, 1.25]);
         }
     }, []);
 
-    if (!enabled) {
+    useEffect(() => {
+        if (!canvasEl) return;
+        const handleContextLost = (event: Event) => {
+            event.preventDefault();
+            setContextLost(true);
+        };
+
+        canvasEl.addEventListener('webglcontextlost', handleContextLost, { passive: false });
+        return () => {
+            canvasEl.removeEventListener('webglcontextlost', handleContextLost);
+        };
+    }, [canvasEl]);
+
+    if (!enabled || contextLost) {
         return <div className="fixed inset-0 -z-10 bg-gradient-to-br from-background to-muted" />;
     }
 
@@ -30,10 +48,11 @@ export function Scene3D() {
                 className="w-full h-full"
                 dpr={dpr}
                 gl={{
-                    antialias: true,
+                    antialias: false,
                     alpha: true,
-                    powerPreference: 'high-performance'
+                    powerPreference: 'low-power'
                 }}
+                onCreated={({ gl }) => setCanvasEl(gl.domElement)}
             >
                 <Suspense fallback={null}>
                     {/* Camera positioned to look straight at the wall of particles */}

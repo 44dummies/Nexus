@@ -2,8 +2,8 @@
 
 import { cookies } from 'next/headers';
 import WebSocket from 'ws';
-import { createClient } from '@supabase/supabase-js';
 import { refreshSession } from '@/app/actions/auth';
+import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
 import { ExecuteTradeParamsSchema, TradeSignalSchema, ExecuteTradeParams } from '@/lib/validation';
 
 
@@ -17,13 +17,7 @@ interface DerivResponse {
 }
 
 const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false },
-    })
-    : null;
+const { client: supabaseAdmin } = getSupabaseAdmin();
 
 interface RiskConfig {
     stopLoss: number;

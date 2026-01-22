@@ -3,6 +3,7 @@
 import { History, Search, Filter, TrendingUp, TrendingDown, Clock } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
+import { useTradingStore } from '@/store/tradingStore';
 
 interface TradeRow {
     id: string;
@@ -19,15 +20,28 @@ interface TradeRow {
 }
 
 export default function HistoryPage() {
+    const { isAuthorized, activeAccountId } = useTradingStore();
     const [trades, setTrades] = useState<TradeRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
 
     useEffect(() => {
         let mounted = true;
+        if (!isAuthorized || !activeAccountId) {
+            setTrades([]);
+            setLoading(false);
+            return () => {
+                mounted = false;
+            };
+        }
+
+        setLoading(true);
         const loadTrades = async () => {
             try {
-                const res = await fetch('/api/trades?limit=200');
+                const res = await fetch('/api/trades?limit=200', { cache: 'no-store' });
+                if (!res.ok) {
+                    throw new Error('Failed to load trades');
+                }
                 const data = await res.json();
                 if (!mounted) return;
                 setTrades(Array.isArray(data.trades) ? data.trades : []);
@@ -43,7 +57,7 @@ export default function HistoryPage() {
         return () => {
             mounted = false;
         };
-    }, []);
+    }, [isAuthorized, activeAccountId]);
 
     const filteredTrades = useMemo(() => {
         if (!query) return trades;

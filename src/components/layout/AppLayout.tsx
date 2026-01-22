@@ -13,7 +13,8 @@ interface AppLayoutProps {
     children: React.ReactNode;
 }
 
-const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
+const RAW_APP_ID = (process.env.NEXT_PUBLIC_DERIV_APP_ID || '').trim();
+const APP_ID = Number.isFinite(Number(RAW_APP_ID)) && RAW_APP_ID ? RAW_APP_ID : '1089';
 const DEFAULT_SYMBOL = 'R_100';
 
 export default function AppLayout({ children }: AppLayoutProps) {
@@ -40,6 +41,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const engineRef = useRef<BotEngine | null>(null);
     const isConnectingRef = useRef(false);
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const reconnectAttemptsRef = useRef(0);
 
     // Sliding session: Refresh cookie every 5 minutes to keep session alive while app is open
     useEffect(() => {
@@ -55,6 +57,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
     const connectWebSocket = useCallback(() => {
         if (isConnectingRef.current) return;
+        if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+        }
         if (engineRef.current) {
             engineRef.current.shutdown();
             engineRef.current = null;
@@ -69,18 +75,20 @@ export default function AppLayout({ children }: AppLayoutProps) {
             ws.send(JSON.stringify({ ticks: DEFAULT_SYMBOL, subscribe: 1 }));
             setConnectionStatus(true);
             isConnectingRef.current = false;
+            reconnectAttemptsRef.current = 0;
 
+            const snapshot = useTradingStore.getState();
             engineRef.current = new BotEngine({
                 ws,
                 symbol: DEFAULT_SYMBOL,
-                maxStake,
-                cooldownMs,
-                entryMode,
-                entryTimeoutMs,
-                entryPollingMs,
-                entrySlippagePct,
-                entryAggressiveness,
-                entryMinEdgePct,
+                maxStake: snapshot.maxStake,
+                cooldownMs: snapshot.cooldownMs,
+                entryMode: snapshot.entryMode,
+                entryTimeoutMs: snapshot.entryTimeoutMs,
+                entryPollingMs: snapshot.entryPollingMs,
+                entrySlippagePct: snapshot.entrySlippagePct,
+                entryAggressiveness: snapshot.entryAggressiveness,
+                entryMinEdgePct: snapshot.entryMinEdgePct,
             });
         };
 
@@ -92,10 +100,18 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 engineRef.current = null;
             }
             if (pathname !== '/') {
+                const attempt = reconnectAttemptsRef.current;
+                const delay = Math.min(3000 * Math.pow(2, attempt), 30000);
+                reconnectAttemptsRef.current = Math.min(attempt + 1, 10);
                 reconnectTimerRef.current = setTimeout(() => {
                     connectWebSocket();
-                }, 3000);
+                }, delay);
             }
+        };
+
+        ws.onerror = () => {
+            setConnectionStatus(false);
+            isConnectingRef.current = false;
         };
 
         ws.onmessage = (msg) => {
@@ -113,7 +129,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 engineRef.current?.handleTick(quote);
             }
         };
-    }, [addTick, setConnectionStatus, entryMode, entryTimeoutMs, entryPollingMs, entrySlippagePct, entryAggressiveness, entryMinEdgePct, maxStake, cooldownMs, pathname]);
+    }, [addTick, setConnectionStatus, pathname]);
 
     useEffect(() => {
         if (pathname === '/') {

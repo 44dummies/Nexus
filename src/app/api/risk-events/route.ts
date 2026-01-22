@@ -1,32 +1,20 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
+import { getActiveAccountId, parseLimitParam } from '@/lib/server/requestUtils';
 
 export const runtime = 'nodejs';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-const supabaseAdmin = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-    ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false },
-    })
-    : null;
-
 export async function GET(request: Request) {
+    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const url = new URL(request.url);
-    const limit = Math.min(Number(url.searchParams.get('limit') || '50'), 200);
+    const limit = parseLimitParam(url.searchParams.get('limit'), 50, 200);
     const type = url.searchParams.get('type');
 
-    const cookieStore = await cookies();
-    const activeAccount = cookieStore.get('deriv_active_account')?.value
-        || cookieStore.get('deriv_demo_account')?.value
-        || cookieStore.get('deriv_account')?.value
-        || null;
+    const activeAccount = await getActiveAccountId();
 
     if (!activeAccount) {
         return NextResponse.json({ error: 'No active account' }, { status: 401 });
@@ -45,22 +33,25 @@ export async function GET(request: Request) {
 
     const { data, error } = await query;
     if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        console.error('Supabase risk events query failed', { error });
+        return NextResponse.json({
+            error: error.message,
+            code: error.code,
+            hint: error.hint,
+            details: error.details,
+        }, { status: 500 });
     }
 
     return NextResponse.json({ events: data || [] });
 }
 
 export async function POST(request: Request) {
+    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: 'Supabase not configured' }, { status: 500 });
+        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
     }
 
-    const cookieStore = await cookies();
-    const activeAccount = cookieStore.get('deriv_active_account')?.value
-        || cookieStore.get('deriv_demo_account')?.value
-        || cookieStore.get('deriv_account')?.value
-        || null;
+    const activeAccount = await getActiveAccountId();
 
     if (!activeAccount) {
         return NextResponse.json({ error: 'No active account' }, { status: 401 });
@@ -79,7 +70,13 @@ export async function POST(request: Request) {
     });
 
     if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        console.error('Supabase risk events insert failed', { error });
+        return NextResponse.json({
+            error: error.message,
+            code: error.code,
+            hint: error.hint,
+            details: error.details,
+        }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
