@@ -5,9 +5,9 @@ import { getActiveAccountId, parseLimitParam } from '@/lib/server/requestUtils';
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
-    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
+    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
+        return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const url = new URL(request.url);
@@ -31,15 +31,15 @@ export async function GET(request: Request) {
         query = query.eq('contract_id', Number(contractId));
     }
 
-    const { data, error } = await query;
+    const { data, error: queryError } = await query;
 
-    if (error) {
-        console.error('Supabase order status query failed', { error });
+    if (queryError) {
+        console.error('Supabase order status query failed', { error: queryError });
         return NextResponse.json({
-            error: error.message,
-            code: error.code,
-            hint: error.hint,
-            details: error.details,
+            error: queryError.message,
+            code: queryError.code,
+            hint: queryError.hint,
+            details: queryError.details,
         }, { status: 500 });
     }
 

@@ -5,9 +5,9 @@ import { getActiveAccountId } from '@/lib/server/requestUtils';
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
-    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
+    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
+        return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const activeAccount = await getActiveAccountId();

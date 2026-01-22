@@ -5,9 +5,9 @@ import { getActiveAccountId, parseLimitParam } from '@/lib/server/requestUtils';
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
-    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
+    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
+        return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const url = new URL(request.url);
@@ -35,15 +35,15 @@ export async function GET(request: Request) {
         query = query.is('read_at', null);
     }
 
-    const { data, error } = await query;
+    const { data, error: queryError } = await query;
 
-    if (error) {
-        console.error('Supabase notifications query failed', { error });
+    if (queryError) {
+        console.error('Supabase notifications query failed', { error: queryError });
         return NextResponse.json({
-            error: error.message,
-            code: error.code,
-            hint: error.hint,
-            details: error.details,
+            error: queryError.message,
+            code: queryError.code,
+            hint: queryError.hint,
+            details: queryError.details,
         }, { status: 500 });
     }
 
@@ -51,9 +51,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
+    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
+        return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const activeAccount = await getActiveAccountId();
@@ -88,15 +88,15 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'No notifications provided' }, { status: 400 });
     }
 
-    const { data, error } = await query.select('id, read_at');
+    const { data, error: updateError } = await query.select('id, read_at');
 
-    if (error) {
-        console.error('Supabase notifications update failed', { error });
+    if (updateError) {
+        console.error('Supabase notifications update failed', { error: updateError });
         return NextResponse.json({
-            error: error.message,
-            code: error.code,
-            hint: error.hint,
-            details: error.details,
+            error: updateError.message,
+            code: updateError.code,
+            hint: updateError.hint,
+            details: updateError.details,
         }, { status: 500 });
     }
 

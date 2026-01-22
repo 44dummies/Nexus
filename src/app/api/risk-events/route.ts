@@ -5,9 +5,9 @@ import { getActiveAccountId, parseLimitParam } from '@/lib/server/requestUtils';
 export const runtime = 'nodejs';
 
 export async function GET(request: Request) {
-    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
+    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
+        return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const url = new URL(request.url);
@@ -31,14 +31,14 @@ export async function GET(request: Request) {
         query = query.eq('event_type', type);
     }
 
-    const { data, error } = await query;
-    if (error) {
-        console.error('Supabase risk events query failed', { error });
+    const { data, error: queryError } = await query;
+    if (queryError) {
+        console.error('Supabase risk events query failed', { error: queryError });
         return NextResponse.json({
-            error: error.message,
-            code: error.code,
-            hint: error.hint,
-            details: error.details,
+            error: queryError.message,
+            code: queryError.code,
+            hint: queryError.hint,
+            details: queryError.details,
         }, { status: 500 });
     }
 
@@ -46,9 +46,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-    const { client: supabaseAdmin, error, missing } = getSupabaseAdmin();
+    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        return NextResponse.json({ error: error || 'Supabase not configured', missing }, { status: 503 });
+        return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });
     }
 
     const activeAccount = await getActiveAccountId();
@@ -62,20 +62,20 @@ export async function POST(request: Request) {
     const detail = typeof body.detail === 'string' ? body.detail : null;
     const metadata = body.metadata && typeof body.metadata === 'object' ? body.metadata : null;
 
-    const { error } = await supabaseAdmin.from('risk_events').insert({
+    const { error: insertError } = await supabaseAdmin.from('risk_events').insert({
         account_id: activeAccount,
         event_type: eventType,
         detail,
         metadata,
     });
 
-    if (error) {
-        console.error('Supabase risk events insert failed', { error });
+    if (insertError) {
+        console.error('Supabase risk events insert failed', { error: insertError });
         return NextResponse.json({
-            error: error.message,
-            code: error.code,
-            hint: error.hint,
-            details: error.details,
+            error: insertError.message,
+            code: insertError.code,
+            hint: insertError.hint,
+            details: insertError.details,
         }, { status: 500 });
     }
 
