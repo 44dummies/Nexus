@@ -1,0 +1,11 @@
+# Nixpacks Configuration for Root Deployment
+# This acts as a fallback if Railway Root Directory is set to "/" (Repo Root)
+
+[phases.setup]
+nixPkgs = ["nodejs"]
+
+[phases.build]
+cmds = ["cd backend && npm install && npm run build"]
+
+[start]
+cmd = "cd backend && npm run start"
