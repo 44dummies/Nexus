@@ -4,7 +4,7 @@
         "builder": "NIXPACKS",
         "buildCommand": "npm install && npm run build",
         "watchPatterns": [
-            "backend/**"
+            "**"
         ]
     },
     "deploy": {
