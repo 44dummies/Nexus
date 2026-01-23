@@ -3,6 +3,7 @@
 import { motion, Variants } from 'framer-motion';
 import { ArrowRight, Zap, ShieldCheck, Activity } from 'lucide-react';
 import { Scene3D } from '@/components/three/Scene3D';
+import { apiFetch } from '@/lib/api';
 
 // Animation Variants
 const containerVariants: Variants = {
@@ -30,7 +31,7 @@ const itemVariants: Variants = {
 
 export default function LoginPage() {
   const handleLogin = () => {
-    fetch('/api/auth/start', { method: 'POST' })
+    apiFetch('/api/auth/start', { method: 'POST' })
       .then(async (res) => {
         if (!res.ok) {
           throw new Error('Auth start failed');

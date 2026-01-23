@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useTradingStore } from '@/store/tradingStore';
+import { apiFetch } from '@/lib/api';
 
 interface NotificationRow {
     id: string;
@@ -30,7 +31,7 @@ export default function NotificationsPanel() {
         setLoading(true);
         const loadNotifications = async () => {
             try {
-                const res = await fetch('/api/notifications?limit=6', { cache: 'no-store' });
+                const res = await apiFetch('/api/notifications?limit=6', { cache: 'no-store' });
                 if (!res.ok) {
                     throw new Error('Failed to load notifications');
                 }

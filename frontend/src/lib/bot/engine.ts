@@ -1,10 +1,10 @@
 import { evaluateRisk } from '@/lib/bot/risk';
 import { getBotConfig } from '@/lib/bot/config';
 import { getStrategy } from '@/lib/bot/strategies';
-import { executeTradeServer } from '@/app/actions/trade';
 import { useTradingStore } from '@/store/tradingStore';
 import { showTradeToast } from '@/lib/toast';
 import type { TradeSignal } from '@/lib/bot/types';
+import { apiFetch, executeTradeApi } from '@/lib/api';
 
 interface BotEngineOptions {
     ws: WebSocket;
@@ -289,7 +289,7 @@ export class BotEngine {
 
     private emitRiskEvent(eventType: string, detail: string, metadata?: Record<string, unknown>) {
         if (typeof fetch === 'undefined') return;
-        fetch('/api/risk-events', {
+        apiFetch('/api/risk-events', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -351,7 +351,8 @@ export class BotEngine {
         store.setLastTradeTime(Date.now());
         this.addLog('trade', `Executing ${signal} - $${stake} stake`, { signal, stake });
 
-        executeTradeServer(signal, {
+        executeTradeApi<{ contractId: number; profit: number; status?: string }>({
+            signal,
             stake,
             symbol: this.symbol,
             duration: duration ?? this.duration,

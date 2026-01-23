@@ -3,6 +3,7 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useTradingStore } from '@/store/tradingStore';
+import { apiFetch } from '@/lib/api';
 
 interface DayData {
     date: string;
@@ -50,7 +51,7 @@ function PerformanceHeatmap() {
         setLoading(true);
         const loadTrades = async () => {
             try {
-                const res = await fetch('/api/trades?limit=1000', { cache: 'no-store' });
+                const res = await apiFetch('/api/trades?limit=1000', { cache: 'no-store' });
                 if (!res.ok) {
                     throw new Error('Failed to load trades');
                 }

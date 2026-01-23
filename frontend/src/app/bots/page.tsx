@@ -1,6 +1,7 @@
 'use client';
 
 import { toast } from 'sonner';
+import { apiFetch } from '@/lib/api';
 import { useTradingStore } from '@/store/tradingStore';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
@@ -89,7 +90,7 @@ function BotsContent() {
         }
 
         try {
-            const res = await fetch('/api/bot-runs', {
+            const res = await apiFetch('/api/bot-runs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -137,7 +138,7 @@ function BotsContent() {
 
     const handleStopBot = async () => {
         try {
-            await fetch('/api/bot-runs', {
+            await apiFetch('/api/bot-runs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

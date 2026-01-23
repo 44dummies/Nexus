@@ -17,6 +17,7 @@ import {
     LogOut
 } from 'lucide-react';
 import { useTradingStore } from '@/store/tradingStore';
+import { apiFetch } from '@/lib/api';
 
 const navItems = [
     { href: '/dashboard', icon: LayoutDashboard, label: 'Overview' },
@@ -47,7 +48,7 @@ export default function Sidebar() {
 
     const handleLogout = async () => {
         try {
-            await fetch('/api/auth/session', {
+            await apiFetch('/api/auth/session', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action: 'logout' }),

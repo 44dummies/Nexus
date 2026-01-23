@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useTradingStore } from '@/store/tradingStore';
+import { apiFetch } from '@/lib/api';
 
 interface NotificationRow {
     id: string;
@@ -52,7 +53,7 @@ export default function NotificationsPage() {
         setLoading(true);
         const loadNotifications = async () => {
             try {
-                const res = await fetch('/api/notifications?limit=100', { cache: 'no-store' });
+                const res = await apiFetch('/api/notifications?limit=100', { cache: 'no-store' });
                 if (!res.ok) {
                     throw new Error('Failed to load notifications');
                 }
@@ -104,7 +105,7 @@ export default function NotificationsPage() {
             setMarkingIds((prev) => ids.reduce((acc, id) => ({ ...acc, [id]: true }), { ...prev }));
         }
         try {
-            const res = await fetch('/api/notifications', {
+            const res = await apiFetch('/api/notifications', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

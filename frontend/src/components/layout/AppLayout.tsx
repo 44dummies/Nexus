@@ -3,9 +3,9 @@
 import { useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
-import { refreshSession } from '@/app/actions/auth';
 import { useTradingStore } from '@/store/tradingStore';
 import { BotEngine } from '@/lib/bot/engine';
+import { apiFetch } from '@/lib/api';
 
 const Sidebar = dynamic(() => import('@/components/layout/Sidebar'), { ssr: false });
 
@@ -46,11 +46,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
     // Sliding session: Refresh cookie every 5 minutes to keep session alive while app is open
     useEffect(() => {
         const interval = setInterval(() => {
-            refreshSession().catch(console.error);
+            apiFetch('/api/auth/session').catch(console.error);
         }, 5 * 60 * 1000); // 5 minutes
 
         // Initial refresh on mount
-        refreshSession().catch(console.error);
+        apiFetch('/api/auth/session').catch(console.error);
 
         return () => clearInterval(interval);
     }, []);
@@ -138,7 +138,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
         const initSession = async () => {
             try {
-                const res = await fetch('/api/auth/session');
+                const res = await apiFetch('/api/auth/session');
                 const data = await res.json();
 
                 if (!data.authenticated) {

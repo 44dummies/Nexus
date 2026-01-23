@@ -4,6 +4,7 @@ import { useTradingStore } from '@/store/tradingStore';
 import { ChevronDown, Circle } from 'lucide-react';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { apiFetch } from '@/lib/api';
 
 export default function AccountSwitcher() {
     const { accounts, activeAccountId, setActiveAccount } = useTradingStore();
@@ -49,7 +50,7 @@ export default function AccountSwitcher() {
                                         }
 
                                         try {
-                                            const res = await fetch('/api/auth/session', {
+                                            const res = await apiFetch('/api/auth/session', {
                                                 method: 'POST',
                                                 headers: { 'Content-Type': 'application/json' },
                                                 body: JSON.stringify({

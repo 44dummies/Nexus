@@ -4,6 +4,7 @@ import { History, Search, Filter, TrendingUp, TrendingDown, Clock } from 'lucide
 import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { useTradingStore } from '@/store/tradingStore';
+import { apiFetch } from '@/lib/api';
 
 interface TradeRow {
     id: string;
@@ -38,7 +39,7 @@ export default function HistoryPage() {
         setLoading(true);
         const loadTrades = async () => {
             try {
-                const res = await fetch('/api/trades?limit=200', { cache: 'no-store' });
+                const res = await apiFetch('/api/trades?limit=200', { cache: 'no-store' });
                 if (!res.ok) {
                     throw new Error('Failed to load trades');
                 }

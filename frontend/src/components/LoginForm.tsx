@@ -3,6 +3,7 @@
 import { motion, Variants } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Activity, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
 
 const containerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -30,7 +31,7 @@ const itemVariants: Variants = {
 export function LoginForm() {
     const handleDerivConnect = async () => {
         try {
-            const res = await fetch('/api/auth/start', { method: 'POST' });
+            const res = await apiFetch('/api/auth/start', { method: 'POST' });
             const data = await res.json();
             if (data?.url) {
                 window.location.href = data.url;
