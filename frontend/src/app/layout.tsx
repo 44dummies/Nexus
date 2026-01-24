@@ -1,8 +1,15 @@
 import type { Metadata } from "next";
+import { Dancing_Script } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
 import AppLayout from "@/components/layout/AppLayout";
 import "./globals.css";
+
+const dancingScript = Dancing_Script({
+  subsets: ["latin"],
+  variable: "--font-dancing",
+  weight: ["400", "500", "600", "700"],
+});
 
 export const metadata: Metadata = {
   title: "DerivNexus | Automated Trading Terminal",
@@ -23,7 +30,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="font-sans antialiased">
+      <body className={`${dancingScript.variable} font-sans antialiased`}>
         <ThemeProvider
           attribute="class"
           defaultTheme="institutional"
