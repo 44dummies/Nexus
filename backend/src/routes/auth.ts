@@ -4,29 +4,13 @@ import type { Request, Response } from 'express';
 import { authorizeTokenCached } from '../lib/deriv';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { buildCookieOptions, buildStateCookieOptions, buildClearCookieOptions } from '../lib/requestUtils';
+import { encryptToken } from '../lib/sessionCrypto';
 
 const router = Router();
-
-const SESSION_ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_KEY;
 
 const { client: supabaseAdmin } = getSupabaseAdmin();
 
 const buildCookie = (maxAgeSeconds: number) => buildCookieOptions(maxAgeSeconds);
-
-const encryptToken = (token: string) => {
-    if (!SESSION_ENCRYPTION_KEY) return null;
-    const key = Buffer.from(SESSION_ENCRYPTION_KEY, 'base64');
-    if (key.length !== 32) return null;
-    const iv = crypto.randomBytes(12);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return {
-        iv: iv.toString('base64'),
-        tag: tag.toString('base64'),
-        ciphertext: ciphertext.toString('base64'),
-    };
-};
 
 const persistSession = async (payload: {
     accountId: string;

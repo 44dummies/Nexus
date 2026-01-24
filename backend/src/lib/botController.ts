@@ -25,6 +25,7 @@ interface BotRunConfig {
         drawdownLimitPct?: number;
         maxConsecutiveLosses?: number;
         maxConcurrentTrades?: number;
+        lossCooldownMs?: number;
     };
 }
 
@@ -158,14 +159,21 @@ function handleTick(botRunId: string, price: number): void {
 
     if (!evaluation.signal) return;
 
-    // Check risk limits
+    // Calculate stake with multiplier
+    let stake = config.stake;
+    if (evaluation.stakeMultiplier) {
+        stake = Math.max(0.35, stake * evaluation.stakeMultiplier);
+    }
+
+    // Check risk limits using actual stake
     const riskStatus = evaluateCachedRisk(accountId, {
-        proposedStake: config.stake,
+        proposedStake: stake,
         maxStake: config.maxStake ?? config.stake * 10,
         dailyLossLimitPct: config.risk?.dailyLossLimitPct ?? 2,
         drawdownLimitPct: config.risk?.drawdownLimitPct ?? 6,
         maxConsecutiveLosses: config.risk?.maxConsecutiveLosses ?? 3,
         cooldownMs: config.cooldownMs,
+        lossCooldownMs: config.risk?.lossCooldownMs,
         maxConcurrentTrades: config.risk?.maxConcurrentTrades,
     });
 
@@ -183,10 +191,9 @@ function handleTick(botRunId: string, price: number): void {
         return;
     }
 
-    // Calculate stake with multiplier
-    let stake = config.stake;
-    if (evaluation.stakeMultiplier) {
-        stake = Math.max(0.35, stake * evaluation.stakeMultiplier);
+    if (riskStatus.status === 'REDUCE_STAKE') {
+        const maxStake = config.maxStake ?? config.stake * 10;
+        stake = Math.min(stake, maxStake);
     }
 
     // Execute trade
@@ -227,6 +234,15 @@ async function executeTrade(
                 accountId,
                 accountType,
                 accountCurrency: currency,
+            },
+            {
+                dailyLossLimitPct: config.risk?.dailyLossLimitPct ?? 2,
+                drawdownLimitPct: config.risk?.drawdownLimitPct ?? 6,
+                maxConsecutiveLosses: config.risk?.maxConsecutiveLosses ?? 3,
+                cooldownMs: config.cooldownMs,
+                lossCooldownMs: config.risk?.lossCooldownMs,
+                maxStake: config.maxStake ?? config.stake * 10,
+                maxConcurrentTrades: config.risk?.maxConcurrentTrades,
             }
         );
 

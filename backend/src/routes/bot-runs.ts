@@ -140,9 +140,25 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Check if already has backend run
+        // Check if already has backend run (in-memory)
         if (hasActiveBackendRun(activeAccount)) {
             return res.status(400).json({ error: 'Account already has an active backend bot run' });
+        }
+
+        // Also check DB for active backend runs (in case of server restart or multi-instance)
+        const { data: existingRuns } = await supabaseAdmin
+            .from('bot_runs')
+            .select('id')
+            .eq('account_id', activeAccount)
+            .eq('backend_mode', true)
+            .eq('run_status', 'running')
+            .limit(1);
+
+        if (existingRuns && existingRuns.length > 0) {
+            return res.status(400).json({
+                error: 'Account has an active backend bot run in database. Stop it first or wait for it to finish.',
+                activeRunId: existingRuns[0].id
+            });
         }
 
         // Create DB record first

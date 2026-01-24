@@ -7,7 +7,7 @@ import NotificationsPanel from '@/components/dashboard/NotificationsPanel';
 import { useEffect, useMemo, useState } from 'react';
 import { useTradingStore } from '@/store/tradingStore';
 import { BotRunToggle } from '@/components/bots/BotRunToggle';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiUrl } from '@/lib/api';
 
 const PerformanceHeatmap = dynamic(() => import('@/components/analytics/PerformanceHeatmap'), { ssr: false });
 const DashboardStats = dynamic(() => import('@/components/dashboard/DashboardStats').then(mod => mod.DashboardStats), { ssr: false });
@@ -17,6 +17,7 @@ type TradeRow = {
     id?: string;
     profit?: number | string | null;
     created_at?: string | null;
+    contractId?: number | null;
 };
 
 const getUtcDayRange = () => {
@@ -37,11 +38,30 @@ function DashboardContent() {
     } = useTradingStore();
 
     const [todayTrades, setTodayTrades] = useState<TradeRow[]>([]);
-    const [netPnL, setNetPnL] = useState(0);
-    const [wins, setWins] = useState(0);
-    const [losses, setLosses] = useState(0);
-
     const totalTrades = todayTrades.length;
+
+    const { netPnL, wins, losses } = useMemo(() => {
+        let nextNet = 0;
+        let nextWins = 0;
+        let nextLosses = 0;
+
+        todayTrades.forEach((trade) => {
+            const profit = typeof trade.profit === 'number'
+                ? trade.profit
+                : typeof trade.profit === 'string'
+                    ? Number(trade.profit)
+                    : 0;
+            if (!Number.isFinite(profit)) return;
+            nextNet += profit;
+            if (profit >= 0) {
+                nextWins += 1;
+            } else {
+                nextLosses += 1;
+            }
+        });
+
+        return { netPnL: nextNet, wins: nextWins, losses: nextLosses };
+    }, [todayTrades]);
 
     const winRate = useMemo(() => {
         return totalTrades ? (wins / totalTrades) * 100 : 0;
@@ -50,9 +70,6 @@ function DashboardContent() {
     useEffect(() => {
         if (!isAuthorized) {
             setTodayTrades([]);
-            setNetPnL(0);
-            setWins(0);
-            setLosses(0);
             return;
         }
 
@@ -74,38 +91,12 @@ function DashboardContent() {
                     return Number.isFinite(time) && time >= startMs && time < endMs;
                 });
 
-                let nextNet = 0;
-                let nextWins = 0;
-                let nextLosses = 0;
-
-                filtered.forEach((trade) => {
-                    const profit = typeof trade.profit === 'number'
-                        ? trade.profit
-                        : typeof trade.profit === 'string'
-                            ? Number(trade.profit)
-                            : 0;
-                    if (Number.isFinite(profit)) {
-                        nextNet += profit;
-                        if (profit >= 0) {
-                            nextWins += 1;
-                        } else {
-                            nextLosses += 1;
-                        }
-                    }
-                });
-
                 if (isMounted) {
                     setTodayTrades(filtered);
-                    setNetPnL(nextNet);
-                    setWins(nextWins);
-                    setLosses(nextLosses);
                 }
             } catch {
                 if (isMounted) {
                     setTodayTrades([]);
-                    setNetPnL(0);
-                    setWins(0);
-                    setLosses(0);
                 }
             }
         };
@@ -116,6 +107,61 @@ function DashboardContent() {
         return () => {
             isMounted = false;
             clearInterval(interval);
+        };
+    }, [isAuthorized, activeAccountId]);
+
+    useEffect(() => {
+        if (!isAuthorized) return;
+
+        const streamUrl = apiUrl('/api/trades/stream');
+        const source = new EventSource(streamUrl, { withCredentials: true });
+
+        const handleTradeEvent = (event: MessageEvent) => {
+            try {
+                const payload = JSON.parse(event.data) as {
+                    id?: string | null;
+                    contractId?: number | null;
+                    profit?: number | string | null;
+                    createdAt?: string | null;
+                    created_at?: string | null;
+                    symbol?: string | null;
+                };
+
+                const createdAt = payload.createdAt || payload.created_at || null;
+                if (!createdAt) return;
+
+                const createdMs = new Date(createdAt).getTime();
+                if (!Number.isFinite(createdMs)) return;
+
+                const { startMs, endMs } = getUtcDayRange();
+                if (createdMs < startMs || createdMs >= endMs) return;
+
+                const tradeId = payload.id ?? null;
+                const contractId = payload.contractId ?? null;
+
+                setTodayTrades((prev) => {
+                    const exists = prev.some((trade) =>
+                        (trade.id && tradeId && trade.id === tradeId)
+                        || (trade.contractId && contractId && trade.contractId === contractId)
+                    );
+                    if (exists) return prev;
+                    return [{
+                        id: tradeId ?? undefined,
+                        contractId: contractId ?? undefined,
+                        profit: payload.profit ?? 0,
+                        created_at: createdAt,
+                    }, ...prev];
+                });
+            } catch {
+                // ignore malformed events
+            }
+        };
+
+        source.addEventListener('trade', handleTradeEvent);
+
+        return () => {
+            source.removeEventListener('trade', handleTradeEvent);
+            source.close();
         };
     }, [isAuthorized, activeAccountId]);
 

@@ -30,6 +30,30 @@ const connectionPool = new Map<string, WSConnectionState>();
 let globalReqId = 1000;
 const getReqId = () => globalReqId++;
 
+type ConnectionReadyListener = (accountId: string, isReconnect: boolean) => void;
+const connectionReadyListeners = new Map<string, Set<ConnectionReadyListener>>();
+
+export function registerConnectionReadyListener(accountId: string, listener: ConnectionReadyListener) {
+    let listeners = connectionReadyListeners.get(accountId);
+    if (!listeners) {
+        listeners = new Set();
+        connectionReadyListeners.set(accountId, listeners);
+    }
+    listeners.add(listener);
+}
+
+function notifyConnectionReady(accountId: string, isReconnect: boolean) {
+    const listeners = connectionReadyListeners.get(accountId);
+    if (!listeners) return;
+    for (const listener of listeners) {
+        try {
+            listener(accountId, isReconnect);
+        } catch (error) {
+            wsLogger.error({ accountId, error }, 'Connection ready listener error');
+        }
+    }
+}
+
 /**
  * Get or create a persistent WebSocket connection for an account
  */
@@ -66,7 +90,7 @@ export async function getOrCreateConnection(
 
     try {
         await connect(state, appId);
-        await authorize(state);
+        await authorize(state, false);
         return state;
     } catch (error) {
         cleanupConnection(accountId);
@@ -108,7 +132,7 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
 /**
  * Authorize the connection with token
  */
-function authorize(state: WSConnectionState): Promise<void> {
+function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
         if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
             reject(new Error('WebSocket not open'));
@@ -130,6 +154,7 @@ function authorize(state: WSConnectionState): Promise<void> {
                     reject(new Error(res.error.message));
                 } else {
                     state.authorized = true;
+                    notifyConnectionReady(state.accountId, isReconnect);
                     // Process queued messages
                     while (state.messageQueue.length > 0) {
                         const msg = state.messageQueue.shift();
@@ -255,7 +280,7 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
 
     try {
         await connect(state, appId);
-        await authorize(state);
+        await authorize(state, true);
     } catch (error) {
         wsLogger.error({ accountId: state.accountId, error }, 'Reconnect failed');
     }

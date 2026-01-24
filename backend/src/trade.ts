@@ -10,6 +10,8 @@ import {
     evaluateCachedRisk
 } from './lib/riskCache';
 import { tradeLogger } from './lib/logger';
+import { registerPendingSettlement, clearPendingSettlement } from './lib/settlementSubscriptions';
+import { persistNotification, persistOrderStatus, persistTrade } from './lib/tradePersistence';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const { client: supabaseAdmin } = getSupabaseAdmin();
@@ -40,6 +42,26 @@ const RISK_DEFAULTS: RiskConfig = {
     maxConsecutiveLosses: 3,
     lossCooldownMs: 2 * 60 * 60 * 1000,
 };
+
+/**
+ * Calculate duration in milliseconds from duration value and unit
+ */
+function calculateDurationMs(duration: number, durationUnit: string): number {
+    switch (durationUnit) {
+        case 't': // ticks - estimate ~1 second per tick
+            return duration * 1000;
+        case 's': // seconds
+            return duration * 1000;
+        case 'm': // minutes
+            return duration * 60 * 1000;
+        case 'h': // hours
+            return duration * 60 * 60 * 1000;
+        case 'd': // days
+            return duration * 24 * 60 * 60 * 1000;
+        default:
+            return duration * 1000; // Default to seconds
+    }
+}
 
 const toNumber = (value: unknown, fallback = 0) => {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -188,93 +210,6 @@ async function enforceServerRisk(accountId: string, botRunId?: string | null) {
         if (lastLossTime && now.getTime() - lastLossTime < risk.lossCooldownMs) {
             throw new Error('Loss cooldown active');
         }
-    }
-}
-
-async function persistTrade(payload: {
-    accountId: string;
-    accountType?: string | null;
-    botId?: string | null;
-    botRunId?: string | null;
-    entryProfileId?: string | null;
-    contractId: number;
-    symbol: string;
-    stake: number;
-    duration: number;
-    durationUnit: string;
-    profit: number;
-    status: string;
-}) {
-    if (!supabaseAdmin) return null;
-
-    const { data, error } = await supabaseAdmin.from('trades').insert({
-        account_id: payload.accountId,
-        account_type: payload.accountType ?? null,
-        bot_id: payload.botId ?? null,
-        bot_run_id: payload.botRunId ?? null,
-        entry_profile_id: payload.entryProfileId ?? null,
-        contract_id: payload.contractId,
-        symbol: payload.symbol,
-        stake: payload.stake,
-        duration: payload.duration,
-        duration_unit: payload.durationUnit,
-        profit: payload.profit,
-        status: payload.status,
-    }).select('id').maybeSingle();
-
-    if (error) {
-        throw error;
-    }
-
-    return data?.id ?? null;
-}
-
-async function persistNotification(payload: {
-    accountId: string;
-    title: string;
-    body: string;
-    type?: string | null;
-    data?: Record<string, unknown> | null;
-}) {
-    if (!supabaseAdmin) return;
-
-    const { error } = await supabaseAdmin.from('notifications').insert({
-        account_id: payload.accountId,
-        title: payload.title,
-        body: payload.body,
-        type: payload.type ?? null,
-        data: payload.data ?? null,
-    });
-
-    if (error) {
-        throw error;
-    }
-}
-
-async function persistOrderStatus(payload: {
-    accountId: string | null;
-    tradeId?: string | null;
-    contractId?: number | null;
-    event: string;
-    status?: string | null;
-    price?: number | null;
-    latencyMs?: number | null;
-    payload?: Record<string, unknown> | null;
-}) {
-    if (!supabaseAdmin) return;
-
-    const { error } = await supabaseAdmin.from('order_status').insert({
-        account_id: payload.accountId,
-        trade_id: payload.tradeId ?? null,
-        contract_id: payload.contractId ?? null,
-        event: payload.event,
-        status: payload.status ?? null,
-        price: payload.price ?? null,
-        latency_ms: payload.latencyMs ?? null,
-        payload: payload.payload ?? null,
-    });
-    if (error) {
-        throw error;
     }
 }
 
@@ -582,7 +517,16 @@ export async function executeTradeServer(
 export async function executeTradeServerFast(
     signal: 'CALL' | 'PUT',
     params: ExecuteTradeParams,
-    auth: { token: string; accountId: string; accountType: 'real' | 'demo'; accountCurrency?: string | null }
+    auth: { token: string; accountId: string; accountType: 'real' | 'demo'; accountCurrency?: string | null },
+    riskOverrides?: {
+        dailyLossLimitPct?: number;
+        drawdownLimitPct?: number;
+        maxConsecutiveLosses?: number;
+        cooldownMs?: number;
+        lossCooldownMs?: number;
+        maxStake?: number;
+        maxConcurrentTrades?: number;
+    }
 ): Promise<TradeResultFast> {
     const startTime = Date.now();
 
@@ -597,7 +541,7 @@ export async function executeTradeServerFast(
     }
 
     const { token, accountId, accountType, accountCurrency } = auth;
-    const stake = params.stake;
+    let stake = params.stake;
 
     // Check cached risk - fast path
     let riskEntry = getRiskCache(accountId);
@@ -614,12 +558,13 @@ export async function executeTradeServerFast(
     // Fast risk evaluation from cache
     const riskStatus = evaluateCachedRisk(accountId, {
         proposedStake: stake,
-        maxStake: params.stake * 10, // Allow reasonable stakes
-        dailyLossLimitPct: 2,
-        drawdownLimitPct: 6,
-        maxConsecutiveLosses: 3,
-        cooldownMs: 3000, // 3s cooldown between trades
-        lossCooldownMs: 60000, // 1 min after max loss streak
+        maxStake: riskOverrides?.maxStake ?? params.stake * 10, // Allow reasonable stakes
+        dailyLossLimitPct: riskOverrides?.dailyLossLimitPct ?? 2,
+        drawdownLimitPct: riskOverrides?.drawdownLimitPct ?? 6,
+        maxConsecutiveLosses: riskOverrides?.maxConsecutiveLosses ?? 3,
+        cooldownMs: riskOverrides?.cooldownMs ?? 3000, // 3s cooldown between trades
+        lossCooldownMs: riskOverrides?.lossCooldownMs ?? 60000, // 1 min after max loss streak
+        maxConcurrentTrades: riskOverrides?.maxConcurrentTrades,
     });
 
     if (riskStatus.status === 'HALT') {
@@ -635,6 +580,11 @@ export async function executeTradeServerFast(
     if (riskStatus.status === 'COOLDOWN') {
         const waitMs = riskStatus.cooldownMs ?? 1000;
         throw new Error(`Cooldown active - wait ${Math.ceil(waitMs / 1000)}s`);
+    }
+
+    if (riskStatus.status === 'REDUCE_STAKE') {
+        const maxStake = riskOverrides?.maxStake ?? params.stake * 10;
+        stake = Math.min(stake, maxStake);
     }
 
     // Record trade opening (updates concurrent count)
@@ -778,9 +728,18 @@ async function trackSettlementAsync(
     stake: number,
     params: ExecuteTradeParams
 ): Promise<void> {
-    const SETTLEMENT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+    // Calculate timeout based on trade duration + buffer
+    const durationMs = calculateDurationMs(params.duration ?? 5, params.durationUnit ?? 't');
+    const BUFFER_MS = 30 * 1000; // 30 second buffer for settlement processing
+    const MIN_TIMEOUT_MS = 30 * 1000; // Minimum 30 seconds
+    const MAX_TIMEOUT_MS = 10 * 60 * 1000; // Maximum 10 minutes
+    const SETTLEMENT_TIMEOUT_MS = Math.min(
+        MAX_TIMEOUT_MS,
+        Math.max(MIN_TIMEOUT_MS, durationMs + BUFFER_MS)
+    );
 
     try {
+        registerPendingSettlement(accountId, contractId);
         // First, subscribe to contract updates
         const subscribeResponse = await sendMessage<{
             proposal_open_contract?: {
@@ -801,6 +760,7 @@ async function trackSettlementAsync(
         if (subscribeResponse.error) {
             tradeLogger.error({ error: subscribeResponse.error.message, contractId }, 'Settlement subscription failed');
             recordTradeSettled(accountId, stake, 0); // Decrement concurrent count
+            clearPendingSettlement(accountId, contractId);
             return;
         }
 
@@ -808,6 +768,7 @@ async function trackSettlementAsync(
         const initialContract = subscribeResponse.proposal_open_contract;
         if (initialContract?.is_sold) {
             await handleSettlement(accountId, accountType, stake, params, initialContract);
+            clearPendingSettlement(accountId, contractId);
             return;
         }
 
@@ -836,6 +797,7 @@ async function trackSettlementAsync(
                     if (contract.contract_id === contractId && contract.is_sold) {
                         settled = true;
                         unregisterStreamingListener(accountId, listener);
+                        clearPendingSettlement(accountId, contractId);
                         resolve(contract);
                     }
                 }
@@ -850,6 +812,7 @@ async function trackSettlementAsync(
                     settled = true;
                     unregisterStreamingListener(accountId, listener);
                     tradeLogger.warn({ contractId }, 'Settlement timeout - contract not sold within timeout');
+                    clearPendingSettlement(accountId, contractId);
                     resolve(null);
                 }
             }, SETTLEMENT_TIMEOUT_MS);
@@ -865,6 +828,7 @@ async function trackSettlementAsync(
     } catch (error) {
         tradeLogger.error({ error, contractId }, 'Settlement tracking error');
         recordTradeSettled(accountId, stake, 0);
+        clearPendingSettlement(accountId, contractId);
     }
 }
 

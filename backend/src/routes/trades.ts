@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
+import { subscribeTradeStream } from '../lib/tradeStream';
 import { executeTradeServer, executeTradeServerFast } from '../trade';
 
 const router = Router();
@@ -36,6 +37,29 @@ router.get('/', async (req, res) => {
     }
 
     return res.json({ trades: data || [] });
+});
+
+router.get('/stream', (req, res) => {
+    const activeAccount = getValidatedAccountId(req);
+
+    if (!activeAccount) {
+        return res.status(401).json({ error: 'No active account' });
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    res.write(`event: ready\ndata: {"ok":true}\n\n`);
+
+    const unsubscribe = subscribeTradeStream(activeAccount, res);
+
+    req.on('close', () => {
+        unsubscribe();
+    });
 });
 
 router.post('/execute', async (req, res) => {

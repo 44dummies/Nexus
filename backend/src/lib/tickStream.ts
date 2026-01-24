@@ -4,7 +4,7 @@
  * Uses persistent WebSocket connections to receive real-time tick data.
  */
 
-import { sendMessage, sendMessageAsync, getOrCreateConnection, registerStreamingListener, unregisterStreamingListener } from './wsManager';
+import { sendMessage, sendMessageAsync, getOrCreateConnection, registerStreamingListener, unregisterStreamingListener, registerConnectionReadyListener } from './wsManager';
 import { tickLogger } from './logger';
 
 interface TickData {
@@ -33,6 +33,7 @@ const subscriptions = new Map<string, TickSubscription>();
 
 // Track which accounts have streaming listeners registered
 const registeredAccounts = new Set<string>();
+const registeredReconnectListeners = new Set<string>();
 
 /**
  * Create tick stream handler for WebSocket streaming messages
@@ -109,6 +110,16 @@ export async function subscribeTicks(
             registeredAccounts.add(accountId);
         }
 
+        if (!registeredReconnectListeners.has(accountId)) {
+            registerConnectionReadyListener(accountId, (_accId, isReconnect) => {
+                if (!isReconnect) return;
+                resubscribeAccountTicks(accountId).catch((error) => {
+                    tickLogger.error({ accountId, error }, 'Tick resubscribe failed');
+                });
+            });
+            registeredReconnectListeners.add(accountId);
+        }
+
         // Fetch tick history for warm start
         await fetchTickHistory(accountId, symbol, subscription);
 
@@ -119,6 +130,24 @@ export async function subscribeTicks(
         console.error(`Failed to subscribe to ticks for ${symbol}:`, error);
         subscription.isActive = false;
         throw error;
+    }
+}
+
+export async function resubscribeAccountTicks(accountId: string): Promise<void> {
+    const resubscribeTasks: Promise<void>[] = [];
+
+    for (const [key, subscription] of subscriptions.entries()) {
+        if (!key.startsWith(`${accountId}:`)) continue;
+        if (!subscription.isActive) continue;
+        resubscribeTasks.push(
+            startTickSubscription(accountId, subscription.symbol, subscription).catch((error) => {
+                tickLogger.error({ accountId, symbol: subscription.symbol, error }, 'Tick resubscribe error');
+            })
+        );
+    }
+
+    if (resubscribeTasks.length > 0) {
+        await Promise.all(resubscribeTasks);
     }
 }
 

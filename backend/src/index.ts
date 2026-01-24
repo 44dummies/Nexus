@@ -11,6 +11,7 @@ import botRunsRouter from './routes/bot-runs';
 import orderStatusRouter from './routes/order-status';
 import logger from './lib/logger';
 import { defaultRateLimit } from './lib/rateLimit';
+import { startTradeBackfillJob } from './lib/tradeBackfill';
 
 const app = express();
 
@@ -41,13 +42,18 @@ app.use(cors({
             return callback(null, true);
         }
 
-        // Allow Vercel preview deployments if main domain is allowed
-        // Pattern: https://<project>-<hash>-<team>.vercel.app
-        const vercelPreviewPattern = /^https:\/\/[\w-]+-[\w-]+-[\w-]+\.vercel\.app$/;
-        if (vercelPreviewPattern.test(normalizedOrigin)) {
-            // Check if any allowed origin is a vercel.app domain
-            const hasVercelOrigin = allowedOrigins.some(o => o.includes('.vercel.app'));
-            if (hasVercelOrigin) {
+        // Allow Vercel preview deployments ONLY for the same project
+        // Pattern for allowed: https://<project>.vercel.app
+        // Pattern for preview: https://<project>-<hash>-<team>.vercel.app
+        const vercelProjectMatch = allowedOrigins
+            .map(o => o.match(/^https:\/\/([a-z0-9-]+)\.vercel\.app$/i))
+            .find(m => m !== null);
+
+        if (vercelProjectMatch) {
+            const projectName = vercelProjectMatch[1];
+            // Preview pattern: project-hash-team.vercel.app (project must be prefix)
+            const previewPattern = new RegExp(`^https:\\/\\/${projectName}-[\\w]+-[\\w]+\\.vercel\\.app$`, 'i');
+            if (previewPattern.test(normalizedOrigin)) {
                 return callback(null, true);
             }
         }
@@ -95,11 +101,15 @@ app.use((req, res, next) => {
             return next();
         }
 
-        // Allow Vercel preview deployments if main domain is allowed
-        const vercelPreviewPattern = /^https:\/\/[\w-]+-[\w-]+-[\w-]+\.vercel\.app$/;
-        if (vercelPreviewPattern.test(checkOrigin)) {
-            const hasVercelOrigin = allowedOrigins.some(o => o.includes('.vercel.app'));
-            if (hasVercelOrigin) {
+        // Allow Vercel preview deployments ONLY for the same project
+        const vercelProjectMatch = allowedOrigins
+            .map(o => o.match(/^https:\/\/([a-z0-9-]+)\.vercel\.app$/i))
+            .find(m => m !== null);
+
+        if (vercelProjectMatch) {
+            const projectName = vercelProjectMatch[1];
+            const previewPattern = new RegExp(`^https:\\/\\/${projectName}-[\\w]+-[\\w]+\\.vercel\\.app$`, 'i');
+            if (previewPattern.test(checkOrigin)) {
                 return next();
             }
         }
@@ -122,5 +132,5 @@ app.use('/api/order-status', orderStatusRouter);
 const port = Number(process.env.PORT) || 4000;
 app.listen(port, () => {
     logger.info({ port, origins: allowedOrigins }, 'DerivNexus backend started');
+    startTradeBackfillJob();
 });
-
