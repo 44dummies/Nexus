@@ -10,6 +10,7 @@ import {
     getAccountBotRuns,
     hasActiveBackendRun,
 } from '../lib/botController';
+import { StartBackendSchema, StopBackendSchema } from '../lib/validation';
 
 const router = Router();
 
@@ -114,16 +115,15 @@ router.post('/', async (req, res) => {
 
     // ==================== BACKEND MODE ACTIONS ====================
 
+
+
     if (action === 'start-backend') {
-        const botId = typeof req.body?.botId === 'string' ? req.body.botId : 'rsi';
-        const symbol = typeof req.body?.symbol === 'string' ? req.body.symbol : 'R_100';
-        const stake = typeof req.body?.stake === 'number' ? req.body.stake : 1;
-        const maxStake = typeof req.body?.maxStake === 'number' ? req.body.maxStake : stake * 10;
-        const duration = typeof req.body?.duration === 'number' ? req.body.duration : 5;
-        const durationUnit = req.body?.durationUnit || 't';
-        const cooldownMs = typeof req.body?.cooldownMs === 'number' ? req.body.cooldownMs : 3000;
-        const strategyConfig = req.body?.strategyConfig ?? {};
-        const risk = req.body?.risk ?? {};
+        const validation = StartBackendSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid configuration', details: validation.error.format() });
+        }
+
+        const { botId, symbol, stake, maxStake, duration, durationUnit, cooldownMs, strategyConfig, risk, entry } = validation.data;
 
         // IMPORTANT: Select token based on active account type to prevent cross-mode trading
         const accountType = req.cookies?.deriv_active_type === 'demo' ? 'demo' : 'real';
@@ -222,8 +222,14 @@ router.post('/', async (req, res) => {
         }
     }
 
+
+
     if (action === 'stop-backend') {
-        const runId = typeof req.body?.runId === 'string' ? req.body.runId : null;
+        const validation = StopBackendSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
+        }
+        const { runId } = validation.data;
 
         if (runId) {
             await stopBotRun(runId);

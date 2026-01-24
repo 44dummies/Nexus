@@ -42,6 +42,16 @@ export function registerConnectionReadyListener(accountId: string, listener: Con
     listeners.add(listener);
 }
 
+export function unregisterConnectionReadyListener(accountId: string, listener: ConnectionReadyListener) {
+    const listeners = connectionReadyListeners.get(accountId);
+    if (listeners) {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+            connectionReadyListeners.delete(accountId);
+        }
+    }
+}
+
 function notifyConnectionReady(accountId: string, isReconnect: boolean) {
     const listeners = connectionReadyListeners.get(accountId);
     if (!listeners) return;

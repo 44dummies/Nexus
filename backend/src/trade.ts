@@ -738,6 +738,8 @@ async function trackSettlementAsync(
         Math.max(MIN_TIMEOUT_MS, durationMs + BUFFER_MS)
     );
 
+    let subscriptionId: string | undefined;
+
     try {
         registerPendingSettlement(accountId, contractId);
         // First, subscribe to contract updates
@@ -763,6 +765,8 @@ async function trackSettlementAsync(
             clearPendingSettlement(accountId, contractId);
             return;
         }
+
+        subscriptionId = subscribeResponse.subscription?.id;
 
         // Check if already settled in the initial response
         const initialContract = subscribeResponse.proposal_open_contract;
@@ -829,6 +833,14 @@ async function trackSettlementAsync(
         tradeLogger.error({ error, contractId }, 'Settlement tracking error');
         recordTradeSettled(accountId, stake, 0);
         clearPendingSettlement(accountId, contractId);
+    } finally {
+        // Always attempt to forget the subscription to stop updates
+        if (subscriptionId) {
+            sendMessage(accountId, { forget: subscriptionId }).catch((err) => {
+                // Ignore forget errors (e.g. if connection closed)
+                tradeLogger.debug({ error: err, contractId }, 'Failed to forget settlement subscription');
+            });
+        }
     }
 }
 

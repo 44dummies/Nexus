@@ -4,7 +4,7 @@
  * Uses persistent WebSocket connections to receive real-time tick data.
  */
 
-import { sendMessage, sendMessageAsync, getOrCreateConnection, registerStreamingListener, unregisterStreamingListener, registerConnectionReadyListener } from './wsManager';
+import { sendMessage, sendMessageAsync, getOrCreateConnection, registerStreamingListener, unregisterStreamingListener, registerConnectionReadyListener, unregisterConnectionReadyListener } from './wsManager';
 import { tickLogger } from './logger';
 
 interface TickData {
@@ -34,6 +34,10 @@ const subscriptions = new Map<string, TickSubscription>();
 // Track which accounts have streaming listeners registered
 const registeredAccounts = new Set<string>();
 const registeredReconnectListeners = new Set<string>();
+
+// Store listener references for cleanup
+const accountListeners = new Map<string, (accountId: string, message: { msg_type?: string; tick?: { symbol: string; quote: number; epoch: number } }) => void>();
+const reconnectListenerRefs = new Map<string, (accountId: string, isReconnect: boolean) => void>();
 
 /**
  * Create tick stream handler for WebSocket streaming messages
@@ -106,17 +110,21 @@ export async function subscribeTicks(
 
         // Register streaming listener for this account if not already registered
         if (!registeredAccounts.has(accountId)) {
-            registerStreamingListener(accountId, createTickStreamHandler(accountId));
+            const listener = createTickStreamHandler(accountId);
+            registerStreamingListener(accountId, listener);
+            accountListeners.set(accountId, listener);
             registeredAccounts.add(accountId);
         }
 
         if (!registeredReconnectListeners.has(accountId)) {
-            registerConnectionReadyListener(accountId, (_accId, isReconnect) => {
+            const reconnectListener = (_accId: string, isReconnect: boolean) => {
                 if (!isReconnect) return;
                 resubscribeAccountTicks(accountId).catch((error) => {
                     tickLogger.error({ accountId, error }, 'Tick resubscribe failed');
                 });
-            });
+            };
+            registerConnectionReadyListener(accountId, reconnectListener);
+            reconnectListenerRefs.set(accountId, reconnectListener);
             registeredReconnectListeners.add(accountId);
         }
 
@@ -329,6 +337,34 @@ async function unsubscribeTickStream(
     }
 
     tickLogger.info({ symbol }, 'Unsubscribed from ticks');
+
+    // Check if any subscriptions remain for this account
+    let hasRemainingSubscriptions = false;
+    for (const key of subscriptions.keys()) {
+        if (key.startsWith(`${accountId}:`)) {
+            hasRemainingSubscriptions = true;
+            break;
+        }
+    }
+
+    // If no subscriptions remain, cleanup listeners
+    if (!hasRemainingSubscriptions) {
+        // Cleanup tick listener
+        const tickListener = accountListeners.get(accountId);
+        if (tickListener) {
+            unregisterStreamingListener(accountId, tickListener);
+            accountListeners.delete(accountId);
+            registeredAccounts.delete(accountId);
+        }
+
+        // Cleanup reconnect listener
+        const reconnectListener = reconnectListenerRefs.get(accountId);
+        if (reconnectListener) {
+            unregisterConnectionReadyListener(accountId, reconnectListener);
+            reconnectListenerRefs.delete(accountId);
+            registeredReconnectListeners.delete(accountId);
+        }
+    }
 }
 
 /**
