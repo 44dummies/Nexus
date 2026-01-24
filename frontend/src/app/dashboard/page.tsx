@@ -4,32 +4,120 @@ import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import NotificationsPanel from '@/components/dashboard/NotificationsPanel';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTradingStore } from '@/store/tradingStore';
 import { BotRunToggle } from '@/components/bots/BotRunToggle';
+import { apiFetch } from '@/lib/api';
 
 const PerformanceHeatmap = dynamic(() => import('@/components/analytics/PerformanceHeatmap'), { ssr: false });
 const DashboardStats = dynamic(() => import('@/components/dashboard/DashboardStats').then(mod => mod.DashboardStats), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
+
+type TradeRow = {
+    id?: string;
+    profit?: number | string | null;
+    created_at?: string | null;
+};
+
+const getUtcDayRange = () => {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
+    return { startMs: start.getTime(), endMs: end.getTime() };
+};
 
 function DashboardContent() {
     const {
         lastTick,
         prevTick,
         botRunning,
-        totalProfitToday,
-        totalLossToday,
-        tradeResults,
+        isAuthorized,
+        activeAccountId,
     } = useTradingStore();
 
-    const netPnL = totalProfitToday - totalLossToday;
-    const totalTrades = tradeResults.length;
-    const { wins, losses, winRate } = useMemo(() => {
-        const wins = tradeResults.filter((t) => t.profit >= 0).length;
-        const losses = tradeResults.length - wins;
-        const winRate = tradeResults.length ? (wins / tradeResults.length) * 100 : 0;
-        return { wins, losses, winRate };
-    }, [tradeResults]);
+    const [todayTrades, setTodayTrades] = useState<TradeRow[]>([]);
+    const [netPnL, setNetPnL] = useState(0);
+    const [wins, setWins] = useState(0);
+    const [losses, setLosses] = useState(0);
+
+    const totalTrades = todayTrades.length;
+
+    const winRate = useMemo(() => {
+        return totalTrades ? (wins / totalTrades) * 100 : 0;
+    }, [wins, totalTrades]);
+
+    useEffect(() => {
+        if (!isAuthorized) {
+            setTodayTrades([]);
+            setNetPnL(0);
+            setWins(0);
+            setLosses(0);
+            return;
+        }
+
+        let isMounted = true;
+
+        const fetchTodayTrades = async () => {
+            try {
+                const res = await apiFetch('/api/trades?limit=1000');
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to fetch trades');
+                }
+
+                const trades = Array.isArray(data?.trades) ? data.trades as TradeRow[] : [];
+                const { startMs, endMs } = getUtcDayRange();
+                const filtered = trades.filter((trade) => {
+                    if (!trade.created_at) return false;
+                    const time = new Date(trade.created_at).getTime();
+                    return Number.isFinite(time) && time >= startMs && time < endMs;
+                });
+
+                let nextNet = 0;
+                let nextWins = 0;
+                let nextLosses = 0;
+
+                filtered.forEach((trade) => {
+                    const profit = typeof trade.profit === 'number'
+                        ? trade.profit
+                        : typeof trade.profit === 'string'
+                            ? Number(trade.profit)
+                            : 0;
+                    if (Number.isFinite(profit)) {
+                        nextNet += profit;
+                        if (profit >= 0) {
+                            nextWins += 1;
+                        } else {
+                            nextLosses += 1;
+                        }
+                    }
+                });
+
+                if (isMounted) {
+                    setTodayTrades(filtered);
+                    setNetPnL(nextNet);
+                    setWins(nextWins);
+                    setLosses(nextLosses);
+                }
+            } catch {
+                if (isMounted) {
+                    setTodayTrades([]);
+                    setNetPnL(0);
+                    setWins(0);
+                    setLosses(0);
+                }
+            }
+        };
+
+        fetchTodayTrades();
+        const interval = setInterval(fetchTodayTrades, 30000);
+
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+        };
+    }, [isAuthorized, activeAccountId]);
 
     return (
         <div className="relative min-h-screen">

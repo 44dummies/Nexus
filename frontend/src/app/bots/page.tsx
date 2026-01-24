@@ -111,6 +111,10 @@ function BotsContent() {
             return;
         }
 
+        const duration = selectedBotConfig.duration ?? 5;
+        const durationUnit = selectedBotConfig.durationUnit ?? 't';
+        const botCooldownMs = selectedBotConfig.cooldownMs ?? cooldownMs;
+
         try {
             const res = await apiFetch('/api/bot-runs', {
                 method: 'POST',
@@ -121,16 +125,16 @@ function BotsContent() {
                     symbol: selectedMarket,
                     stake: baseStake,
                     maxStake: maxStake,
-                    duration: 5, // Default duration
-                    durationUnit: 't',
-                    cooldownMs: cooldownMs,
+                    duration,
+                    durationUnit,
+                    cooldownMs: botCooldownMs,
                     strategyConfig: selectedBotConfig,
                     risk: {
                         baseStake,
                         maxStake,
                         stopLoss,
                         takeProfit,
-                        cooldownMs,
+                        cooldownMs: botCooldownMs,
                         baseRiskPct,
                         dailyLossLimitPct,
                         drawdownLimitPct,

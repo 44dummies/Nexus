@@ -13,6 +13,8 @@ interface BotRunToggleProps {
     className?: string;
 }
 
+const DEFAULT_SYMBOL = 'R_100';
+
 export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps) {
     const [isBusy, setIsBusy] = useState(false);
     const {
@@ -21,13 +23,6 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
         activeRunId,
         selectedBotId,
         botConfigs,
-        entryProfileId,
-        entryMode,
-        entryTimeoutMs,
-        entryPollingMs,
-        entrySlippagePct,
-        entryAggressiveness,
-        entryMinEdgePct,
         baseStake,
         maxStake,
         stopLoss,
@@ -54,6 +49,9 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
 
         const selectedStrategy = selectedBotId || 'rsi';
         const selectedBotConfig = getBotConfig(selectedStrategy, botConfigs);
+        const duration = selectedBotConfig.duration ?? 5;
+        const durationUnit = selectedBotConfig.durationUnit ?? 't';
+        const botCooldownMs = selectedBotConfig.cooldownMs ?? cooldownMs;
 
         setIsBusy(true);
         try {
@@ -61,31 +59,26 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    action: 'start',
+                    action: 'start-backend',
                     botId: selectedStrategy,
-                    config: {
-                        entry: {
-                            profileId: entryProfileId,
-                            mode: entryMode,
-                            timeoutMs: entryTimeoutMs,
-                            pollingMs: entryPollingMs,
-                            slippagePct: entrySlippagePct,
-                            aggressiveness: entryAggressiveness,
-                            minEdgePct: entryMinEdgePct,
-                        },
-                        risk: {
-                            baseStake,
-                            maxStake,
-                            stopLoss,
-                            takeProfit,
-                            cooldownMs,
-                            baseRiskPct,
-                            dailyLossLimitPct,
-                            drawdownLimitPct,
-                            maxConsecutiveLosses,
-                            lossCooldownMs,
-                        },
-                        strategy: selectedBotConfig,
+                    symbol: DEFAULT_SYMBOL,
+                    stake: baseStake,
+                    maxStake,
+                    duration,
+                    durationUnit,
+                    cooldownMs: botCooldownMs,
+                    strategyConfig: selectedBotConfig,
+                    risk: {
+                        baseStake,
+                        maxStake,
+                        stopLoss,
+                        takeProfit,
+                        cooldownMs: botCooldownMs,
+                        baseRiskPct,
+                        dailyLossLimitPct,
+                        drawdownLimitPct,
+                        maxConsecutiveLosses,
+                        lossCooldownMs,
                     },
                 }),
             });
@@ -114,7 +107,7 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    action: 'stop',
+                    action: 'stop-backend',
                     runId: activeRunId,
                 }),
             });
