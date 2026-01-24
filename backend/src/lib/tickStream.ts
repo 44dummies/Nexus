@@ -5,6 +5,7 @@
  */
 
 import { sendMessage, sendMessageAsync, getOrCreateConnection } from './wsManager';
+import { tickLogger } from './logger';
 
 interface TickData {
     symbol: string;
@@ -130,10 +131,10 @@ async function fetchTickHistory(
                     subscription.lastEpoch = response.history.times[response.history.times.length - 1];
                 }
             }
-            console.log(`Loaded ${subscription.tickBuffer.length} historical ticks for ${symbol}`);
+            tickLogger.info({ symbol, count: subscription.tickBuffer.length }, 'Loaded historical ticks');
         }
     } catch (error) {
-        console.warn(`Tick history fetch error for ${symbol}:`, error);
+        tickLogger.warn({ symbol, error }, 'Tick history fetch error');
     }
 }
 
@@ -172,7 +173,7 @@ async function startTickSubscription(
         processTick(subscription, response.tick);
     }
 
-    console.log(`Subscribed to live ticks for ${symbol} (sub: ${subscription.subscriptionId})`);
+    tickLogger.info({ symbol, subscriptionId: subscription.subscriptionId }, 'Subscribed to live ticks');
 }
 
 /**
@@ -207,7 +208,7 @@ function processTick(
         try {
             listener(tickData);
         } catch (error) {
-            console.error('Tick listener error:', error);
+            tickLogger.error({ error }, 'Tick listener error');
         }
     }
 }
@@ -272,7 +273,7 @@ async function unsubscribeTickStream(
         }
     }
 
-    console.log(`Unsubscribed from ticks for ${symbol}`);
+    tickLogger.info({ symbol }, 'Unsubscribed from ticks');
 }
 
 /**
@@ -330,5 +331,5 @@ export function unsubscribeAll(accountId: string): void {
             subscriptions.delete(key);
         }
     }
-    console.log(`Unsubscribed all ticks for account ${accountId}`);
+    tickLogger.info({ accountId }, 'Unsubscribed all ticks');
 }

@@ -50,15 +50,15 @@ function LiveFeed() {
     return (
         <div className="glass-panel rounded-2xl p-6 h-full flex flex-col">
             {/* Header Row */}
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                 <div className="flex items-center gap-3">
                     <h3 className="text-sm font-mono text-muted-foreground uppercase tracking-widest">Live Feed</h3>
                     <span className={`px-2 py-0.5 rounded text-xs uppercase ${botRunning ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'}`}>
                         {botRunning ? '● ACTIVE' : '○ IDLE'}
                     </span>
                 </div>
-                <div className="flex items-center gap-4">
-                    <div className={`text-lg font-mono font-bold ${netPnL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className={`text-base sm:text-lg font-mono font-bold ${netPnL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                         {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)} USD
                     </div>
                     <button
@@ -109,7 +109,7 @@ function LiveFeed() {
             </div>
 
             {/* Stats Row */}
-            <div className="grid grid-cols-4 gap-4 mb-4 pb-4 border-b border-border">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b border-border">
                 <div>
                     <div className="text-xs text-muted-foreground mb-1">Today Profit</div>
                     <div className="font-mono text-emerald-500">+{totalProfitToday.toFixed(2)}</div>

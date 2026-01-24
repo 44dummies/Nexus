@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell, Search, Filter, Inbox, Check } from 'lucide-react';
+import { Bell, Search, Inbox, Check } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
@@ -154,8 +154,8 @@ export default function NotificationsPage() {
                 </p>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-4 md:items-center mb-6">
-                <div className="relative flex-1 max-w-md">
+            <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="relative w-full max-w-md">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
                         placeholder="Search notifications..."
@@ -164,30 +164,28 @@ export default function NotificationsPage() {
                         onChange={(e) => setQuery(e.currentTarget.value)}
                     />
                 </div>
-                <div className="flex items-center gap-2">
-                    {['all', 'order_status', 'trade_result'].map((type) => (
-                        <button
-                            key={type}
-                            onClick={() => setFilterType(type as typeof filterType)}
-                            className={cn(
-                                'px-3 py-1.5 rounded-full text-xs uppercase tracking-wider border transition-all',
-                                filterType === type
-                                    ? 'border-accent text-accent bg-accent/10'
-                                    : 'border-border/60 text-muted-foreground hover:border-accent/40'
-                            )}
-                        >
-                            {type === 'all' ? 'All' : typeLabels[type]}
-                        </button>
-                    ))}
-                    <button className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-border/60 text-muted-foreground hover:border-accent/40 transition-all text-xs uppercase tracking-wider">
-                        <Filter className="w-3.5 h-3.5" />
-                        Filter
-                    </button>
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="-mx-1 flex flex-1 items-center gap-2 overflow-x-auto px-1 pb-1">
+                        {['all', 'order_status', 'trade_result'].map((type) => (
+                            <button
+                                key={type}
+                                onClick={() => setFilterType(type as typeof filterType)}
+                                className={cn(
+                                    'whitespace-nowrap px-3 py-1.5 rounded-full text-xs uppercase tracking-wider border transition-all',
+                                    filterType === type
+                                        ? 'border-accent text-accent bg-accent/10'
+                                        : 'border-border/60 text-muted-foreground hover:border-accent/40'
+                                )}
+                            >
+                                {type === 'all' ? 'All' : typeLabels[type]}
+                            </button>
+                        ))}
+                    </div>
                     <button
                         onClick={() => markRead('all')}
                         disabled={markingAll || items.every((item) => item.read_at)}
                         className={cn(
-                            'flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs uppercase tracking-wider transition-all',
+                            'flex items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-full border text-xs uppercase tracking-wider transition-all',
                             markingAll || items.every((item) => item.read_at)
                                 ? 'border-border/50 text-muted-foreground/70 cursor-not-allowed'
                                 : 'border-accent/50 text-accent hover:border-accent'
@@ -231,7 +229,7 @@ export default function NotificationsPage() {
                                         <p className="font-medium">{item.title}</p>
                                         <p className="text-sm text-muted-foreground">{item.body}</p>
                                     </div>
-                                    <div className="flex items-center justify-between md:flex-col md:items-end md:gap-2 text-xs text-muted-foreground min-w-[160px]">
+                                    <div className="flex items-center justify-between md:flex-col md:items-end md:gap-2 text-xs text-muted-foreground w-full md:w-auto md:min-w-[170px]">
                                         <span>{formatTime(createdAt)}</span>
                                         <span>{formatDate(createdAt)}</span>
                                         {profit !== null && (

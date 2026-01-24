@@ -10,15 +10,25 @@ const PerformanceHeatmap = dynamic(() => import('@/components/analytics/Performa
 function DashboardContent() {
     return (
         <div className="relative min-h-screen">
-            {/* Main Content */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Performance Heatmap (Summary) */}
-                <div>
-                    <h3 className="text-lg font-semibold mb-4">Performance Overview</h3>
-                    <PerformanceHeatmap />
+            <div className="mx-auto w-full max-w-6xl px-6 py-8">
+                <div className="mb-6 flex flex-col gap-2">
+                    <h1 className="text-3xl font-semibold tracking-tight">Overview</h1>
+                    <p className="text-sm text-muted-foreground">
+                        Performance snapshot and recent activity across your bots.
+                    </p>
                 </div>
 
-                <NotificationsPanel />
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr,1fr]">
+                    <section className="glass-panel rounded-2xl p-6">
+                        <div className="mb-4 flex items-center justify-between">
+                            <h3 className="text-lg font-semibold">Performance Overview</h3>
+                            <span className="text-xs uppercase tracking-widest text-muted-foreground">Last 30 days</span>
+                        </div>
+                        <PerformanceHeatmap />
+                    </section>
+
+                    <NotificationsPanel />
+                </div>
             </div>
         </div>
     );

@@ -83,22 +83,15 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 symbol: DEFAULT_SYMBOL,
                 maxStake: snapshot.maxStake,
                 cooldownMs: snapshot.cooldownMs,
-                entryMode: snapshot.entryMode,
-                entryTimeoutMs: snapshot.entryTimeoutMs,
-                entryPollingMs: snapshot.entryPollingMs,
-                entrySlippagePct: snapshot.entrySlippagePct,
-                entryAggressiveness: snapshot.entryAggressiveness,
-                entryMinEdgePct: snapshot.entryMinEdgePct,
             });
         };
 
         ws.onclose = () => {
             setConnectionStatus(false);
             isConnectingRef.current = false;
-            if (engineRef.current) {
-                engineRef.current.shutdown();
-                engineRef.current = null;
-            }
+            // Bot keeps running on backend, just clear local ref
+            engineRef.current = null;
+
             if (pathname !== '/') {
                 const attempt = reconnectAttemptsRef.current;
                 const delay = Math.min(3000 * Math.pow(2, attempt), 30000);
@@ -121,12 +114,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 return;
             }
 
-            engineRef.current?.handleMessage(response);
-
             if (response.msg_type === 'tick') {
                 const quote = Number(response.tick?.quote);
                 addTick(quote);
-                engineRef.current?.handleTick(quote);
+                const epoch = Number(response.tick?.epoch);
+                engineRef.current?.onTick(quote, epoch);
             }
         };
     }, [addTick, setConnectionStatus, pathname]);
@@ -178,7 +170,6 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 wsRef.current.close();
                 wsRef.current = null;
             }
-            engineRef.current?.shutdown();
             engineRef.current = null;
         };
     }, [pathname, setAccounts, setActiveAccount, setUser, connectWebSocket, router]);
@@ -189,7 +180,6 @@ export default function AppLayout({ children }: AppLayoutProps) {
             wsRef.current.close();
             wsRef.current = null;
         }
-        engineRef.current?.shutdown();
         engineRef.current = null;
         setConnectionStatus(false);
     }, [isAuthorized, setConnectionStatus]);
@@ -197,16 +187,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
     useEffect(() => {
         if (!engineRef.current) return;
         engineRef.current.updateConfig({
-            entryMode,
-            entryTimeoutMs,
-            entryPollingMs,
-            entrySlippagePct,
-            entryAggressiveness,
-            entryMinEdgePct,
             maxStake,
             cooldownMs,
         });
-    }, [entryMode, entryTimeoutMs, entryPollingMs, entrySlippagePct, entryAggressiveness, entryMinEdgePct, maxStake, cooldownMs]);
+    }, [maxStake, cooldownMs]);
 
     const isLoginRoute = pathname === '/';
 

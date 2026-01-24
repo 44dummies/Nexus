@@ -9,6 +9,7 @@ import {
     recordTradeSettled,
     evaluateCachedRisk
 } from './lib/riskCache';
+import { tradeLogger } from './lib/logger';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const { client: supabaseAdmin } = getSupabaseAdmin();
@@ -371,7 +372,7 @@ export async function executeTradeServer(
                     event: 'error',
                     status: response.error.code || 'error',
                     payload: { message: response.error.message, code: response.error.code },
-                }).catch((err) => console.error('Order status error persist failed', err));
+                }).catch((err) => tradeLogger.error({ err }, 'Order status error persist failed'));
                 cleanup();
                 clearTimeout(timeout);
                 reject(new Error(response.error.message));
@@ -396,7 +397,7 @@ export async function executeTradeServer(
                     accountId,
                     event: 'proposal_requested',
                     payload: proposalReq,
-                }).catch((err) => console.error('Order status persist failed', err));
+                }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
             }
 
             if (response.msg_type === 'proposal') {
@@ -418,7 +419,7 @@ export async function executeTradeServer(
                         ask_price: proposal.ask_price,
                         payout: proposal.payout,
                     },
-                }).catch((err) => console.error('Order status persist failed', err));
+                }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
 
                 if (
                     entryMode === 'HYBRID_LIMIT_MARKET'
@@ -443,7 +444,7 @@ export async function executeTradeServer(
                                     slippagePct,
                                     tolerancePct: entrySlippagePct,
                                 },
-                            }).catch((err) => console.error('Order status persist failed', err));
+                            }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
                             cleanup();
                             clearTimeout(timeout);
                             reject(new Error('Slippage exceeded tolerance'));
@@ -463,7 +464,7 @@ export async function executeTradeServer(
                     event: 'buy_sent',
                     price: proposal.ask_price ?? null,
                     payload: buyReq,
-                }).catch((err) => console.error('Order status persist failed', err));
+                }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
             }
 
             if (response.msg_type === 'buy') {
@@ -480,7 +481,7 @@ export async function executeTradeServer(
                     latencyMs: buyLatency,
                     price: buy.buy_price ?? null,
                     payload: buy,
-                }).catch((err) => console.error('Order status persist failed', err));
+                }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
                 persistNotification({
                     accountId,
                     title: 'Order Executed',
@@ -491,7 +492,7 @@ export async function executeTradeServer(
                         symbol: params.symbol,
                         status: 'open',
                     },
-                }).catch((err) => console.error('Notification persistence failed', err));
+                }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
                 ws.send(JSON.stringify({
                     proposal_open_contract: 1,
                     contract_id: contractId,
@@ -539,8 +540,8 @@ export async function executeTradeServer(
                                 profit: contract.profit,
                                 payout: contract.payout,
                             },
-                        }).catch((err) => console.error('Order status persist failed', err));
-                    }).catch((err) => console.error('Trade persistence failed', err));
+                        }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
+                    }).catch((err) => tradeLogger.error({ err }, 'Trade persistence failed'));
 
                     persistNotification({
                         accountId,
@@ -553,7 +554,7 @@ export async function executeTradeServer(
                             status: contract.status,
                             symbol: params.symbol,
                         },
-                    }).catch((err) => console.error('Notification persistence failed', err));
+                    }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
                 }
             }
         });
@@ -565,7 +566,7 @@ export async function executeTradeServer(
                 event: 'error',
                 status: 'socket_error',
                 payload: { message: err.message },
-            }).catch((error) => console.error('Order status error persist failed', error));
+            }).catch((error) => tradeLogger.error({ error }, 'Order status error persist failed'));
             cleanup();
             clearTimeout(timeout);
             reject(err);
@@ -707,7 +708,7 @@ export async function executeTradeServerFast(
                         slippagePct: ((checkPrice - entryTargetPrice) / entryTargetPrice) * 100,
                         tolerancePct: entrySlippagePct,
                     },
-                }).catch(err => console.error('Order status persist failed', err));
+                }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
                 throw new Error('Slippage exceeded tolerance');
             }
         }
@@ -745,11 +746,11 @@ export async function executeTradeServerFast(
             latencyMs: executionTimeMs,
             price: buy.buy_price,
             payload: buy,
-        }).catch(err => console.error('Order status persist failed', err));
+        }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
 
         // Fire async settlement tracking (don't await)
         trackSettlementAsync(accountId, accountType, buy.contract_id, stake, params)
-            .catch(err => console.error('Settlement tracking failed', err));
+            .catch(err => tradeLogger.error({ err }, 'Settlement tracking failed'));
 
         return {
             contractId: buy.contract_id,
@@ -794,7 +795,7 @@ async function trackSettlementAsync(
         }, 120000); // 2 minute timeout for settlement
 
         if (settlementResponse.error) {
-            console.error('Settlement subscription failed:', settlementResponse.error.message);
+            tradeLogger.error({ error: settlementResponse.error.message }, 'Settlement subscription failed');
             return;
         }
 
@@ -842,10 +843,10 @@ async function trackSettlementAsync(
                     profit: contract.profit,
                     payout: contract.payout,
                 },
-            }).catch(err => console.error('Order status persist failed', err));
+            }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
         }
     } catch (error) {
-        console.error('Settlement tracking error:', error);
+        tradeLogger.error({ error }, 'Settlement tracking error');
         // Still update risk cache to decrement concurrent count
         recordTradeSettled(accountId, stake, 0);
     }

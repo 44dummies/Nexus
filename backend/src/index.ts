@@ -9,6 +9,7 @@ import notificationsRouter from './routes/notifications';
 import riskEventsRouter from './routes/risk-events';
 import botRunsRouter from './routes/bot-runs';
 import orderStatusRouter from './routes/order-status';
+import logger from './lib/logger';
 
 const app = express();
 
@@ -89,6 +90,6 @@ app.use('/api/order-status', orderStatusRouter);
 
 const port = Number(process.env.PORT) || 4000;
 app.listen(port, () => {
-    // eslint-disable-next-line no-console
-    console.log(`DerivNexus backend listening on ${port}`);
+    logger.info({ port, origins: allowedOrigins }, 'DerivNexus backend started');
 });
+

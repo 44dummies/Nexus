@@ -9,6 +9,7 @@ import { evaluateStrategy, getRequiredTicks, getStrategyName, type StrategyConfi
 import { getRiskCache, initializeRiskCache, evaluateCachedRisk, recordTradeOpened } from './riskCache';
 import { executeTradeServerFast, type TradeResultFast } from '../trade';
 import { getSupabaseAdmin } from './supabaseAdmin';
+import { botLogger } from './logger';
 
 interface BotRunConfig {
     strategyId: string;
@@ -105,7 +106,7 @@ export async function startBotRun(
         handleTick(botRunId, tick.quote);
     });
 
-    console.log(`Bot run ${botRunId} started: ${config.strategyId} on ${config.symbol}`);
+    botLogger.info({ botRunId, strategyId: config.strategyId, symbol: config.symbol }, 'Bot run started');
 
     // Update database
     if (supabaseAdmin) {
@@ -167,7 +168,7 @@ function handleTick(botRunId: string, price: number): void {
     });
 
     if (riskStatus.status === 'HALT') {
-        console.log(`Bot ${botRunId}: Risk halt - ${riskStatus.reason}`);
+        botLogger.warn({ botRunId, reason: riskStatus.reason }, 'Bot risk halt');
         pauseBotRun(botRunId, `Risk limit: ${riskStatus.reason}`);
         return;
     }
@@ -229,7 +230,12 @@ async function executeTrade(
 
         botRun.tradesExecuted += 1;
 
-        console.log(`Bot ${botRunId}: ${signal} executed - Contract #${result.contractId} (${result.executionTimeMs}ms)`);
+        botLogger.info({
+            botRunId,
+            signal,
+            contractId: result.contractId,
+            executionTimeMs: result.executionTimeMs,
+        }, 'Trade executed');
 
         // Log to database
         if (supabaseAdmin) {
@@ -250,7 +256,7 @@ async function executeTrade(
 
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Trade failed';
-        console.error(`Bot ${botRunId}: Trade error - ${message}`);
+        botLogger.error({ botRunId, signal, stake, error: message }, 'Trade failed');
 
         if (supabaseAdmin) {
             await supabaseAdmin.from('bot_logs').insert({
@@ -273,7 +279,7 @@ export async function pauseBotRun(botRunId: string, reason?: string): Promise<vo
 
     botRun.status = 'paused';
 
-    console.log(`Bot run ${botRunId} paused: ${reason || 'manual'}`);
+    botLogger.info({ botRunId, reason }, 'Bot run paused');
 
     if (supabaseAdmin) {
         await supabaseAdmin
@@ -295,7 +301,7 @@ export async function resumeBotRun(botRunId: string): Promise<void> {
 
     botRun.status = 'running';
 
-    console.log(`Bot run ${botRunId} resumed`);
+    botLogger.info({ botRunId }, 'Bot run resumed');
 
     if (supabaseAdmin) {
         await supabaseAdmin
@@ -323,7 +329,11 @@ export async function stopBotRun(botRunId: string): Promise<void> {
     // Remove from active runs
     activeBotRuns.delete(botRunId);
 
-    console.log(`Bot run ${botRunId} stopped - ${botRun.tradesExecuted} trades, ${botRun.totalProfit} profit`);
+    botLogger.info({
+        botRunId,
+        tradesExecuted: botRun.tradesExecuted,
+        totalProfit: botRun.totalProfit,
+    }, 'Bot run stopped');
 
     if (supabaseAdmin) {
         await supabaseAdmin

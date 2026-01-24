@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Bell } from 'lucide-react';
 import { useTradingStore } from '@/store/tradingStore';
 import { apiFetch } from '@/lib/api';
@@ -53,13 +54,21 @@ export default function NotificationsPanel() {
     }, [isAuthorized, activeAccountId]);
 
     return (
-        <div className="glass-panel rounded-xl p-6">
+        <div className="glass-panel rounded-2xl p-6">
             <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold flex items-center gap-2">
                     <Bell className="w-5 h-5 text-accent" />
                     Notifications
                 </h3>
-                <span className="text-xs text-muted-foreground uppercase tracking-widest">Recent</span>
+                <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground uppercase tracking-widest">Recent</span>
+                    <Link
+                        href="/notifications"
+                        className="text-xs uppercase tracking-widest text-accent hover:text-accent/80 transition-colors"
+                    >
+                        View all
+                    </Link>
+                </div>
             </div>
 
             {loading ? (

@@ -24,7 +24,7 @@ function TradeContent() {
         <div className="relative min-h-screen">
             <MarketVisualizer lastTick={lastTick} prevTick={prevTick} />
 
-            <div className="relative z-10 p-4 lg:p-6">
+            <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-8">
                 <DashboardHeader
                     isAuthorized={isAuthorized}
                     isConnected={isConnected}
@@ -32,9 +32,9 @@ function TradeContent() {
                     balance={balance}
                 />
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 mt-6">
                     <div className="lg:col-span-2">
-                        <div className="glass-panel rounded-xl p-6 min-h-[400px] flex items-center justify-center">
+                        <div className="glass-panel rounded-xl p-6 min-h-[360px] sm:min-h-[420px] flex items-center justify-center">
                             <p className="text-muted-foreground">Advanced Charting (Coming Soon)</p>
                         </div>
                     </div>

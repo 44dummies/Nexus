@@ -1,4 +1,5 @@
 import WebSocket from 'ws';
+import { wsLogger } from './logger';
 
 interface QueuedMessage {
     data: string;
@@ -175,7 +176,7 @@ function setupMessageHandler(state: WSConnectionState): void {
 
             state.lastActivity = Date.now();
         } catch (error) {
-            console.error('WS message parse error:', error);
+            wsLogger.error({ error }, 'WS message parse error');
         }
     });
 }
@@ -185,7 +186,7 @@ function setupMessageHandler(state: WSConnectionState): void {
  */
 async function handleReconnect(state: WSConnectionState, appId: string): Promise<void> {
     if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error(`Max reconnect attempts reached for ${state.accountId}`);
+        wsLogger.error({ accountId: state.accountId, attempts: state.reconnectAttempts }, 'Max reconnect attempts reached');
         cleanupConnection(state.accountId);
         return;
     }
@@ -193,7 +194,7 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
     state.reconnectAttempts++;
     const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1);
 
-    console.log(`Reconnecting ${state.accountId} in ${delay}ms (attempt ${state.reconnectAttempts})`);
+    wsLogger.info({ accountId: state.accountId, delay, attempt: state.reconnectAttempts }, 'Reconnecting WebSocket');
 
     await new Promise(resolve => setTimeout(resolve, delay));
 
@@ -201,7 +202,7 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
         await connect(state, appId);
         await authorize(state);
     } catch (error) {
-        console.error(`Reconnect failed for ${state.accountId}:`, error);
+        wsLogger.error({ accountId: state.accountId, error }, 'Reconnect failed');
     }
 }
 
@@ -263,7 +264,7 @@ export function sendMessageAsync(
     const state = connectionPool.get(accountId);
 
     if (!state || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        console.error(`Cannot send async message: no connection for ${accountId}`);
+        wsLogger.warn({ accountId }, 'Cannot send async message: no connection');
         return;
     }
 
@@ -322,7 +323,7 @@ export function cleanupIdleConnections(): void {
 
     for (const [accountId, state] of connectionPool.entries()) {
         if (now - state.lastActivity > IDLE_TIMEOUT_MS) {
-            console.log(`Cleaning up idle connection for ${accountId}`);
+            wsLogger.info({ accountId }, 'Cleaning up idle connection');
             cleanupConnection(accountId);
         }
     }
