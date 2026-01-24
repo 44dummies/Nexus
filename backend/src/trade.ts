@@ -1,6 +1,14 @@
 import WebSocket from 'ws';
 import { getSupabaseAdmin } from './lib/supabaseAdmin';
 import { ExecuteTradeParamsSchema, TradeSignalSchema, type ExecuteTradeParams } from './lib/validation';
+import { getOrCreateConnection, sendMessage, cleanupConnection } from './lib/wsManager';
+import {
+    getRiskCache,
+    initializeRiskCache,
+    recordTradeOpened,
+    recordTradeSettled,
+    evaluateCachedRisk
+} from './lib/riskCache';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const { client: supabaseAdmin } = getSupabaseAdmin();
@@ -273,6 +281,18 @@ export interface TradeResult {
     contractId: number;
     profit: number;
     status?: string;
+}
+
+/**
+ * Fast trade result - returned immediately on buy confirmation
+ * Profit is 0 until settlement (handled async)
+ */
+export interface TradeResultFast {
+    contractId: number;
+    buyPrice: number;
+    payout: number;
+    status: 'open';
+    executionTimeMs: number;
 }
 
 export async function executeTradeServer(
@@ -551,4 +571,282 @@ export async function executeTradeServer(
             reject(err);
         });
     });
+}
+
+/**
+ * Fast trade execution using persistent WebSocket
+ * Returns immediately on buy confirmation (fire-and-forget)
+ * Settlement handled asynchronously
+ */
+export async function executeTradeServerFast(
+    signal: 'CALL' | 'PUT',
+    params: ExecuteTradeParams,
+    auth: { token: string; accountId: string; accountType: 'real' | 'demo'; accountCurrency?: string | null }
+): Promise<TradeResultFast> {
+    const startTime = Date.now();
+
+    const signalValidation = TradeSignalSchema.safeParse(signal);
+    if (!signalValidation.success) {
+        throw new Error('Invalid trade signal');
+    }
+
+    const paramsValidation = ExecuteTradeParamsSchema.safeParse(params);
+    if (!paramsValidation.success) {
+        throw new Error(`Invalid trade parameters: ${paramsValidation.error.issues.map(e => e.message).join(', ')}`);
+    }
+
+    const { token, accountId, accountType, accountCurrency } = auth;
+    const stake = params.stake;
+
+    // Check cached risk - fast path
+    let riskEntry = getRiskCache(accountId);
+    if (!riskEntry) {
+        // Initialize cache from balance
+        const balanceSnapshot = await getSettingValue(accountId, 'balance_snapshot');
+        const snapshot = balanceSnapshot && typeof balanceSnapshot === 'object'
+            ? balanceSnapshot as { balance?: number }
+            : null;
+        const balance = typeof snapshot?.balance === 'number' ? snapshot.balance : 10000;
+        riskEntry = initializeRiskCache(accountId, { equity: balance });
+    }
+
+    // Fast risk evaluation from cache
+    const riskStatus = evaluateCachedRisk(accountId, {
+        proposedStake: stake,
+        maxStake: params.stake * 10, // Allow reasonable stakes
+        dailyLossLimitPct: 2,
+        drawdownLimitPct: 6,
+        maxConsecutiveLosses: 3,
+        cooldownMs: 3000, // 3s cooldown between trades
+        lossCooldownMs: 60000, // 1 min after max loss streak
+    });
+
+    if (riskStatus.status === 'HALT') {
+        throw new Error(riskStatus.reason === 'DAILY_LOSS'
+            ? 'Daily loss limit reached'
+            : 'Drawdown limit reached');
+    }
+
+    if (riskStatus.status === 'MAX_CONCURRENT') {
+        throw new Error('Maximum concurrent trades reached (5)');
+    }
+
+    if (riskStatus.status === 'COOLDOWN') {
+        const waitMs = riskStatus.cooldownMs ?? 1000;
+        throw new Error(`Cooldown active - wait ${Math.ceil(waitMs / 1000)}s`);
+    }
+
+    // Record trade opening (updates concurrent count)
+    const openResult = recordTradeOpened(accountId, stake);
+    if (!openResult.allowed) {
+        throw new Error(openResult.reason ?? 'Risk check failed');
+    }
+
+    try {
+        // Get or create persistent connection
+        const connection = await getOrCreateConnection(token, accountId, APP_ID);
+
+        // Request proposal
+        const proposalResponse = await sendMessage<{
+            proposal?: {
+                id: string;
+                ask_price: number;
+                spot?: number;
+                payout?: number;
+            };
+            error?: { message: string };
+        }>(accountId, {
+            proposal: 1,
+            amount: stake,
+            basis: 'stake',
+            contract_type: signal,
+            currency: accountCurrency || 'USD',
+            duration: params.duration || 5,
+            duration_unit: params.durationUnit || 't',
+            symbol: params.symbol,
+        }, 5000);
+
+        if (proposalResponse.error) {
+            throw new Error(proposalResponse.error.message);
+        }
+
+        const proposal = proposalResponse.proposal;
+        if (!proposal?.id) {
+            throw new Error('No proposal received');
+        }
+
+        // Slippage enforcement with ask_price (fail-fast)
+        const entryMode = params.entryMode || 'MARKET';
+        const entryTargetPrice = params.entryTargetPrice;
+        const entrySlippagePct = params.entrySlippagePct ?? 1.5;
+
+        if (
+            entryMode === 'HYBRID_LIMIT_MARKET' &&
+            typeof entryTargetPrice === 'number' &&
+            Number.isFinite(entryTargetPrice) &&
+            entryTargetPrice > 0
+        ) {
+            // Use ask_price for slippage check (more accurate than spot)
+            const checkPrice = proposal.ask_price;
+            if (!Number.isFinite(checkPrice)) {
+                throw new Error('No ask_price available - cannot verify slippage');
+            }
+
+            // Calculate max acceptable price
+            const maxPrice = entryTargetPrice * (1 + entrySlippagePct / 100);
+            if (checkPrice > maxPrice) {
+                persistOrderStatus({
+                    accountId,
+                    event: 'slippage_reject',
+                    status: 'slippage_exceeded',
+                    price: checkPrice,
+                    payload: {
+                        askPrice: checkPrice,
+                        entryTargetPrice,
+                        maxPrice,
+                        slippagePct: ((checkPrice - entryTargetPrice) / entryTargetPrice) * 100,
+                        tolerancePct: entrySlippagePct,
+                    },
+                }).catch(err => console.error('Order status persist failed', err));
+                throw new Error('Slippage exceeded tolerance');
+            }
+        }
+
+        // Send buy request with price cap
+        const buyResponse = await sendMessage<{
+            buy?: {
+                contract_id: number;
+                buy_price: number;
+                payout?: number;
+            };
+            error?: { message: string; code?: string };
+        }>(accountId, {
+            buy: proposal.id,
+            price: proposal.ask_price, // Use quoted price as max
+        }, 10000);
+
+        if (buyResponse.error) {
+            throw new Error(buyResponse.error.message);
+        }
+
+        const buy = buyResponse.buy;
+        if (!buy?.contract_id) {
+            throw new Error('Buy confirmation not received');
+        }
+
+        const executionTimeMs = Date.now() - startTime;
+
+        // Persist order status asynchronously
+        persistOrderStatus({
+            accountId,
+            contractId: buy.contract_id,
+            event: 'buy_confirmed',
+            status: 'open',
+            latencyMs: executionTimeMs,
+            price: buy.buy_price,
+            payload: buy,
+        }).catch(err => console.error('Order status persist failed', err));
+
+        // Fire async settlement tracking (don't await)
+        trackSettlementAsync(accountId, accountType, buy.contract_id, stake, params)
+            .catch(err => console.error('Settlement tracking failed', err));
+
+        return {
+            contractId: buy.contract_id,
+            buyPrice: buy.buy_price,
+            payout: buy.payout ?? 0,
+            status: 'open',
+            executionTimeMs,
+        };
+
+    } catch (error) {
+        // Rollback concurrent trade count on failure
+        recordTradeSettled(accountId, stake, 0);
+        throw error;
+    }
+}
+
+/**
+ * Track settlement asynchronously after buy confirmation
+ */
+async function trackSettlementAsync(
+    accountId: string,
+    accountType: 'real' | 'demo',
+    contractId: number,
+    stake: number,
+    params: ExecuteTradeParams
+): Promise<void> {
+    try {
+        // Subscribe to contract updates
+        const settlementResponse = await sendMessage<{
+            proposal_open_contract?: {
+                contract_id: number;
+                is_sold: boolean;
+                profit: number;
+                status?: string;
+                payout?: number;
+            };
+            error?: { message: string };
+        }>(accountId, {
+            proposal_open_contract: 1,
+            contract_id: contractId,
+            subscribe: 1,
+        }, 120000); // 2 minute timeout for settlement
+
+        if (settlementResponse.error) {
+            console.error('Settlement subscription failed:', settlementResponse.error.message);
+            return;
+        }
+
+        const contract = settlementResponse.proposal_open_contract;
+        if (contract?.is_sold) {
+            // Update risk cache with profit/loss
+            recordTradeSettled(accountId, stake, contract.profit);
+
+            // Persist trade to database
+            await persistTrade({
+                accountId,
+                accountType,
+                botId: params.botId ?? null,
+                botRunId: params.botRunId ?? null,
+                contractId: contract.contract_id,
+                symbol: params.symbol,
+                stake,
+                duration: params.duration || 5,
+                durationUnit: params.durationUnit || 't',
+                profit: contract.profit,
+                status: contract.status || 'settled',
+                entryProfileId: params.entryProfileId ?? null,
+            });
+
+            // Send notification
+            await persistNotification({
+                accountId,
+                title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
+                body: `Contract #${contractId} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
+                type: 'trade_result',
+                data: {
+                    contractId,
+                    profit: contract.profit,
+                    status: contract.status,
+                    symbol: params.symbol,
+                },
+            });
+
+            persistOrderStatus({
+                accountId,
+                contractId,
+                event: 'contract_settled',
+                status: contract.status || 'settled',
+                payload: {
+                    profit: contract.profit,
+                    payout: contract.payout,
+                },
+            }).catch(err => console.error('Order status persist failed', err));
+        }
+    } catch (error) {
+        console.error('Settlement tracking error:', error);
+        // Still update risk cache to decrement concurrent count
+        recordTradeSettled(accountId, stake, 0);
+    }
 }

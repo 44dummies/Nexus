@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
-import { executeTradeServer } from '../trade';
+import { executeTradeServer, executeTradeServerFast } from '../trade';
 
 const router = Router();
 
@@ -62,13 +62,26 @@ router.post('/execute', async (req, res) => {
     }
 
     try {
-        const result = await executeTradeServer(signal as 'CALL' | 'PUT', params, {
-            token,
-            accountId,
-            accountType: activeType,
-            accountCurrency: accountCurrency || undefined,
-        });
-        return res.json(result);
+        // Use fast execution by default, fall back to slow if useFast=false
+        const useFast = req.body?.useFast !== false;
+
+        if (useFast) {
+            const result = await executeTradeServerFast(signal as 'CALL' | 'PUT', params, {
+                token,
+                accountId,
+                accountType: activeType,
+                accountCurrency: accountCurrency || undefined,
+            });
+            return res.json(result);
+        } else {
+            const result = await executeTradeServer(signal as 'CALL' | 'PUT', params, {
+                token,
+                accountId,
+                accountType: activeType,
+                accountCurrency: accountCurrency || undefined,
+            });
+            return res.json(result);
+        }
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Trade execution failed';
         return res.status(400).json({ error: message });

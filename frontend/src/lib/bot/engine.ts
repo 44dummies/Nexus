@@ -24,7 +24,8 @@ interface BotEngineOptions {
 
 export class BotEngine {
     private tickBuffer: number[] = [];
-    private inFlight = false;
+    private openTradeCount = 0; // Track concurrent trades instead of blocking
+    private readonly maxConcurrentTrades = 5;
     private bufferSize: number;
     private cooldownMs: number;
     private maxStake?: number;
@@ -347,11 +348,17 @@ export class BotEngine {
             return;
         }
 
-        this.inFlight = true;
-        store.setLastTradeTime(Date.now());
-        this.addLog('trade', `Executing ${signal} - $${stake} stake`, { signal, stake });
+        // Check concurrent trade limit
+        if (this.openTradeCount >= this.maxConcurrentTrades) {
+            this.addLog('info', `Max concurrent trades (${this.maxConcurrentTrades}) - skipping signal`);
+            return;
+        }
 
-        executeTradeApi<{ contractId: number; profit: number; status?: string }>({
+        this.openTradeCount += 1;
+        store.setLastTradeTime(Date.now());
+        this.addLog('trade', `Executing ${signal} - $${stake} stake (${this.openTradeCount}/${this.maxConcurrentTrades} in-flight)`, { signal, stake });
+
+        executeTradeApi<{ contractId: number; profit?: number; buyPrice?: number; status?: string }>({
             signal,
             stake,
             symbol: this.symbol,
@@ -365,16 +372,22 @@ export class BotEngine {
             entrySlippagePct: entryMeta?.slippagePct,
         })
             .then((result) => {
-                this.addLog('trade', `Trade placed: Contract #${result.contractId}`, { contractId: result.contractId });
-                showTradeToast.success(result.contractId, result.profit);
-                useTradingStore.getState().recordTradeResult(Number(result.profit));
+                // Fast execution returns buyPrice, settlement handled async on backend
+                const display = result.profit !== undefined
+                    ? `profit: ${result.profit >= 0 ? '+' : ''}${result.profit}`
+                    : `buyPrice: ${result.buyPrice}`;
+                this.addLog('trade', `Trade placed: Contract #${result.contractId} (${display})`, { contractId: result.contractId });
+                showTradeToast.success(result.contractId, result.profit ?? 0);
+                if (typeof result.profit === 'number') {
+                    useTradingStore.getState().recordTradeResult(Number(result.profit));
+                }
             })
             .catch((error) => {
                 this.addLog('error', `Trade failed: ${error.message}`);
                 showTradeToast.error(error.message);
             })
             .finally(() => {
-                this.inFlight = false;
+                this.openTradeCount = Math.max(0, this.openTradeCount - 1);
             });
     }
 
@@ -442,8 +455,8 @@ export class BotEngine {
             detail: evaluation.detail,
         });
 
-        if (this.inFlight) {
-            this.addLog('info', 'Trade in flight, skipping signal');
+        if (this.openTradeCount >= this.maxConcurrentTrades) {
+            this.addLog('info', `Max concurrent trades (${this.maxConcurrentTrades}) reached, skipping signal`);
             return;
         }
 
