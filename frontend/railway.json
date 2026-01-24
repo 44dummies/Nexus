@@ -1,12 +1,13 @@
 {
     "$schema": "https://railway.app/railway.schema.json",
     "build": {
-        "buildCommand": "npm install --include=dev && npm run build",
+        "buildCommand": "npm install && npm run build",
         "watchPatterns": [
             "src/**",
             "package.json",
-            "railway.json",
-            "nixpacks.toml"
+            "package-lock.json",
+            "next.config.*",
+            "railway.json"
         ]
     },
     "deploy": {
