@@ -84,16 +84,22 @@ export default function Sidebar() {
             className={`w-16 ${isCollapsed ? 'lg:w-16' : 'lg:w-64'} flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-screen sticky top-0 transition-[width] duration-300`}
         >
             {/* Logo */}
-            <div className={`flex items-center border-b border-sidebar-border p-2 ${isCollapsed ? 'lg:p-2' : 'lg:p-4'}`}>
-                <div className={`flex items-center gap-3 ${isCollapsed ? 'lg:justify-center w-full' : ''}`}>
-                    <div className="p-1 rounded-3xl bg-gradient-to-br from-sky-400/30 via-cyan-300/20 to-blue-600/30 shadow-soft-lg">
-                        <LogoMark size={40} className="drop-shadow-md lg:hidden" />
-                        <LogoMark size={isCollapsed ? 40 : 56} className="drop-shadow-md hidden lg:block" />
-                    </div>
-                    <span className={`${labelClassName} text-2xl font-semibold text-foreground font-dancing tracking-wide`}>
-                        Nexus
+            <div className="p-4 flex items-center justify-between border-b border-sidebar-border">
+                <div className="flex items-center gap-3">
+                    <LogoMark size={40} className="shadow-soft-lg" />
+                    <span className={`${labelClassName} text-lg font-bold text-foreground`}>
+                        DerivNexus
                     </span>
                 </div>
+                <button
+                    type="button"
+                    onClick={toggleCollapse}
+                    className="hidden lg:inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                    title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                >
+                    {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+                </button>
             </div>
 
             {/* Navigation */}
@@ -168,20 +174,6 @@ export default function Sidebar() {
                     </div>
                 </div>
             )}
-
-            {/* Collapse Toggle */}
-            <div className="px-3 py-3 border-t border-sidebar-border">
-                <button
-                    type="button"
-                    onClick={toggleCollapse}
-                    className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'}`}
-                    aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                    title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                >
-                    {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
-                    <span className={`${labelClassName} text-sm`}>{isCollapsed ? 'Expand' : 'Collapse'}</span>
-                </button>
-            </div>
 
             {/* Logout */}
             <div className="p-3 border-t border-sidebar-border">
