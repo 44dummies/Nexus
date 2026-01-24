@@ -3,7 +3,7 @@
  * Replaces per-trade DB scans with cached values that update on settlement.
  */
 
-interface RiskCacheEntry {
+export interface RiskCacheEntry {
     accountId: string;
     dailyPnL: number;
     totalLossToday: number;
