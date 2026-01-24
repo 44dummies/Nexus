@@ -32,7 +32,7 @@ export function buildCookieOptions(maxAgeSeconds: number) {
         httpOnly: true,
         secure,
         sameSite,
-        maxAge: maxAgeSeconds,
+        maxAge: maxAgeSeconds * 1000, // Express expects milliseconds
         path: '/',
     } as const;
 }
@@ -43,9 +43,27 @@ export function buildStateCookieOptions() {
         httpOnly: true,
         secure,
         sameSite: sameSite === 'none' ? 'none' : 'lax',
-        maxAge: 5 * 60,
+        maxAge: 5 * 60 * 1000, // 5 minutes in milliseconds
         path: '/',
     } as const;
+}
+
+/**
+ * Returns the active account ID only if it matches one of the authenticated account cookies.
+ * This prevents spoofing by validating the active account against known session tokens.
+ */
+export function getValidatedAccountId(req: Request): string | null {
+    const activeAccount = req.cookies?.deriv_active_account;
+    const realAccount = req.cookies?.deriv_account;
+    const demoAccount = req.cookies?.deriv_demo_account;
+
+    // Only return if active account matches one of the authenticated accounts
+    if (activeAccount && (activeAccount === realAccount || activeAccount === demoAccount)) {
+        return activeAccount;
+    }
+
+    // Fallback to the first available authenticated account
+    return realAccount || demoAccount || null;
 }
 
 export function buildClearCookieOptions() {

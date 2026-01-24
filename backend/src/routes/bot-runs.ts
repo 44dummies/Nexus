@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getActiveAccountId } from '../lib/requestUtils';
+import { getValidatedAccountId } from '../lib/requestUtils';
 
 const router = Router();
 
@@ -10,7 +10,7 @@ router.post('/', async (req, res) => {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
-    const activeAccount = getActiveAccountId(req);
+    const activeAccount = getValidatedAccountId(req);
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }

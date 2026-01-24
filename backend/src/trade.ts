@@ -129,18 +129,19 @@ async function enforceServerRisk(accountId: string, botRunId?: string | null) {
     let totalLossToday = 0;
     let totalProfitToday = 0;
     let lossStreak = 0;
-    let consecutiveWins = 0;
+    let streakComputed = false;
 
+    // Trades are ordered newest-first; compute streak from most recent until first win
     (trades || []).forEach((trade) => {
         const profit = Number(trade.profit ?? 0);
         if (profit < 0) {
             totalLossToday += Math.abs(profit);
-            lossStreak += 1;
-            consecutiveWins = 0;
+            if (!streakComputed) {
+                lossStreak += 1;
+            }
         } else {
             totalProfitToday += profit;
-            consecutiveWins += 1;
-            lossStreak = 0;
+            streakComputed = true; // Stop counting streak after first win
         }
     });
 
@@ -311,10 +312,24 @@ export async function executeTradeServer(
             }
         };
 
+        // Calculate timeout based on duration + buffer
+        const parseDurationToMs = (duration: number, unit: string): number => {
+            switch (unit) {
+                case 't': return duration * 2000; // ~2s per tick
+                case 's': return duration * 1000;
+                case 'm': return duration * 60 * 1000;
+                case 'h': return duration * 60 * 60 * 1000;
+                case 'd': return duration * 24 * 60 * 60 * 1000;
+                default: return duration * 1000;
+            }
+        };
+        const baseDurationMs = parseDurationToMs(params.duration || 5, params.durationUnit || 't');
+        const timeoutMs = Math.max(30000, baseDurationMs + 15000); // Min 30s, or duration + 15s buffer
+
         const timeout = setTimeout(() => {
             cleanup();
             reject(new Error('Trade execution timed out'));
-        }, 30000);
+        }, timeoutMs);
 
         ws.on('open', () => {
             ws.send(JSON.stringify({ authorize: token, req_id: getReqId() }));

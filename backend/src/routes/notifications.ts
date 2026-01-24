@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getActiveAccountId, parseLimitParam } from '../lib/requestUtils';
+import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
 
 const router = Router();
 
@@ -14,7 +14,7 @@ router.get('/', async (req, res) => {
     const type = typeof req.query.type === 'string' ? req.query.type : null;
     const unreadOnly = req.query.unread === 'true';
 
-    const activeAccount = getActiveAccountId(req);
+    const activeAccount = getValidatedAccountId(req);
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
@@ -53,7 +53,7 @@ router.post('/', async (req, res) => {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
-    const activeAccount = getActiveAccountId(req);
+    const activeAccount = getValidatedAccountId(req);
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }

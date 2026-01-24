@@ -23,7 +23,7 @@ async function incrementUpstash(ip: string) {
     return Number.isFinite(count) ? count : null;
 }
 
-export async function proxy(request: NextRequest) {
+export async function middleware(request: NextRequest) {
     // Rate limit for /api routes
     if (request.nextUrl.pathname.startsWith('/api')) {
         const forwardedFor = request.headers.get('x-forwarded-for');

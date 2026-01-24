@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getActiveAccountId, parseLimitParam } from '../lib/requestUtils';
+import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
 
 const router = Router();
 
@@ -13,7 +13,7 @@ router.get('/', async (req, res) => {
     const limit = parseLimitParam(req.query.limit as string | undefined, 50, 200);
     const contractId = req.query.contractId as string | undefined;
 
-    const activeAccount = getActiveAccountId(req);
+    const activeAccount = getValidatedAccountId(req);
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
