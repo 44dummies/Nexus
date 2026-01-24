@@ -15,6 +15,7 @@ function LiveFeed() {
         totalLossToday,
         botRunning,
         clearLogs,
+        tradeResults,
     } = useTradingStore();
 
     const direction = lastTick > prevTick ? 'up' : lastTick < prevTick ? 'down' : 'neutral';
@@ -125,6 +126,40 @@ function LiveFeed() {
                 <div>
                     <div className="text-xs text-muted-foreground mb-1">Symbol</div>
                     <div className="font-mono text-muted-foreground">R_100</div>
+                </div>
+            </div>
+
+            {/* Trade Results */}
+            <div className="mb-4 pb-4 border-b border-border">
+                <div className="flex items-center justify-between text-xs uppercase tracking-widest text-muted-foreground">
+                    <span>Trade P&amp;L Stream</span>
+                    <span>{tradeResults.length} entries</span>
+                </div>
+                <div className="mt-3 h-[170px] overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-thumb-border/60">
+                    {tradeResults.length === 0 ? (
+                        <div className="text-muted-foreground text-center py-6 font-mono text-xs">
+                            Trades will appear here as they settle.
+                        </div>
+                    ) : (
+                        tradeResults.map((trade) => (
+                            <div
+                                key={trade.id}
+                                className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs font-mono"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <span className="text-muted-foreground">
+                                        {new Date(trade.timestamp).toLocaleTimeString()}
+                                    </span>
+                                    <span className="text-muted-foreground">
+                                        #{trade.contractId ?? '—'}
+                                    </span>
+                                </div>
+                                <span className={`${trade.profit >= 0 ? 'text-emerald-400' : 'text-red-400'} text-sm`}>
+                                    {trade.profit >= 0 ? '+' : ''}{trade.profit.toFixed(2)}
+                                </span>
+                            </div>
+                        ))
+                    )}
                 </div>
             </div>
 

@@ -16,6 +16,13 @@ export interface BotLogEntry {
     data?: Record<string, unknown>;
 }
 
+export interface TradeResultEntry {
+    id: string;
+    timestamp: number;
+    profit: number;
+    contractId?: number;
+}
+
 interface TradingState {
     // Account Management
     accounts: Account[];
@@ -67,6 +74,7 @@ interface TradingState {
     lastTradeTime: number | null;
     currentContractId: number | null;
     potentialProfit: number | null;
+    tradeResults: TradeResultEntry[];
 
     // Logging
     botLogs: BotLogEntry[];
@@ -87,7 +95,7 @@ interface TradingState {
     setBotConfig: (config: Partial<Pick<TradingState, 'baseStake' | 'maxStake' | 'stopLoss' | 'takeProfit' | 'cooldownMs' | 'baseRiskPct' | 'dailyLossLimitPct' | 'drawdownLimitPct' | 'maxConsecutiveLosses' | 'lossCooldownMs'>>) => void;
     setLastTradeTime: (timestamp: number | null) => void;
     setTradeInfo: (contractId: number | null, potentialProfit: number | null) => void;
-    recordTradeResult: (profit: number) => void;
+    recordTradeResult: (result: { profit: number; contractId?: number }) => void;
     resetDailyStats: () => void;
     addLog: (type: BotLogEntry['type'], message: string, data?: Record<string, unknown>) => void;
     clearLogs: () => void;
@@ -96,6 +104,7 @@ interface TradingState {
 
 const MAX_TICK_HISTORY = 100;
 const MAX_LOGS = 50;
+const MAX_TRADE_RESULTS = 300;
 
 export const useTradingStore = create<TradingState>()(
     persist(
@@ -145,6 +154,7 @@ export const useTradingStore = create<TradingState>()(
             lastTradeTime: null,
             currentContractId: null,
             potentialProfit: null,
+            tradeResults: [],
             botLogs: [],
 
             setAccounts: (accounts, email, activeAccountId, activeAccountType, activeCurrency) => {
@@ -286,12 +296,19 @@ export const useTradingStore = create<TradingState>()(
             setTradeInfo: (contractId, potentialProfit) =>
                 set({ currentContractId: contractId, potentialProfit }),
 
-            recordTradeResult: (profit) => {
+            recordTradeResult: ({ profit, contractId }) => {
                 set((state) => {
                     const nextEquity = state.equity === null ? null : state.equity + profit;
                     const nextEquityPeak = nextEquity === null
                         ? state.equityPeak
                         : Math.max(state.equityPeak ?? nextEquity, nextEquity);
+                    const timestamp = Date.now();
+                    const tradeEntry: TradeResultEntry = {
+                        id: `${contractId ?? 'trade'}-${timestamp}-${Math.random().toString(36).slice(2, 6)}`,
+                        timestamp,
+                        profit,
+                        contractId,
+                    };
                     return {
                         totalLossToday: profit < 0 ? state.totalLossToday + Math.abs(profit) : state.totalLossToday,
                         totalProfitToday: profit > 0 ? state.totalProfitToday + profit : state.totalProfitToday,
@@ -301,6 +318,7 @@ export const useTradingStore = create<TradingState>()(
                         equityPeak: nextEquityPeak,
                         lastLossTime: profit < 0 ? Date.now() : state.lastLossTime,
                         lastTradeProfit: profit,
+                        tradeResults: [tradeEntry, ...state.tradeResults].slice(0, MAX_TRADE_RESULTS),
                     };
                 });
                 get().addLog('result', profit >= 0 ? `WIN: +$${profit.toFixed(2)}` : `LOSS: -$${Math.abs(profit).toFixed(2)}`, { profit });
@@ -376,6 +394,7 @@ export const useTradingStore = create<TradingState>()(
                 lastTradeTime: null,
                 currentContractId: null,
                 potentialProfit: null,
+                tradeResults: [],
                 botLogs: [],
             }),
         }),

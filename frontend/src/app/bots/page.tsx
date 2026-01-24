@@ -94,31 +94,35 @@ function BotsContent() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    action: 'start',
+                    action: 'start-backend',
                     botId: selectedStrategy,
-                    config: {
-                        entry: {
-                            profileId: entryProfileId,
-                            mode: entryMode,
-                            timeoutMs: entryTimeoutMs,
-                            pollingMs: entryPollingMs,
-                            slippagePct: entrySlippagePct,
-                            aggressiveness: entryAggressiveness,
-                            minEdgePct: entryMinEdgePct,
-                        },
-                        risk: {
-                            baseStake,
-                            maxStake,
-                            stopLoss,
-                            takeProfit,
-                            cooldownMs,
-                            baseRiskPct,
-                            dailyLossLimitPct,
-                            drawdownLimitPct,
-                            maxConsecutiveLosses,
-                            lossCooldownMs,
-                        },
-                        strategy: selectedBotConfig,
+                    symbol: 'R_100', // Default symbol, could be made configurable
+                    stake: baseStake,
+                    maxStake: maxStake,
+                    duration: 5, // Default duration
+                    durationUnit: 't',
+                    cooldownMs: cooldownMs,
+                    strategyConfig: selectedBotConfig,
+                    risk: {
+                        baseStake,
+                        maxStake,
+                        stopLoss,
+                        takeProfit,
+                        cooldownMs,
+                        baseRiskPct,
+                        dailyLossLimitPct,
+                        drawdownLimitPct,
+                        maxConsecutiveLosses,
+                        lossCooldownMs,
+                    },
+                    entry: {
+                        profileId: entryProfileId,
+                        mode: entryMode,
+                        timeoutMs: entryTimeoutMs,
+                        pollingMs: entryPollingMs,
+                        slippagePct: entrySlippagePct,
+                        aggressiveness: entryAggressiveness,
+                        minEdgePct: entryMinEdgePct,
                     },
                 }),
             });
@@ -142,7 +146,7 @@ function BotsContent() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    action: 'stop',
+                    action: 'stop-backend',
                     runId: activeRunId,
                 }),
             });

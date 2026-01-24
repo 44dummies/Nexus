@@ -125,12 +125,19 @@ router.post('/', async (req, res) => {
         const strategyConfig = req.body?.strategyConfig ?? {};
         const risk = req.body?.risk ?? {};
 
-        const token = req.cookies?.deriv_token || req.cookies?.deriv_demo_token;
+        // IMPORTANT: Select token based on active account type to prevent cross-mode trading
         const accountType = req.cookies?.deriv_active_type === 'demo' ? 'demo' : 'real';
-        const currency = req.cookies?.deriv_currency || req.cookies?.deriv_demo_currency || 'USD';
+        const token = accountType === 'demo'
+            ? req.cookies?.deriv_demo_token
+            : req.cookies?.deriv_token;
+        const currency = accountType === 'demo'
+            ? (req.cookies?.deriv_demo_currency || 'USD')
+            : (req.cookies?.deriv_currency || 'USD');
 
         if (!token) {
-            return res.status(401).json({ error: 'No Deriv token available' });
+            return res.status(401).json({
+                error: `No Deriv ${accountType} token available. Please log in with a ${accountType} account.`
+            });
         }
 
         // Check if already has backend run

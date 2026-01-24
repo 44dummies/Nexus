@@ -136,7 +136,7 @@ function subscribeToContract(ws: WebSocket, contractId: number) {
         settledContracts.add(contractId);
 
         const profit = Number(data.proposal_open_contract?.profit ?? 0);
-        useTradingStore.getState().recordTradeResult(profit);
+        useTradingStore.getState().recordTradeResult({ profit, contractId });
 
         // Show toast for trade result
         if (profit >= 0) {

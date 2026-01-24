@@ -4,7 +4,6 @@ import { Activity, Wallet } from 'lucide-react';
 import dynamic from 'next/dynamic';
 
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
-const VoiceButton = dynamic(() => import('@/components/dashboard/VoiceButton'), { ssr: false });
 
 interface DashboardHeaderProps {
     isAuthorized: boolean;
@@ -30,7 +29,6 @@ export function DashboardHeader({ isAuthorized, isConnected, currency, balance }
             </div>
 
             <div className="flex gap-4 items-center">
-                <VoiceButton />
                 <AccountSwitcher />
                 <div className="text-right">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Balance</p>
