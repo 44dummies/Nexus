@@ -84,8 +84,20 @@ app.use((req, res, next) => {
         }
     }
 
-    if (checkOrigin && allowedOrigins.includes(checkOrigin)) {
-        return next();
+    if (checkOrigin) {
+        // Check exact match first
+        if (allowedOrigins.includes(checkOrigin)) {
+            return next();
+        }
+
+        // Allow Vercel preview deployments if main domain is allowed
+        const vercelPreviewPattern = /^https:\/\/[\w-]+-[\w-]+-[\w-]+\.vercel\.app$/;
+        if (vercelPreviewPattern.test(checkOrigin)) {
+            const hasVercelOrigin = allowedOrigins.some(o => o.includes('.vercel.app'));
+            if (hasVercelOrigin) {
+                return next();
+            }
+        }
     }
 
     return res.status(403).json({ error: 'CSRF validation failed' });
