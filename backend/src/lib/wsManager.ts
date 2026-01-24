@@ -153,6 +153,44 @@ function authorize(state: WSConnectionState): Promise<void> {
 }
 
 /**
+ * Streaming message listeners per account
+ * Key: accountId, Value: Set of listener callbacks
+ */
+type StreamingListener = (accountId: string, message: Record<string, unknown>) => void;
+const streamingListeners = new Map<string, Set<StreamingListener>>();
+
+/**
+ * Register a streaming message listener for an account
+ */
+export function registerStreamingListener(
+    accountId: string,
+    listener: StreamingListener
+): void {
+    let listeners = streamingListeners.get(accountId);
+    if (!listeners) {
+        listeners = new Set();
+        streamingListeners.set(accountId, listeners);
+    }
+    listeners.add(listener);
+}
+
+/**
+ * Unregister a streaming message listener
+ */
+export function unregisterStreamingListener(
+    accountId: string,
+    listener: StreamingListener
+): void {
+    const listeners = streamingListeners.get(accountId);
+    if (listeners) {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+            streamingListeners.delete(accountId);
+        }
+    }
+}
+
+/**
  * Setup message handler for incoming messages
  */
 function setupMessageHandler(state: WSConnectionState): void {
@@ -163,6 +201,7 @@ function setupMessageHandler(state: WSConnectionState): void {
             const message = JSON.parse(data.toString());
             const reqId = message.req_id;
 
+            // Handle pending request-response messages
             if (reqId && state.pendingMessages.has(reqId)) {
                 const pending = state.pendingMessages.get(reqId)!;
                 state.pendingMessages.delete(reqId);
@@ -171,6 +210,22 @@ function setupMessageHandler(state: WSConnectionState): void {
                     pending.reject(new Error(message.error.message));
                 } else {
                     pending.resolve(message);
+                }
+            }
+
+            // Dispatch streaming messages (tick, proposal_open_contract, etc.)
+            // These are subscription updates that don't have matching req_id
+            const msgType = message.msg_type;
+            if (msgType === 'tick' || msgType === 'proposal_open_contract' || msgType === 'ohlc') {
+                const listeners = streamingListeners.get(state.accountId);
+                if (listeners) {
+                    for (const listener of listeners) {
+                        try {
+                            listener(state.accountId, message);
+                        } catch (listenerError) {
+                            wsLogger.error({ error: listenerError, msgType }, 'Streaming listener error');
+                        }
+                    }
                 }
             }
 

@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { getSupabaseAdmin } from './lib/supabaseAdmin';
 import { ExecuteTradeParamsSchema, TradeSignalSchema, type ExecuteTradeParams } from './lib/validation';
-import { getOrCreateConnection, sendMessage, cleanupConnection } from './lib/wsManager';
+import { getOrCreateConnection, sendMessage, cleanupConnection, registerStreamingListener, unregisterStreamingListener } from './lib/wsManager';
 import {
     getRiskCache,
     initializeRiskCache,
@@ -769,6 +769,7 @@ export async function executeTradeServerFast(
 
 /**
  * Track settlement asynchronously after buy confirmation
+ * Uses streaming listener to properly wait for is_sold=true
  */
 async function trackSettlementAsync(
     accountId: string,
@@ -777,9 +778,11 @@ async function trackSettlementAsync(
     stake: number,
     params: ExecuteTradeParams
 ): Promise<void> {
+    const SETTLEMENT_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+
     try {
-        // Subscribe to contract updates
-        const settlementResponse = await sendMessage<{
+        // First, subscribe to contract updates
+        const subscribeResponse = await sendMessage<{
             proposal_open_contract?: {
                 contract_id: number;
                 is_sold: boolean;
@@ -787,67 +790,135 @@ async function trackSettlementAsync(
                 status?: string;
                 payout?: number;
             };
+            subscription?: { id: string };
             error?: { message: string };
         }>(accountId, {
             proposal_open_contract: 1,
             contract_id: contractId,
             subscribe: 1,
-        }, 120000); // 2 minute timeout for settlement
+        }, 30000);
 
-        if (settlementResponse.error) {
-            tradeLogger.error({ error: settlementResponse.error.message }, 'Settlement subscription failed');
+        if (subscribeResponse.error) {
+            tradeLogger.error({ error: subscribeResponse.error.message, contractId }, 'Settlement subscription failed');
+            recordTradeSettled(accountId, stake, 0); // Decrement concurrent count
             return;
         }
 
-        const contract = settlementResponse.proposal_open_contract;
-        if (contract?.is_sold) {
-            // Update risk cache with profit/loss
-            recordTradeSettled(accountId, stake, contract.profit);
-
-            // Persist trade to database
-            await persistTrade({
-                accountId,
-                accountType,
-                botId: params.botId ?? null,
-                botRunId: params.botRunId ?? null,
-                contractId: contract.contract_id,
-                symbol: params.symbol,
-                stake,
-                duration: params.duration || 5,
-                durationUnit: params.durationUnit || 't',
-                profit: contract.profit,
-                status: contract.status || 'settled',
-                entryProfileId: params.entryProfileId ?? null,
-            });
-
-            // Send notification
-            await persistNotification({
-                accountId,
-                title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
-                body: `Contract #${contractId} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
-                type: 'trade_result',
-                data: {
-                    contractId,
-                    profit: contract.profit,
-                    status: contract.status,
-                    symbol: params.symbol,
-                },
-            });
-
-            persistOrderStatus({
-                accountId,
-                contractId,
-                event: 'contract_settled',
-                status: contract.status || 'settled',
-                payload: {
-                    profit: contract.profit,
-                    payout: contract.payout,
-                },
-            }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
+        // Check if already settled in the initial response
+        const initialContract = subscribeResponse.proposal_open_contract;
+        if (initialContract?.is_sold) {
+            await handleSettlement(accountId, accountType, stake, params, initialContract);
+            return;
         }
+
+        // Wait for settlement via streaming listener
+        const settledContract = await new Promise<{
+            contract_id: number;
+            is_sold: boolean;
+            profit: number;
+            status?: string;
+            payout?: number;
+        } | null>((resolve) => {
+            let settled = false;
+
+            const listener = (_accId: string, message: Record<string, unknown>) => {
+                if (settled) return;
+
+                if (message.msg_type === 'proposal_open_contract') {
+                    const contract = message.proposal_open_contract as {
+                        contract_id: number;
+                        is_sold: boolean;
+                        profit: number;
+                        status?: string;
+                        payout?: number;
+                    };
+
+                    if (contract.contract_id === contractId && contract.is_sold) {
+                        settled = true;
+                        unregisterStreamingListener(accountId, listener);
+                        resolve(contract);
+                    }
+                }
+            };
+
+            // Register listener
+            registerStreamingListener(accountId, listener);
+
+            // Timeout fallback
+            setTimeout(() => {
+                if (!settled) {
+                    settled = true;
+                    unregisterStreamingListener(accountId, listener);
+                    tradeLogger.warn({ contractId }, 'Settlement timeout - contract not sold within timeout');
+                    resolve(null);
+                }
+            }, SETTLEMENT_TIMEOUT_MS);
+        });
+
+        if (settledContract) {
+            await handleSettlement(accountId, accountType, stake, params, settledContract);
+        } else {
+            // Timeout case - still decrement concurrent count
+            recordTradeSettled(accountId, stake, 0);
+        }
+
     } catch (error) {
-        tradeLogger.error({ error }, 'Settlement tracking error');
-        // Still update risk cache to decrement concurrent count
+        tradeLogger.error({ error, contractId }, 'Settlement tracking error');
         recordTradeSettled(accountId, stake, 0);
     }
+}
+
+/**
+ * Handle contract settlement - persist trade and notifications
+ */
+async function handleSettlement(
+    accountId: string,
+    accountType: 'real' | 'demo',
+    stake: number,
+    params: ExecuteTradeParams,
+    contract: { contract_id: number; is_sold: boolean; profit: number; status?: string; payout?: number }
+): Promise<void> {
+    // Update risk cache with profit/loss
+    recordTradeSettled(accountId, stake, contract.profit);
+
+    // Persist trade to database
+    await persistTrade({
+        accountId,
+        accountType,
+        botId: params.botId ?? null,
+        botRunId: params.botRunId ?? null,
+        contractId: contract.contract_id,
+        symbol: params.symbol,
+        stake,
+        duration: params.duration || 5,
+        durationUnit: params.durationUnit || 't',
+        profit: contract.profit,
+        status: contract.status || 'settled',
+        entryProfileId: params.entryProfileId ?? null,
+    });
+
+    // Send notification
+    await persistNotification({
+        accountId,
+        title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
+        body: `Contract #${contract.contract_id} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
+        type: 'trade_result',
+        data: {
+            contractId: contract.contract_id,
+            profit: contract.profit,
+            status: contract.status,
+            symbol: params.symbol,
+        },
+    });
+
+    persistOrderStatus({
+        accountId,
+        contractId: contract.contract_id,
+        event: 'contract_settled',
+        status: contract.status || 'settled',
+        payload: {
+            profit: contract.profit,
+            payout: contract.payout,
+        },
+    }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
 }

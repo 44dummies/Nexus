@@ -10,6 +10,7 @@ import riskEventsRouter from './routes/risk-events';
 import botRunsRouter from './routes/bot-runs';
 import orderStatusRouter from './routes/order-status';
 import logger from './lib/logger';
+import { defaultRateLimit } from './lib/rateLimit';
 
 const app = express();
 
@@ -58,6 +59,10 @@ app.use(cors({
 
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+
+// Rate limiting middleware (100 requests/minute per IP)
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+app.use(defaultRateLimit as any);
 
 // CSRF protection middleware for state-changing requests
 app.use((req, res, next) => {

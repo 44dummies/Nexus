@@ -170,14 +170,19 @@ router.get('/callback', async (req, res) => {
     const acct2 = typeof searchParams.acct2 === 'string' ? searchParams.acct2 : null;
     const cur2 = typeof searchParams.cur2 === 'string' ? searchParams.cur2 : null;
 
-    if ((stateParam || stateCookie) && stateParam !== stateCookie) {
+    // SECURITY: State cookie must be present to prevent login CSRF attacks
+    if (!stateCookie) {
+        return res.status(400).json({ error: 'Missing OAuth state cookie. Please try logging in again.' });
+    }
+
+    // SECURITY: State param must match state cookie
+    if (stateParam !== stateCookie) {
         res.cookie('deriv_oauth_state', '', buildClearCookieOptions());
         return res.status(400).json({ error: 'Invalid OAuth state' });
     }
 
-    if (stateCookie) {
-        res.cookie('deriv_oauth_state', '', buildClearCookieOptions());
-    }
+    // Clear state cookie after validation
+    res.cookie('deriv_oauth_state', '', buildClearCookieOptions());
 
     if (!token1) {
         const code = typeof searchParams.code === 'string' ? searchParams.code : null;

@@ -4,7 +4,7 @@
  * Uses persistent WebSocket connections to receive real-time tick data.
  */
 
-import { sendMessage, sendMessageAsync, getOrCreateConnection } from './wsManager';
+import { sendMessage, sendMessageAsync, getOrCreateConnection, registerStreamingListener, unregisterStreamingListener } from './wsManager';
 import { tickLogger } from './logger';
 
 interface TickData {
@@ -31,12 +31,32 @@ const TICKS_HISTORY_COUNT = 50;
 // Global subscriptions: key = `${accountId}:${symbol}`
 const subscriptions = new Map<string, TickSubscription>();
 
+// Track which accounts have streaming listeners registered
+const registeredAccounts = new Set<string>();
+
+/**
+ * Create tick stream handler for WebSocket streaming messages
+ */
+function createTickStreamHandler(accountId: string): (accId: string, message: Record<string, unknown>) => void {
+    return (_accId: string, message: Record<string, unknown>) => {
+        if (message.msg_type === 'tick' && message.tick) {
+            const tick = message.tick as { symbol: string; quote: number; epoch: number };
+            const key = getSubscriptionKey(accountId, tick.symbol);
+            const subscription = subscriptions.get(key);
+            if (subscription) {
+                processTick(subscription, tick);
+            }
+        }
+    };
+}
+
 /**
  * Get subscription key
  */
 function getSubscriptionKey(accountId: string, symbol: string): string {
     return `${accountId}:${symbol}`;
 }
+
 
 /**
  * Subscribe to tick stream for a symbol
@@ -82,6 +102,12 @@ export async function subscribeTicks(
     try {
         // Ensure connection exists
         await getOrCreateConnection(token, accountId);
+
+        // Register streaming listener for this account if not already registered
+        if (!registeredAccounts.has(accountId)) {
+            registerStreamingListener(accountId, createTickStreamHandler(accountId));
+            registeredAccounts.add(accountId);
+        }
 
         // Fetch tick history for warm start
         await fetchTickHistory(accountId, symbol, subscription);
