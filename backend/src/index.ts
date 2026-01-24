@@ -34,9 +34,23 @@ app.use(cors({
         }
         // Normalize incoming origin (strip trailing slash)
         const normalizedOrigin = origin.replace(/\/+$/, '');
+
+        // Check exact match first
         if (allowedOrigins.includes(normalizedOrigin)) {
             return callback(null, true);
         }
+
+        // Allow Vercel preview deployments if main domain is allowed
+        // Pattern: https://<project>-<hash>-<team>.vercel.app
+        const vercelPreviewPattern = /^https:\/\/[\w-]+-[\w-]+-[\w-]+\.vercel\.app$/;
+        if (vercelPreviewPattern.test(normalizedOrigin)) {
+            // Check if any allowed origin is a vercel.app domain
+            const hasVercelOrigin = allowedOrigins.some(o => o.includes('.vercel.app'));
+            if (hasVercelOrigin) {
+                return callback(null, true);
+            }
+        }
+
         return callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
