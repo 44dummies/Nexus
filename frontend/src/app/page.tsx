@@ -1,9 +1,10 @@
 'use client';
 
 import { motion, Variants } from 'framer-motion';
-import { ArrowRight, Zap, ShieldCheck, Activity } from 'lucide-react';
+import { ArrowRight, ShieldCheck, Activity } from 'lucide-react';
 import { Scene3D } from '@/components/three/Scene3D';
 import { apiFetch } from '@/lib/api';
+import { LogoMark } from '@/components/brand/LogoMark';
 
 // Animation Variants
 const containerVariants: Variants = {
@@ -65,7 +66,7 @@ export default function LoginPage() {
             className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-card/80 border border-border/60 backdrop-blur-md mb-6 shadow-soft-lg"
             whileHover={{ scale: 1.05 }}
           >
-            <Zap className="w-7 h-7 text-accent" />
+            <LogoMark size={36} priority />
           </motion.div>
 
           <h1 className="text-5xl md:text-6xl font-semibold tracking-tight text-foreground">

@@ -2,8 +2,9 @@
 
 import { motion, Variants } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { Activity, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
+import { Activity, ArrowRight, ShieldCheck } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { LogoMark } from '@/components/brand/LogoMark';
 
 const containerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -55,7 +56,7 @@ export function LoginForm() {
                         className="inline-flex p-4 rounded-full bg-card/80 backdrop-blur-md border border-border mb-2"
                         whileHover={{ scale: 1.05 }}
                     >
-                        <Zap className="w-8 h-8 text-accent" strokeWidth={1.5} />
+                        <LogoMark size={40} />
                     </motion.div>
 
                     <div className="space-y-2">

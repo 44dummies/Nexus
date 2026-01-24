@@ -14,10 +14,13 @@ import {
     Sun,
     Moon,
     Monitor,
+    ChevronLeft,
+    ChevronRight,
     LogOut
 } from 'lucide-react';
 import { useTradingStore } from '@/store/tradingStore';
 import { apiFetch } from '@/lib/api';
+import { LogoMark } from '@/components/brand/LogoMark';
 
 const navItems = [
     { href: '/dashboard', icon: LayoutDashboard, label: 'Overview' },
@@ -38,12 +41,17 @@ export default function Sidebar() {
     const pathname = usePathname();
     const { theme, setTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(false);
     const botRunning = useTradingStore((state) => state.botRunning);
     const logout = useTradingStore((state) => state.logout);
 
     // Prevent hydration mismatch
     useEffect(() => {
         setMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
+        const saved = window.localStorage.getItem('sidebar-collapsed');
+        if (saved !== null) {
+            setIsCollapsed(saved === 'true');
+        }
     }, []);
 
     const handleLogout = async () => {
@@ -61,16 +69,37 @@ export default function Sidebar() {
         }
     };
 
+    const toggleCollapse = () => {
+        setIsCollapsed((prev) => {
+            const next = !prev;
+            window.localStorage.setItem('sidebar-collapsed', String(next));
+            return next;
+        });
+    };
+
+    const labelClassName = isCollapsed ? 'hidden' : 'hidden lg:block';
+
     return (
-        <aside className="w-16 lg:w-64 flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-screen sticky top-0">
+        <aside
+            className={`w-16 ${isCollapsed ? 'lg:w-16' : 'lg:w-64'} flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-screen sticky top-0 transition-[width] duration-300`}
+        >
             {/* Logo */}
-            <div className="p-4 flex items-center justify-center lg:justify-start gap-3 border-b border-sidebar-border">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent to-sky-500 flex items-center justify-center">
-                    <Zap className="w-5 h-5 text-white" />
+            <div className="p-4 flex items-center justify-between border-b border-sidebar-border">
+                <div className="flex items-center gap-3">
+                    <LogoMark size={40} className="shadow-soft-lg" />
+                    <span className={`${labelClassName} text-lg font-bold text-foreground`}>
+                        DerivNexus
+                    </span>
                 </div>
-                <span className="hidden lg:block text-lg font-bold text-foreground">
-                    DerivNexus
-                </span>
+                <button
+                    type="button"
+                    onClick={toggleCollapse}
+                    className="hidden lg:inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                    title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                >
+                    {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+                </button>
             </div>
 
             {/* Navigation */}
@@ -83,8 +112,10 @@ export default function Sidebar() {
                         <Link
                             key={item.href}
                             href={item.href}
+                            title={item.label}
                             className={`
                                 flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200
+                                ${isCollapsed ? 'lg:justify-center lg:px-2' : 'lg:justify-start lg:px-3'}
                                 ${isActive
                                     ? 'bg-accent/10 text-accent border border-accent/30'
                                     : 'text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent'
@@ -92,7 +123,7 @@ export default function Sidebar() {
                             `}
                         >
                             <Icon className="w-5 h-5 flex-shrink-0" />
-                            <span className="hidden lg:block text-sm font-medium">
+                            <span className={`${labelClassName} text-sm font-medium`}>
                                 {item.label}
                             </span>
                         </Link>
@@ -102,9 +133,9 @@ export default function Sidebar() {
 
             {/* Bot Status */}
             <div className="px-3 py-4 border-t border-sidebar-border">
-                <div className="flex items-center justify-center lg:justify-start gap-2">
+                <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
                     <div className={`w-2.5 h-2.5 rounded-full ${botRunning ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-gray-500'}`} />
-                    <span className="hidden lg:block text-xs text-muted-foreground uppercase tracking-wider">
+                    <span className={`${labelClassName} text-xs text-muted-foreground uppercase tracking-wider`}>
                         {botRunning ? 'Bot Active' : 'Bot Offline'}
                     </span>
                 </div>
@@ -113,10 +144,10 @@ export default function Sidebar() {
             {/* Theme Switcher */}
             {mounted && (
                 <div className="px-3 py-4 border-t border-sidebar-border">
-                    <p className="hidden lg:block text-xs text-muted-foreground uppercase tracking-wider mb-2 px-3">
+                    <p className={`${labelClassName} text-xs text-muted-foreground uppercase tracking-wider mb-2 px-3`}>
                         Theme
                     </p>
-                    <div className="flex lg:flex-col gap-1">
+                    <div className={`flex lg:flex-col gap-1 ${isCollapsed ? 'lg:items-center' : ''}`}>
                         {themes.map((t) => {
                             const Icon = t.icon;
                             const isActive = theme === t.id;
@@ -127,6 +158,7 @@ export default function Sidebar() {
                                     onClick={() => setTheme(t.id)}
                                     className={`
                                         flex items-center justify-center lg:justify-start gap-2 px-3 py-2 rounded-lg transition-all
+                                        ${isCollapsed ? 'lg:justify-center lg:px-2' : 'lg:justify-start lg:px-3'}
                                         ${isActive
                                             ? 'bg-accent/10 text-accent'
                                             : 'text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -135,7 +167,7 @@ export default function Sidebar() {
                                     title={t.label}
                                 >
                                     <Icon className="w-4 h-4" />
-                                    <span className="hidden lg:block text-xs">{t.label}</span>
+                                    <span className={`${labelClassName} text-xs`}>{t.label}</span>
                                 </button>
                             );
                         })}
@@ -147,10 +179,10 @@ export default function Sidebar() {
             <div className="p-3 border-t border-sidebar-border">
                 <button
                     onClick={handleLogout}
-                    className="w-full flex items-center justify-center lg:justify-start gap-2 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-all"
+                    className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-all ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'}`}
                 >
                     <LogOut className="w-5 h-5" />
-                    <span className="hidden lg:block text-sm">Logout</span>
+                    <span className={`${labelClassName} text-sm`}>Logout</span>
                 </button>
             </div>
         </aside>
