@@ -21,7 +21,8 @@ export interface RiskCacheEntry {
     dateKey: string; // YYYY-MM-DD to detect day rollover
 }
 
-const MAX_CONCURRENT_TRADES = 5;
+// Default max concurrent trades - can be overridden per-run via risk config
+const DEFAULT_MAX_CONCURRENT_TRADES = Number(process.env.DEFAULT_MAX_CONCURRENT_TRADES) || 5;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const riskCache = new Map<string, RiskCacheEntry>();
 
@@ -107,7 +108,8 @@ export function initializeRiskCache(
  */
 export function recordTradeOpened(
     accountId: string,
-    stake: number
+    stake: number,
+    maxConcurrentTrades?: number
 ): { allowed: boolean; reason?: string } {
     const entry = riskCache.get(accountId);
 
@@ -115,10 +117,11 @@ export function recordTradeOpened(
         return { allowed: false, reason: 'Risk cache not initialized' };
     }
 
-    if (entry.openTradeCount >= MAX_CONCURRENT_TRADES) {
+    const limit = maxConcurrentTrades ?? DEFAULT_MAX_CONCURRENT_TRADES;
+    if (entry.openTradeCount >= limit) {
         return {
             allowed: false,
-            reason: `Max concurrent trades (${MAX_CONCURRENT_TRADES}) reached`
+            reason: `Max concurrent trades (${limit}) reached`
         };
     }
 
@@ -199,6 +202,7 @@ export function evaluateCachedRisk(
         maxConsecutiveLosses?: number;
         cooldownMs?: number;
         lossCooldownMs?: number;
+        maxConcurrentTrades?: number;
     }
 ): {
     status: 'OK' | 'COOLDOWN' | 'HALT' | 'REDUCE_STAKE' | 'MAX_CONCURRENT';
@@ -214,10 +218,11 @@ export function evaluateCachedRisk(
     const now = Date.now();
 
     // Check concurrent trade limit
-    if (entry.openTradeCount >= MAX_CONCURRENT_TRADES) {
+    const maxConcurrent = params.maxConcurrentTrades ?? DEFAULT_MAX_CONCURRENT_TRADES;
+    if (entry.openTradeCount >= maxConcurrent) {
         return {
             status: 'MAX_CONCURRENT',
-            reason: `Max ${MAX_CONCURRENT_TRADES} concurrent trades`
+            reason: `Max ${maxConcurrent} concurrent trades`
         };
     }
 

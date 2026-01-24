@@ -24,6 +24,7 @@ interface BotRunConfig {
         dailyLossLimitPct?: number;
         drawdownLimitPct?: number;
         maxConsecutiveLosses?: number;
+        maxConcurrentTrades?: number;
     };
 }
 
@@ -165,6 +166,7 @@ function handleTick(botRunId: string, price: number): void {
         drawdownLimitPct: config.risk?.drawdownLimitPct ?? 6,
         maxConsecutiveLosses: config.risk?.maxConsecutiveLosses ?? 3,
         cooldownMs: config.cooldownMs,
+        maxConcurrentTrades: config.risk?.maxConcurrentTrades,
     });
 
     if (riskStatus.status === 'HALT') {
