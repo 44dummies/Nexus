@@ -15,7 +15,11 @@ const app = express();
 app.set('trust proxy', 1);
 
 const rawOrigins = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '';
-const allowedOrigins = rawOrigins.split(',').map((o) => o.trim()).filter(Boolean);
+// Normalize origins: trim whitespace and remove trailing slashes
+const allowedOrigins = rawOrigins
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
 
 app.use(cors({
     origin: (origin, callback) => {
@@ -27,7 +31,9 @@ app.use(cors({
         if (!origin) {
             return callback(null, true);
         }
-        if (allowedOrigins.includes(origin)) {
+        // Normalize incoming origin (strip trailing slash)
+        const normalizedOrigin = origin.replace(/\/+$/, '');
+        if (allowedOrigins.includes(normalizedOrigin)) {
             return callback(null, true);
         }
         return callback(new Error('Not allowed by CORS'));
