@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import { useTradingStore } from '@/store/tradingStore';
@@ -15,6 +16,24 @@ import { BotTuningPanel } from '@/components/bots/BotTuningPanel';
 import { BOT_CATALOG } from '@/lib/bot/catalog';
 import { getBotConfig } from '@/lib/bot/config';
 import { getExecutionProfile } from '@/lib/bot/executionProfiles';
+
+// Available markets for bot trading
+const MARKETS = [
+    { id: 'R_100', name: 'Volatility 100 Index', category: 'Synthetics' },
+    { id: 'R_75', name: 'Volatility 75 Index', category: 'Synthetics' },
+    { id: 'R_50', name: 'Volatility 50 Index', category: 'Synthetics' },
+    { id: 'R_25', name: 'Volatility 25 Index', category: 'Synthetics' },
+    { id: 'R_10', name: 'Volatility 10 Index', category: 'Synthetics' },
+    { id: '1HZ100V', name: 'Volatility 100 (1s) Index', category: 'Synthetics' },
+    { id: '1HZ75V', name: 'Volatility 75 (1s) Index', category: 'Synthetics' },
+    { id: '1HZ50V', name: 'Volatility 50 (1s) Index', category: 'Synthetics' },
+    { id: 'BOOM1000', name: 'Boom 1000 Index', category: 'Crash/Boom' },
+    { id: 'BOOM500', name: 'Boom 500 Index', category: 'Crash/Boom' },
+    { id: 'CRASH1000', name: 'Crash 1000 Index', category: 'Crash/Boom' },
+    { id: 'CRASH500', name: 'Crash 500 Index', category: 'Crash/Boom' },
+    { id: 'JD100', name: 'Jump 100 Index', category: 'Jump' },
+    { id: 'JD50', name: 'Jump 50 Index', category: 'Jump' },
+];
 
 function BotsContent() {
     const {
@@ -49,6 +68,9 @@ function BotsContent() {
         activeRunId,
         setActiveRunId,
     } = useTradingStore();
+
+    // Local state for market selection
+    const [selectedMarket, setSelectedMarket] = useState('R_100');
 
     const selectedStrategy = selectedBotId || 'rsi';
     const selectedBot = BOT_CATALOG.find((bot) => bot.id === selectedStrategy) || BOT_CATALOG[0];
@@ -96,7 +118,7 @@ function BotsContent() {
                 body: JSON.stringify({
                     action: 'start-backend',
                     botId: selectedStrategy,
-                    symbol: 'R_100', // Default symbol, could be made configurable
+                    symbol: selectedMarket,
                     stake: baseStake,
                     maxStake: maxStake,
                     duration: 5, // Default duration
@@ -213,6 +235,39 @@ function BotsContent() {
                                 <span>{selectedExecution.name}</span>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Market Selector */}
+                    <div className="glass-panel rounded-2xl p-6">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-semibold">Market</h3>
+                            <span className="text-xs text-muted-foreground uppercase tracking-widest">Symbol</span>
+                        </div>
+                        <select
+                            value={selectedMarket}
+                            onChange={(e) => setSelectedMarket(e.target.value)}
+                            disabled={botRunning}
+                            className="w-full p-3 rounded-xl bg-background/50 border border-border/50 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {Object.entries(
+                                MARKETS.reduce((acc, market) => {
+                                    if (!acc[market.category]) acc[market.category] = [];
+                                    acc[market.category].push(market);
+                                    return acc;
+                                }, {} as Record<string, typeof MARKETS>)
+                            ).map(([category, markets]) => (
+                                <optgroup key={category} label={category}>
+                                    {markets.map((market) => (
+                                        <option key={market.id} value={market.id}>
+                                            {market.name}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            ))}
+                        </select>
+                        <p className="text-xs text-muted-foreground mt-2">
+                            Selected: <span className="font-mono text-foreground">{selectedMarket}</span>
+                        </p>
                     </div>
 
                     <BotControlPanel

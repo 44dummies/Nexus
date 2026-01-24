@@ -6,10 +6,10 @@ import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import NotificationsPanel from '@/components/dashboard/NotificationsPanel';
 import { useMemo } from 'react';
 import { useTradingStore } from '@/store/tradingStore';
+import { BotRunToggle } from '@/components/bots/BotRunToggle';
 
 const PerformanceHeatmap = dynamic(() => import('@/components/analytics/PerformanceHeatmap'), { ssr: false });
 const DashboardStats = dynamic(() => import('@/components/dashboard/DashboardStats').then(mod => mod.DashboardStats), { ssr: false });
-const StrategySelector = dynamic(() => import('@/components/dashboard/StrategySelector'), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
 
 function DashboardContent() {
@@ -43,6 +43,7 @@ function DashboardContent() {
                         </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
+                        <BotRunToggle size="sm" />
                         <div className="rounded-full border border-border/60 bg-muted/30 px-4 py-2 text-xs uppercase tracking-widest text-muted-foreground">
                             Win Rate <span className="text-foreground ml-2 font-mono">{winRate.toFixed(1)}%</span>
                         </div>
@@ -80,18 +81,6 @@ function DashboardContent() {
                             <PerformanceHeatmap />
                         </section>
 
-                        <section className="glass-panel rounded-2xl p-6">
-                            <div className="mb-4 flex items-center justify-between">
-                                <div>
-                                    <h3 className="text-lg font-semibold">Strategy Matrix</h3>
-                                    <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">
-                                        Signal alignment and edge density
-                                    </p>
-                                </div>
-                                <span className="text-xs uppercase tracking-widest text-muted-foreground">Live</span>
-                            </div>
-                            <StrategySelector />
-                        </section>
                     </div>
 
                     <div className="space-y-6">

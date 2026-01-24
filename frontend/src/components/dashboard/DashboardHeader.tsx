@@ -2,6 +2,7 @@
 
 import { Activity, Wallet } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { BotRunToggle } from '@/components/bots/BotRunToggle';
 
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
 
@@ -28,7 +29,8 @@ export function DashboardHeader({ isAuthorized, isConnected, currency, balance }
                 )}
             </div>
 
-            <div className="flex gap-4 items-center">
+            <div className="flex gap-3 items-center">
+                <BotRunToggle size="sm" />
                 <AccountSwitcher />
                 <div className="text-right">
                     <p className="text-[10px] text-muted-foreground uppercase tracking-widest">Balance</p>
