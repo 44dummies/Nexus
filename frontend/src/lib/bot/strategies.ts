@@ -51,12 +51,12 @@ const rsiStrategy: BotStrategy = {
     getRequiredTicks: (config) => Math.max(5, (config.rsiPeriod ?? 14) + 1),
     evaluate: ({ prices }, config) => {
         const period = config.rsiPeriod ?? 14;
-        const lower = config.rsiLower ?? 30;
-        const upper = config.rsiUpper ?? 70;
+        const lower = config.rsiLower ?? 32;
+        const upper = config.rsiUpper ?? 68;
         const rsi = calculateRSI(prices, period);
         if (rsi === null) return { signal: null };
-        if (rsi < lower) return { signal: 'CALL', detail: `RSI ${rsi.toFixed(1)}`, minEdgePct: 0.12 };
-        if (rsi > upper) return { signal: 'PUT', detail: `RSI ${rsi.toFixed(1)}`, minEdgePct: 0.12 };
+        if (rsi < lower) return { signal: 'CALL', detail: `RSI ${rsi.toFixed(1)}` };
+        if (rsi > upper) return { signal: 'PUT', detail: `RSI ${rsi.toFixed(1)}` };
         return { signal: null };
     },
 };
@@ -90,10 +90,10 @@ const trendRiderStrategy: BotStrategy = {
         const trendDown = emaFast < emaSlow && lastPrice < emaFast && rsi < rsiLower;
 
         if (trendUp) {
-            return { signal: 'CALL', detail: `EMA ${emaFast.toFixed(2)} > ${emaSlow.toFixed(2)} | RSI ${rsi.toFixed(1)}`, minEdgePct: 0.12 };
+            return { signal: 'CALL', detail: `EMA ${emaFast.toFixed(2)} > ${emaSlow.toFixed(2)} | RSI ${rsi.toFixed(1)}` };
         }
         if (trendDown) {
-            return { signal: 'PUT', detail: `EMA ${emaFast.toFixed(2)} < ${emaSlow.toFixed(2)} | RSI ${rsi.toFixed(1)}`, minEdgePct: 0.12 };
+            return { signal: 'PUT', detail: `EMA ${emaFast.toFixed(2)} < ${emaSlow.toFixed(2)} | RSI ${rsi.toFixed(1)}` };
         }
 
         return { signal: null };
@@ -128,10 +128,10 @@ const breakoutAtrStrategy: BotStrategy = {
 
         const buffer = atrFast * bufferMultiplier;
         if (lastPrice > high + buffer) {
-            return { signal: 'CALL', detail: `Breakout +${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)}`, minEdgePct: 0.2 };
+            return { signal: 'CALL', detail: `Breakout +${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)}` };
         }
         if (lastPrice < low - buffer) {
-            return { signal: 'PUT', detail: `Breakout -${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)}`, minEdgePct: 0.2 };
+            return { signal: 'PUT', detail: `Breakout -${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)}` };
         }
 
         return { signal: null };
@@ -169,8 +169,8 @@ const capitalGuardStrategy: BotStrategy = {
         const distanceFromMean = Math.abs(lastPrice - sma);
         if (distanceFromMean > atrFast * meanDistanceMultiplier) return { signal: null };
 
-        if (rsi < rsiLower) return { signal: 'CALL', detail: `RSI ${rsi.toFixed(1)} | calm`, minEdgePct: 0.2 };
-        if (rsi > rsiUpper) return { signal: 'PUT', detail: `RSI ${rsi.toFixed(1)} | calm`, minEdgePct: 0.2 };
+        if (rsi < rsiLower) return { signal: 'CALL', detail: `RSI ${rsi.toFixed(1)} | calm` };
+        if (rsi > rsiUpper) return { signal: 'PUT', detail: `RSI ${rsi.toFixed(1)} | calm` };
 
         return { signal: null };
     },
@@ -203,7 +203,6 @@ const recoveryLiteStrategy: BotStrategy = {
             signal,
             detail: `RSI ${rsi.toFixed(1)} | streak ${lossStreak}`,
             stakeMultiplier: multiplier < 1 ? multiplier : undefined,
-            minEdgePct: 0.25,
         };
     },
 };

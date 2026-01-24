@@ -60,14 +60,14 @@ export class BotEngine {
         this.ws = options.ws;
         this.symbol = options.symbol;
         this.bufferSize = options.bufferSize ?? 100;
-        this.cooldownMs = options.cooldownMs ?? 10_000; // 10 seconds cooldown
+        this.cooldownMs = options.cooldownMs ?? 5_000; // 5 seconds cooldown for volatility
         this.maxStake = options.maxStake;
-        this.entryMode = options.entryMode ?? 'HYBRID_LIMIT_MARKET';
-        this.entryTimeoutMs = options.entryTimeoutMs ?? 4000;
-        this.entryPollingMs = options.entryPollingMs ?? 500;
-        this.entrySlippagePct = options.entrySlippagePct ?? 0.05;
-        this.entryAggressiveness = options.entryAggressiveness ?? 0.45;
-        this.entryMinEdgePct = options.entryMinEdgePct ?? 0.2;
+        this.entryMode = options.entryMode ?? 'MARKET'; // Use MARKET mode by default for volatility
+        this.entryTimeoutMs = options.entryTimeoutMs ?? 3000;
+        this.entryPollingMs = options.entryPollingMs ?? 300;
+        this.entrySlippagePct = options.entrySlippagePct ?? 1.5; // 1.5% slippage for volatility markets
+        this.entryAggressiveness = options.entryAggressiveness ?? 0.85; // More aggressive entry
+        this.entryMinEdgePct = options.entryMinEdgePct ?? 0.05; // Lower min edge for faster fills
         this.duration = options.duration;
         this.durationUnit = options.durationUnit;
     }
