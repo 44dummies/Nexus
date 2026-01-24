@@ -43,6 +43,7 @@ create table if not exists bot_runs (
     started_at timestamptz default now(),
     stopped_at timestamptz,
     config jsonb,
+    backend_mode boolean default false,
     created_at timestamptz default now()
 );
 

@@ -104,7 +104,7 @@ interface TradingState {
 
 const MAX_TICK_HISTORY = 100;
 const MAX_LOGS = 50;
-const MAX_TRADE_RESULTS = 300;
+const MAX_TRADE_RESULTS = 1000;
 
 export const useTradingStore = create<TradingState>()(
     persist(

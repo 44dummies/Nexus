@@ -68,7 +68,7 @@ export default function StrategySelector() {
     const [activeStrategy, setActiveStrategy] = useState('RSI');
 
     return (
-        <div className="w-full h-[300px] relative glass-panel rounded-2xl overflow-hidden">
+        <div className="w-full h-[300px] relative rounded-xl overflow-hidden bg-muted/20 border border-border/60">
             <div className="absolute top-4 left-6 z-10 pointer-events-none">
                 <h3 className="text-muted-foreground font-mono text-sm uppercase tracking-widest">Strategy Matrix</h3>
                 <h2 className="text-2xl font-bold text-accent mt-1">{activeStrategy}</h2>

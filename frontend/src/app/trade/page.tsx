@@ -9,6 +9,7 @@ import { useTradingStore } from '@/store/tradingStore';
 const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisualizer'), { ssr: false });
 const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr: false });
 const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHeader').then(mod => mod.DashboardHeader), { ssr: false });
+const AdvancedChart = dynamic(() => import('@/components/trade/AdvancedChart'), { ssr: false });
 
 function TradeContent() {
     const {
@@ -34,8 +35,8 @@ function TradeContent() {
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 mt-6">
                     <div className="lg:col-span-2">
-                        <div className="glass-panel rounded-xl p-6 min-h-[360px] sm:min-h-[420px] flex items-center justify-center">
-                            <p className="text-muted-foreground">Advanced Charting (Coming Soon)</p>
+                        <div className="glass-panel rounded-2xl p-6 min-h-[360px] sm:min-h-[420px]">
+                            <AdvancedChart />
                         </div>
                     </div>
                     <div>

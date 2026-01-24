@@ -15,10 +15,12 @@ export default function AccountSwitcher() {
     if (accounts.length <= 1) return null;
 
     return (
-        <div className="relative z-[100]">
+        <div className="relative z-[999] isolate">
             <button
                 onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/40 hover:bg-muted/60 border border-border transition-colors"
+                aria-haspopup="menu"
+                aria-expanded={isOpen}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/30 hover:bg-muted/50 border border-border/70 shadow-soft transition-colors"
             >
                 <Circle
                     className={`w-2 h-2 fill-current ${activeAccount?.type === 'real' ? 'text-emerald-400' : 'text-amber-400'}`}
@@ -34,9 +36,9 @@ export default function AccountSwitcher() {
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
-                        className="absolute top-full mt-2 right-0 w-56 glass-panel rounded-xl overflow-hidden z-50"
+                        className="absolute top-full mt-2 right-0 w-64 glass-panel rounded-xl overflow-hidden shadow-soft-lg ring-1 ring-border/40 z-[1000]"
                     >
-                        <div className="p-2">
+                        <div className="max-h-64 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-border/60">
                             <div className="text-xs text-muted-foreground uppercase tracking-widest px-3 py-2">
                                 Switch Account
                             </div>
