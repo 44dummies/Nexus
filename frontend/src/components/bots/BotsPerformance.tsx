@@ -13,7 +13,7 @@ export function BotsPerformance({ totalProfitToday, totalLossToday, netPnL }: Bo
         <div className="glass-panel rounded-2xl p-6">
             <h2 className="text-lg font-semibold mb-4">Today&apos;s Performance</h2>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 text-center">
                     <TrendingUp className="w-5 h-5 text-emerald-400 mx-auto mb-2" />
                     <p className="text-xs text-muted-foreground uppercase">Profit</p>

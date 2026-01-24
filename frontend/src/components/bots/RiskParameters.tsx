@@ -66,7 +66,7 @@ export function RiskParameters({
                     />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label htmlFor="max-stake" className="text-muted-foreground text-sm uppercase tracking-wider">
                             Max Stake ($)
@@ -129,7 +129,7 @@ export function RiskParameters({
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border/60">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/60">
                     <div className="space-y-2">
                         <Label htmlFor="risk-per-trade" className="text-muted-foreground text-sm uppercase tracking-wider">
                             Risk Per Trade (%)

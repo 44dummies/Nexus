@@ -160,7 +160,7 @@ function BotsContent() {
     const netPnL = totalProfitToday - totalLossToday;
 
     return (
-        <div className="p-6 lg:p-8 max-w-6xl mx-auto space-y-8">
+        <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-8">
             <BotsHeader />
 
             <div className="grid grid-cols-1 lg:grid-cols-[2fr,1fr] gap-6">
@@ -175,7 +175,7 @@ function BotsContent() {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                         {BOT_CATALOG.map((bot) => (
                             <BotCard
                                 key={bot.id}

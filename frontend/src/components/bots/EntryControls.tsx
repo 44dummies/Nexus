@@ -46,7 +46,7 @@ export function EntryControls({
                     <Label className="text-muted-foreground text-sm uppercase tracking-wider">
                         Execution Profile
                     </Label>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
                         {EXECUTION_PROFILES.map((profile) => (
                             <button
                                 key={profile.id}
@@ -77,7 +77,7 @@ export function EntryControls({
                     <Label className="text-muted-foreground text-sm uppercase tracking-wider">
                         Entry Mode
                     </Label>
-                    <div className="flex gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <button
                             onClick={() => setEntryConfig({ entryMode: 'HYBRID_LIMIT_MARKET' })}
                             className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-all ${entryMode === 'HYBRID_LIMIT_MARKET'
@@ -102,7 +102,7 @@ export function EntryControls({
                     </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label htmlFor="entry-timeout" className="text-muted-foreground text-sm uppercase tracking-wider">
                             Limit Timeout (ms)
@@ -135,7 +135,7 @@ export function EntryControls({
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <Label htmlFor="entry-slippage" className="text-muted-foreground text-sm uppercase tracking-wider">
                             Slippage Tolerance (%)
