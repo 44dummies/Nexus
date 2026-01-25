@@ -28,6 +28,7 @@ app.use(cors({
     origin: (origin, callback) => {
         // Fail closed: reject if no origins configured
         if (allowedOrigins.length === 0) {
+            logger.error({ origin }, 'CORS: No origins configured - set CORS_ORIGIN or FRONTEND_URL env var');
             return callback(new Error('CORS not configured - set CORS_ORIGIN or FRONTEND_URL'));
         }
         // Allow requests with no origin (same-origin, curl, etc.)
@@ -42,21 +43,34 @@ app.use(cors({
             return callback(null, true);
         }
 
-        // Allow Vercel preview deployments ONLY for the same project
-        // Pattern for allowed: https://<project>.vercel.app
-        // Pattern for preview: https://<project>-<hash>-<team>.vercel.app
-        const vercelProjectMatch = allowedOrigins
-            .map(o => o.match(/^https:\/\/([a-z0-9-]+)\.vercel\.app$/i))
-            .find(m => m !== null);
-
-        if (vercelProjectMatch) {
-            const projectName = vercelProjectMatch[1];
-            // Preview pattern: project-hash-team.vercel.app (project must be prefix)
-            const previewPattern = new RegExp(`^https:\\/\\/${projectName}-[\\w]+-[\\w]+\\.vercel\\.app$`, 'i');
-            if (previewPattern.test(normalizedOrigin)) {
-                return callback(null, true);
+        // Allow Vercel deployments for the same project
+        // Patterns:
+        //   Production: https://<project>.vercel.app
+        //   Preview:    https://<project>-<hash>-<team>.vercel.app
+        //   Branch:     https://<project>-git-<branch>-<team>.vercel.app
+        //   Custom:     https://<project>-<random>.vercel.app
+        for (const allowedUrl of allowedOrigins) {
+            const vercelMatch = allowedUrl.match(/^https:\/\/([a-z0-9-]+)\.vercel\.app$/i);
+            if (vercelMatch) {
+                const projectName = vercelMatch[1];
+                // Match any Vercel deployment starting with the project name
+                const vercelPattern = new RegExp(
+                    `^https:\\/\\/${projectName}(-[a-z0-9-]+)?\\.vercel\\.app$`,
+                    'i'
+                );
+                if (vercelPattern.test(normalizedOrigin)) {
+                    logger.debug({ origin: normalizedOrigin, project: projectName }, 'CORS: Allowed Vercel preview deployment');
+                    return callback(null, true);
+                }
             }
         }
+
+        // Log rejected origins to help debug CORS issues
+        logger.warn({
+            rejectedOrigin: normalizedOrigin,
+            allowedOrigins,
+            hint: 'Add this origin to CORS_ORIGIN env var if it should be allowed'
+        }, 'CORS: Origin rejected');
 
         return callback(new Error('Not allowed by CORS'));
     },
@@ -101,16 +115,18 @@ app.use((req, res, next) => {
             return next();
         }
 
-        // Allow Vercel preview deployments ONLY for the same project
-        const vercelProjectMatch = allowedOrigins
-            .map(o => o.match(/^https:\/\/([a-z0-9-]+)\.vercel\.app$/i))
-            .find(m => m !== null);
-
-        if (vercelProjectMatch) {
-            const projectName = vercelProjectMatch[1];
-            const previewPattern = new RegExp(`^https:\\/\\/${projectName}-[\\w]+-[\\w]+\\.vercel\\.app$`, 'i');
-            if (previewPattern.test(checkOrigin)) {
-                return next();
+        // Allow Vercel deployments for the same project (all patterns)
+        for (const allowedUrl of allowedOrigins) {
+            const vercelMatch = allowedUrl.match(/^https:\/\/([a-z0-9-]+)\.vercel\.app$/i);
+            if (vercelMatch) {
+                const projectName = vercelMatch[1];
+                const vercelPattern = new RegExp(
+                    `^https:\\/\\/${projectName}(-[a-z0-9-]+)?\\.vercel\\.app$`,
+                    'i'
+                );
+                if (vercelPattern.test(checkOrigin)) {
+                    return next();
+                }
             }
         }
     }
