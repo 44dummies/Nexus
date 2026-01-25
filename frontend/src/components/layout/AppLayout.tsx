@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { usePathname, useRouter } from 'next/navigation';
 import { useTradingStore } from '@/store/tradingStore';
@@ -192,12 +192,53 @@ export default function AppLayout({ children }: AppLayoutProps) {
         });
     }, [maxStake, cooldownMs]);
 
+    const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
     const isLoginRoute = pathname === '/';
 
     return (
-        <div className={`${isLoginRoute ? '' : 'flex'} min-h-screen bg-background`}>
-            {!isLoginRoute && <Sidebar />}
-            <main className={`${isLoginRoute ? '' : 'flex-1 overflow-auto'}`}>
+        <div className={`${isLoginRoute ? '' : 'flex'} min-h-screen bg-background relative`}>
+            {!isLoginRoute && (
+                <>
+                    {/* Mobile Menu Trigger */}
+                    <div className="lg:hidden fixed top-4 left-4 z-40">
+                        <button
+                            onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+                            className="p-2 rounded-lg bg-background/80 backdrop-blur border border-border/50 shadow-sm hover:bg-accent/10 transition-colors"
+                        >
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                            >
+                                <line x1="3" x2="21" y1="6" y2="6" />
+                                <line x1="3" x2="21" y1="12" y2="12" />
+                                <line x1="3" x2="21" y1="18" y2="18" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <Sidebar
+                        isMobileOpen={isMobileSidebarOpen}
+                        onMobileClose={() => setIsMobileSidebarOpen(false)}
+                    />
+
+                    {/* Mobile Backdrop */}
+                    {isMobileSidebarOpen && (
+                        <div
+                            className="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+                            onClick={() => setIsMobileSidebarOpen(false)}
+                        />
+                    )}
+                </>
+            )}
+            <main className={`${isLoginRoute ? '' : 'flex-1 overflow-auto'} relative w-full`}>
                 {children}
             </main>
         </div>

@@ -37,7 +37,12 @@ const themes = [
     { id: 'midnight', label: 'GitHub Dark', icon: Moon },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+    isMobileOpen?: boolean;
+    onMobileClose?: () => void;
+}
+
+export default function Sidebar({ isMobileOpen = false, onMobileClose }: SidebarProps) {
     const pathname = usePathname();
     const { theme, setTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
@@ -77,20 +82,37 @@ export default function Sidebar() {
         });
     };
 
+    const handleLinkClick = () => {
+        if (window.innerWidth < 1024 && onMobileClose) {
+            onMobileClose();
+        }
+    };
+
     const labelClassName = isCollapsed ? 'hidden' : 'hidden lg:block';
 
+    // Unified CSS for responsive behavior
+    // Mobile: fixed drawer, transform based on isMobileOpen
+    // Desktop (lg): sticky rail, width based on isCollapsed, reset transforms
+    const sidebarClasses = `
+        flex flex-col h-screen bg-sidebar border-r border-sidebar-border
+        fixed inset-y-0 left-0 z-50 w-72 shadow-xl
+        transition-all duration-300 ease-in-out
+        ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
+        lg:translate-x-0 lg:static lg:sticky lg:top-0 lg:z-auto lg:shadow-none
+        ${isCollapsed ? 'lg:w-16' : 'lg:w-64'}
+    `;
+
     return (
-        <aside
-            className={`w-16 ${isCollapsed ? 'lg:w-16' : 'lg:w-64'} flex-shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-screen sticky top-0 transition-[width] duration-300`}
-        >
+        <aside className={sidebarClasses}>
             {/* Logo */}
             <div className="p-4 flex items-center justify-between border-b border-sidebar-border">
                 <div className="flex items-center gap-3">
                     <LogoMark size={40} className="shadow-soft-lg" />
-                    <span className={`${labelClassName} text-lg font-bold text-foreground`}>
+                    <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-lg font-bold text-foreground`}>
                         DerivNexus
                     </span>
                 </div>
+                {/* Desktop Collapse Toggle */}
                 <button
                     type="button"
                     onClick={toggleCollapse}
@@ -100,10 +122,18 @@ export default function Sidebar() {
                 >
                     {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
                 </button>
+                {/* Mobile Close Button */}
+                <button
+                    type="button"
+                    onClick={onMobileClose}
+                    className="lg:hidden h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                >
+                    <ChevronLeft className="w-6 h-6" />
+                </button>
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 p-3 space-y-2">
+            <nav className="flex-1 p-3 space-y-2 overflow-y-auto">
                 {navItems.map((item) => {
                     const isActive = pathname === item.href;
                     const Icon = item.icon;
@@ -112,6 +142,7 @@ export default function Sidebar() {
                         <Link
                             key={item.href}
                             href={item.href}
+                            onClick={handleLinkClick}
                             title={item.label}
                             className={`
                                 flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200
@@ -123,7 +154,7 @@ export default function Sidebar() {
                             `}
                         >
                             <Icon className="w-5 h-5 flex-shrink-0" />
-                            <span className={`${labelClassName} text-sm font-medium`}>
+                            <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-sm font-medium`}>
                                 {item.label}
                             </span>
                         </Link>
@@ -135,7 +166,7 @@ export default function Sidebar() {
             <div className="px-3 py-4 border-t border-sidebar-border">
                 <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
                     <div className={`w-2.5 h-2.5 rounded-full ${botRunning ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-gray-500'}`} />
-                    <span className={`${labelClassName} text-xs text-muted-foreground uppercase tracking-wider`}>
+                    <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs text-muted-foreground uppercase tracking-wider`}>
                         {botRunning ? 'Bot Active' : 'Bot Offline'}
                     </span>
                 </div>
@@ -144,7 +175,7 @@ export default function Sidebar() {
             {/* Theme Switcher */}
             {mounted && (
                 <div className="px-3 py-4 border-t border-sidebar-border">
-                    <p className={`${labelClassName} text-xs text-muted-foreground uppercase tracking-wider mb-2 px-3`}>
+                    <p className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs text-muted-foreground uppercase tracking-wider mb-2 px-3`}>
                         Theme
                     </p>
                     <div className={`flex lg:flex-col gap-1 ${isCollapsed ? 'lg:items-center' : ''}`}>
@@ -167,7 +198,7 @@ export default function Sidebar() {
                                     title={t.label}
                                 >
                                     <Icon className="w-4 h-4" />
-                                    <span className={`${labelClassName} text-xs`}>{t.label}</span>
+                                    <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs`}>{t.label}</span>
                                 </button>
                             );
                         })}
@@ -182,7 +213,7 @@ export default function Sidebar() {
                     className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-all ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'}`}
                 >
                     <LogOut className="w-5 h-5" />
-                    <span className={`${labelClassName} text-sm`}>Logout</span>
+                    <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-sm`}>Logout</span>
                 </button>
             </div>
         </aside>

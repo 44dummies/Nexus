@@ -167,6 +167,12 @@ function BotsContent() {
     };
 
     const handleStopBot = async () => {
+        if (!activeRunId) {
+            console.warn('No active run ID to stop');
+            setBotRunning(false);
+            return;
+        }
+
         try {
             await apiFetch('/api/bot-runs', {
                 method: 'POST',
@@ -190,7 +196,7 @@ function BotsContent() {
     const netPnL = totalProfitToday - totalLossToday;
 
     return (
-        <div className="mx-auto w-full max-w-6xl px-6 py-8 space-y-8">
+        <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-8 space-y-8">
             <BotsHeader />
 
             <div className="grid grid-cols-1 lg:grid-cols-[2fr,1fr] gap-6">

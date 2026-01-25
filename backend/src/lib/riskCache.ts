@@ -175,6 +175,21 @@ export function recordTradeSettled(
 }
 
 /**
+ * Reconcile open trade state from external source (e.g., open contracts API)
+ */
+export function setOpenTradeState(accountId: string, openTradeCount: number, openExposure: number): void {
+    const entry = riskCache.get(accountId);
+
+    if (!entry) {
+        return;
+    }
+
+    entry.openTradeCount = Math.max(0, Math.floor(openTradeCount));
+    entry.openExposure = Math.max(0, openExposure);
+    entry.lastUpdated = Date.now();
+}
+
+/**
  * Update equity from external source (e.g., balance refresh)
  */
 export function updateEquity(accountId: string, newEquity: number): void {

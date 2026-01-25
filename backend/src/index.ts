@@ -12,8 +12,12 @@ import orderStatusRouter from './routes/order-status';
 import logger from './lib/logger';
 import { defaultRateLimit } from './lib/rateLimit';
 import { startTradeBackfillJob } from './lib/tradeBackfill';
+import metricsRouter from './routes/metrics';
+import { initMetrics } from './lib/metrics';
+import { initRiskManager } from './lib/riskManager';
 
 const app = express();
+initMetrics();
 
 app.set('trust proxy', 1);
 
@@ -144,9 +148,19 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/risk-events', riskEventsRouter);
 app.use('/api/bot-runs', botRunsRouter);
 app.use('/api/order-status', orderStatusRouter);
+app.use('/metrics', metricsRouter);
 
 const port = Number(process.env.PORT) || 4000;
-app.listen(port, () => {
-    logger.info({ port, origins: allowedOrigins }, 'DerivNexus backend started');
-    startTradeBackfillJob();
+
+async function startServer() {
+    await initRiskManager();
+    app.listen(port, () => {
+        logger.info({ port, origins: allowedOrigins }, 'DerivNexus backend started');
+        startTradeBackfillJob();
+    });
+}
+
+startServer().catch((error) => {
+    logger.error({ error }, 'Failed to start DerivNexus backend');
+    process.exit(1);
 });

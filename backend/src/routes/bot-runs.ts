@@ -123,7 +123,7 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Invalid configuration', details: validation.error.format() });
         }
 
-        const { botId, symbol, stake, maxStake, duration, durationUnit, cooldownMs, strategyConfig, risk, entry } = validation.data;
+        const { botId, symbol, stake, maxStake, duration, durationUnit, cooldownMs, strategyConfig, risk, performance, entry } = validation.data;
 
         // IMPORTANT: Select token based on active account type to prevent cross-mode trading
         const accountType = req.cookies?.deriv_active_type === 'demo' ? 'demo' : 'real';
@@ -180,6 +180,7 @@ router.post('/', async (req, res) => {
                     cooldownMs,
                     strategyConfig,
                     risk,
+                    performance,
                 },
             })
             .select('id')
@@ -211,6 +212,7 @@ router.post('/', async (req, res) => {
                     cooldownMs,
                     strategyConfig,
                     risk,
+                    performance,
                 },
                 currency
             );
@@ -306,4 +308,3 @@ router.post('/', async (req, res) => {
 });
 
 export default router;
-

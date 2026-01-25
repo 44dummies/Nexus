@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
+import { clearKillSwitch, triggerKillSwitch } from '../lib/riskManager';
 
 const router = Router();
 
@@ -76,6 +77,36 @@ router.post('/', async (req, res) => {
     }
 
     return res.json({ success: true });
+});
+
+router.post('/kill-switch', async (req, res) => {
+    const activeAccount = getValidatedAccountId(req);
+    if (!activeAccount) {
+        return res.status(401).json({ error: 'No active account' });
+    }
+
+    const adminToken = process.env.RISK_ADMIN_TOKEN;
+    const providedToken = req.get('x-risk-token');
+    if (adminToken && providedToken !== adminToken) {
+        return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const action = typeof req.body?.action === 'string' ? req.body.action : '';
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : 'manual';
+    const scope = typeof req.body?.scope === 'string' ? req.body.scope : 'account';
+    const targetAccount = scope === 'global' ? null : activeAccount;
+
+    if (action === 'activate') {
+        triggerKillSwitch(targetAccount, reason, true);
+        return res.json({ success: true, status: 'active', scope });
+    }
+
+    if (action === 'clear') {
+        clearKillSwitch(targetAccount);
+        return res.json({ success: true, status: 'cleared', scope });
+    }
+
+    return res.status(400).json({ error: 'Invalid action' });
 });
 
 export default router;

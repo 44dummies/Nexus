@@ -4,15 +4,15 @@
  * Ports indicator calculations from frontend with optimizations.
  */
 
-import type { RiskCacheEntry } from './riskCache';
-import { getRiskCache } from './riskCache';
+import type { PriceSeries } from './ringBuffer';
+import { evaluateMicrostructureSignals, type MicrostructureContext } from './microSignals';
 
 // ==================== INDICATORS ====================
 
 /**
  * Calculate RSI using rolling calculation (optimized)
  */
-export function calculateRSI(prices: number[], period: number = 14): number | null {
+export function calculateRSI(prices: PriceSeries, period: number = 14): number | null {
     if (prices.length < period + 1) return null;
 
     let gains = 0;
@@ -20,7 +20,7 @@ export function calculateRSI(prices: number[], period: number = 14): number | nu
 
     // Initial average
     for (let i = 1; i <= period; i++) {
-        const change = prices[prices.length - period - 1 + i] - prices[prices.length - period - 1 + i - 1];
+        const change = prices.get(prices.length - period - 1 + i) - prices.get(prices.length - period - 1 + i - 1);
         if (change > 0) {
             gains += change;
         } else {
@@ -40,7 +40,7 @@ export function calculateRSI(prices: number[], period: number = 14): number | nu
 /**
  * Calculate EMA with proper seeding
  */
-export function calculateEMA(prices: number[], period: number): number | null {
+export function calculateEMA(prices: PriceSeries, period: number): number | null {
     if (prices.length < period) return null;
 
     const multiplier = 2 / (period + 1);
@@ -48,13 +48,13 @@ export function calculateEMA(prices: number[], period: number): number | null {
     // Seed with SMA
     let ema = 0;
     for (let i = 0; i < period; i++) {
-        ema += prices[prices.length - prices.length + i];
+        ema += prices.get(i);
     }
     ema /= period;
 
     // Calculate EMA from there
     for (let i = period; i < prices.length; i++) {
-        ema = (prices[i] - ema) * multiplier + ema;
+        ema = (prices.get(i) - ema) * multiplier + ema;
     }
 
     return ema;
@@ -63,12 +63,12 @@ export function calculateEMA(prices: number[], period: number): number | null {
 /**
  * Calculate SMA
  */
-export function calculateSMA(prices: number[], period: number): number | null {
+export function calculateSMA(prices: PriceSeries, period: number): number | null {
     if (prices.length < period) return null;
 
     let sum = 0;
     for (let i = prices.length - period; i < prices.length; i++) {
-        sum += prices[i];
+        sum += prices.get(i);
     }
     return sum / period;
 }
@@ -76,14 +76,14 @@ export function calculateSMA(prices: number[], period: number): number | null {
 /**
  * Calculate ATR (using simplified true range for tick data)
  */
-export function calculateATR(prices: number[], period: number): number | null {
+export function calculateATR(prices: PriceSeries, period: number): number | null {
     if (prices.length < period + 1) return null;
 
     let atr = 0;
     const startIdx = prices.length - period;
 
     for (let i = startIdx; i < prices.length; i++) {
-        const tr = Math.abs(prices[i] - prices[i - 1]);
+        const tr = Math.abs(prices.get(i) - prices.get(i - 1));
         atr += tr;
     }
 
@@ -123,16 +123,27 @@ export interface StrategyConfig {
     recoveryMaxLossStreak?: number;
     recoveryStepMultiplier?: number;
     recoveryMaxSteps?: number;
+    // Microstructure
+    imbalanceLevels?: number;
+    imbalanceThreshold?: number;
+    spreadThreshold?: number;
+    momentumWindowMs?: number;
+    momentumThreshold?: number;
+    minConfidence?: number;
+    enableImbalance?: boolean;
+    enableMomentum?: boolean;
 }
 
 export interface StrategyEvaluation {
     signal: TradeSignal | null;
     detail?: string;
     stakeMultiplier?: number;
+    confidence?: number;
+    reasonCodes?: string[];
 }
 
 export interface StrategyContext {
-    prices: number[];
+    prices: PriceSeries;
     lastPrice: number;
     prevPrice: number | null;
     lossStreak: number;
@@ -178,6 +189,16 @@ export const DEFAULT_STRATEGY_CONFIGS: Record<string, StrategyConfig> = {
         recoveryMaxLossStreak: 4,
         recoveryStepMultiplier: 0.15,
         recoveryMaxSteps: 3,
+    },
+    'microstructure': {
+        imbalanceLevels: 10,
+        imbalanceThreshold: 0.15,
+        spreadThreshold: 0,
+        momentumWindowMs: 500,
+        momentumThreshold: 0.0005,
+        minConfidence: 0.4,
+        enableImbalance: true,
+        enableMomentum: true,
     },
 };
 
@@ -246,11 +267,17 @@ function evaluateBreakoutAtrStrategy(ctx: StrategyContext, config: StrategyConfi
     if (!expanding) return { signal: null };
 
     // Get recent high/low excluding current price
-    const lookbackPrices = ctx.prices.slice(-lookback - 1, -1);
-    if (lookbackPrices.length < lookback) return { signal: null };
+    const endIdx = ctx.prices.length - 1;
+    const startIdx = Math.max(0, endIdx - lookback);
+    if (endIdx - startIdx < lookback) return { signal: null };
 
-    const high = Math.max(...lookbackPrices);
-    const low = Math.min(...lookbackPrices);
+    let high = Number.NEGATIVE_INFINITY;
+    let low = Number.POSITIVE_INFINITY;
+    for (let i = startIdx; i < endIdx; i++) {
+        const price = ctx.prices.get(i);
+        if (price > high) high = price;
+        if (price < low) low = price;
+    }
 
     const buffer = atrFast * bufferMultiplier;
 
@@ -322,6 +349,21 @@ function evaluateRecoveryLiteStrategy(ctx: StrategyContext, config: StrategyConf
     };
 }
 
+function evaluateMicrostructureStrategy(
+    ctx: StrategyContext,
+    config: StrategyConfig,
+    microContext?: MicrostructureContext
+): StrategyEvaluation {
+    if (!microContext) return { signal: null };
+    const result = evaluateMicrostructureSignals(microContext, config);
+    return {
+        signal: result.signal,
+        detail: result.detail,
+        confidence: result.confidence,
+        reasonCodes: result.reasonCodes,
+    };
+}
+
 // ==================== MAIN STRATEGY EVALUATOR ====================
 
 /**
@@ -329,16 +371,20 @@ function evaluateRecoveryLiteStrategy(ctx: StrategyContext, config: StrategyConf
  */
 export function evaluateStrategy(
     strategyId: string,
-    prices: number[],
+    prices: PriceSeries,
     config?: StrategyConfig,
-    lossStreak: number = 0
+    lossStreak: number = 0,
+    microContext?: MicrostructureContext
 ): StrategyEvaluation {
     if (prices.length < 2) return { signal: null };
 
+    const lastPrice = prices.get(prices.length - 1);
+    if (!Number.isFinite(lastPrice)) return { signal: null };
+
     const ctx: StrategyContext = {
         prices,
-        lastPrice: prices[prices.length - 1],
-        prevPrice: prices.length > 1 ? prices[prices.length - 2] : null,
+        lastPrice,
+        prevPrice: prices.length > 1 ? prices.get(prices.length - 2) : null,
         lossStreak,
     };
 
@@ -358,6 +404,8 @@ export function evaluateStrategy(
             return evaluateCapitalGuardStrategy(ctx, mergedConfig);
         case 'recovery-lite':
             return evaluateRecoveryLiteStrategy(ctx, mergedConfig);
+        case 'microstructure':
+            return evaluateMicrostructureStrategy(ctx, mergedConfig, microContext);
         default:
             return evaluateRsiStrategy(ctx, mergedConfig);
     }
@@ -388,6 +436,8 @@ export function getRequiredTicks(strategyId: string, config?: StrategyConfig): n
             );
         case 'recovery-lite':
             return Math.max(5, (mergedConfig.rsiPeriod ?? 14) + 1);
+        case 'microstructure':
+            return Math.max(5, (mergedConfig.imbalanceLevels ?? 10) + 1);
         default:
             return 15;
     }
@@ -403,6 +453,7 @@ export function getStrategyName(strategyId: string): string {
         'breakout-atr': 'Breakout ATR',
         'capital-guard': 'Capital Guard',
         'recovery-lite': 'Recovery Lite',
+        'microstructure': 'Microstructure',
     };
     return names[strategyId] || 'Unknown Strategy';
 }

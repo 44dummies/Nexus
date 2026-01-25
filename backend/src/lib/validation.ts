@@ -31,6 +31,21 @@ export const BotRunRiskSchema = z.object({
     maxConsecutiveLosses: z.number().int().min(0).max(20).optional(),
     lossCooldownMs: z.number().min(0).max(3600000).optional(), // Max 1 hour
     maxConcurrentTrades: z.number().int().min(1).max(50).optional(),
+    maxOrderSize: z.number().min(0).optional(),
+    maxNotional: z.number().min(0).optional(),
+    maxExposure: z.number().min(0).optional(),
+    maxOrdersPerSecond: z.number().int().min(1).max(100).optional(),
+    maxOrdersPerMinute: z.number().int().min(1).max(1000).optional(),
+    maxCancelsPerSecond: z.number().int().min(1).max(100).optional(),
+    volatilityWindow: z.number().int().min(5).max(500).optional(),
+    volatilityThreshold: z.number().min(0).optional(),
+}).optional();
+
+export const PerformanceConfigSchema = z.object({
+    microBatchSize: z.number().int().min(1).max(100).optional(),
+    microBatchIntervalMs: z.number().min(0).max(1000).optional(),
+    strategyBudgetMs: z.number().min(0).max(50).optional(),
+    enableComputeBudget: z.boolean().optional(),
 }).optional();
 
 // Bot-run start-backend action schema
@@ -45,6 +60,7 @@ export const StartBackendSchema = z.object({
     cooldownMs: z.number().min(0).max(300000).default(3000), // Max 5 min
     strategyConfig: z.record(z.unknown()).optional(),
     risk: BotRunRiskSchema,
+    performance: PerformanceConfigSchema,
     entry: z.object({
         profileId: z.string().optional(),
         mode: z.enum(['HYBRID_LIMIT_MARKET', 'MARKET']).optional(),

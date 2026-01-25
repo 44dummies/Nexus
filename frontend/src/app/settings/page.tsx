@@ -55,7 +55,7 @@ export default function SettingsPage() {
     };
 
     return (
-        <div className="mx-auto w-full max-w-4xl px-6 py-8">
+        <div className="mx-auto w-full max-w-4xl px-4 sm:px-6 py-8">
             {/* Header */}
             <div className="mb-8">
                 <h1 className="text-3xl font-bold flex items-center gap-3">
@@ -100,7 +100,7 @@ export default function SettingsPage() {
                     )}
                 </section>
 
-                    {/* API Settings */}
+                {/* API Settings */}
                 <section className="glass-panel rounded-2xl p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         <Key className="w-5 h-5 text-accent" />
@@ -113,9 +113,10 @@ export default function SettingsPage() {
                                 Deriv App ID
                             </Label>
                             <Input
-                                value={process.env.NEXT_PUBLIC_DERIV_APP_ID || ''}
+                                value="••••••"
+                                type="password"
                                 disabled
-                                className="bg-muted/50 font-mono text-sm sm:text-base"
+                                className="bg-muted/50 font-mono text-sm sm:text-base tracking-widest"
                             />
                             <p className="text-xs text-muted-foreground">
                                 App ID is configured via environment variables
@@ -124,7 +125,7 @@ export default function SettingsPage() {
                     </div>
                 </section>
 
-                    {/* Notifications */}
+                {/* Notifications */}
                 <section className="glass-panel rounded-2xl p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         <Bell className="w-5 h-5 text-accent" />
@@ -149,7 +150,7 @@ export default function SettingsPage() {
                     </div>
                 </section>
 
-                    {/* Data Management */}
+                {/* Data Management */}
                 <section className="glass-panel rounded-2xl p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                         <Shield className="w-5 h-5 text-accent" />

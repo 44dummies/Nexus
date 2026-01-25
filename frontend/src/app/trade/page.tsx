@@ -25,7 +25,7 @@ function TradeContent() {
         <div className="relative min-h-screen">
             <MarketVisualizer lastTick={lastTick} prevTick={prevTick} />
 
-            <div className="relative z-10 mx-auto w-full max-w-6xl px-6 py-8">
+            <div className="relative z-10 mx-auto w-full max-w-6xl px-4 sm:px-6 py-8">
                 <DashboardHeader
                     isAuthorized={isAuthorized}
                     isConnected={isConnected}

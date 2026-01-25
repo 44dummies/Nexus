@@ -1,0 +1,125 @@
+{
+  "dev": {
+    "exchange": {
+      "wsUrl": "wss://ws.derivws.com/websockets/v3",
+      "appId": "1089"
+    },
+    "symbols": ["R_100"],
+    "performance": {
+      "microBatchSize": 1,
+      "microBatchIntervalMs": 0,
+      "strategyBudgetMs": 1,
+      "enableComputeBudget": false
+    },
+    "microstructure": {
+      "imbalanceLevels": 10,
+      "imbalanceThreshold": 0.15,
+      "spreadThreshold": 0,
+      "momentumWindowMs": 500,
+      "momentumThreshold": 0.0005,
+      "minConfidence": 0.4,
+      "enableImbalance": true,
+      "enableMomentum": true
+    },
+    "execution": {
+      "proposalsPerSec": 5,
+      "buysPerSec": 2,
+      "requoteMaxAttempts": 2,
+      "requoteDelayMs": 50
+    },
+    "risk": {
+      "maxOrderSize": 10,
+      "maxExposure": 50,
+      "maxOrdersPerSecond": 3,
+      "maxOrdersPerMinute": 60,
+      "maxCancelsPerSecond": 10,
+      "dailyLossLimitPct": 2,
+      "drawdownLimitPct": 6,
+      "maxConsecutiveLosses": 3,
+      "volatilityWindow": 20,
+      "volatilityThreshold": 0.5
+    }
+  },
+  "paper": {
+    "exchange": {
+      "wsUrl": "wss://ws.derivws.com/websockets/v3",
+      "appId": "1089"
+    },
+    "symbols": ["R_100"],
+    "performance": {
+      "microBatchSize": 2,
+      "microBatchIntervalMs": 1,
+      "strategyBudgetMs": 1,
+      "enableComputeBudget": true
+    },
+    "microstructure": {
+      "imbalanceLevels": 10,
+      "imbalanceThreshold": 0.15,
+      "spreadThreshold": 0,
+      "momentumWindowMs": 500,
+      "momentumThreshold": 0.0005,
+      "minConfidence": 0.45,
+      "enableImbalance": true,
+      "enableMomentum": true
+    },
+    "execution": {
+      "proposalsPerSec": 4,
+      "buysPerSec": 2,
+      "requoteMaxAttempts": 2,
+      "requoteDelayMs": 75
+    },
+    "risk": {
+      "maxOrderSize": 5,
+      "maxExposure": 20,
+      "maxOrdersPerSecond": 2,
+      "maxOrdersPerMinute": 40,
+      "maxCancelsPerSecond": 8,
+      "dailyLossLimitPct": 1.5,
+      "drawdownLimitPct": 4,
+      "maxConsecutiveLosses": 2,
+      "volatilityWindow": 20,
+      "volatilityThreshold": 0.4
+    }
+  },
+  "prod": {
+    "exchange": {
+      "wsUrl": "wss://ws.derivws.com/websockets/v3",
+      "appId": "1089"
+    },
+    "symbols": ["R_100"],
+    "performance": {
+      "microBatchSize": 4,
+      "microBatchIntervalMs": 1,
+      "strategyBudgetMs": 1,
+      "enableComputeBudget": true
+    },
+    "microstructure": {
+      "imbalanceLevels": 10,
+      "imbalanceThreshold": 0.2,
+      "spreadThreshold": 0,
+      "momentumWindowMs": 500,
+      "momentumThreshold": 0.0007,
+      "minConfidence": 0.5,
+      "enableImbalance": true,
+      "enableMomentum": true
+    },
+    "execution": {
+      "proposalsPerSec": 3,
+      "buysPerSec": 2,
+      "requoteMaxAttempts": 1,
+      "requoteDelayMs": 100
+    },
+    "risk": {
+      "maxOrderSize": 2,
+      "maxExposure": 10,
+      "maxOrdersPerSecond": 1,
+      "maxOrdersPerMinute": 20,
+      "maxCancelsPerSecond": 5,
+      "dailyLossLimitPct": 1,
+      "drawdownLimitPct": 3,
+      "maxConsecutiveLosses": 2,
+      "volatilityWindow": 20,
+      "volatilityThreshold": 0.3
+    }
+  }
+}

@@ -167,11 +167,11 @@ function DashboardContent() {
 
     return (
         <div className="relative min-h-screen">
-            <div className="mx-auto w-full max-w-6xl px-6 py-8">
+            <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-8">
                 <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <p className="text-xs text-muted-foreground uppercase tracking-[0.45em]">Overview</p>
-                        <h1 className="text-3xl font-semibold tracking-tight">Performance Command Center</h1>
+                        <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">Performance Command Center</h1>
                         <p className="text-sm text-muted-foreground mt-2 max-w-xl">
                             Real-time pulse on strategy health, account performance, and execution flow.
                         </p>

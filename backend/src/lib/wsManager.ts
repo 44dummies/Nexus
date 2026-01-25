@@ -1,5 +1,8 @@
 import WebSocket from 'ws';
+import { performance } from 'perf_hooks';
 import { wsLogger } from './logger';
+import { metrics } from './metrics';
+import { recordReconnect } from './riskManager';
 
 interface QueuedMessage {
     data: string;
@@ -17,6 +20,7 @@ interface WSConnectionState {
     messageQueue: QueuedMessage[];
     reconnectAttempts: number;
     lastActivity: number;
+    inboundInFlight: number;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -94,6 +98,7 @@ export async function getOrCreateConnection(
         messageQueue: [],
         reconnectAttempts: 0,
         lastActivity: Date.now(),
+        inboundInFlight: 0,
     };
 
     connectionPool.set(accountId, state);
@@ -232,8 +237,18 @@ function setupMessageHandler(state: WSConnectionState): void {
     if (!state.ws) return;
 
     state.ws.on('message', (data: WebSocket.Data) => {
+        const recvPerfTs = performance.now();
+        const recvWallTs = Date.now();
+        state.inboundInFlight += 1;
+        metrics.counter('ws.msg_received');
+        metrics.gauge('ws.inbound_inflight', state.inboundInFlight);
         try {
-            const message = JSON.parse(data.toString());
+            const parseStart = performance.now();
+            const message = JSON.parse(data.toString()) as Record<string, unknown>;
+            const parseEnd = performance.now();
+            metrics.histogram('ws.json_parse_ms', parseEnd - parseStart);
+            message.__recvPerfTs = recvPerfTs;
+            message.__recvWallTs = recvWallTs;
             const reqId = message.req_id;
 
             // Handle pending request-response messages
@@ -250,8 +265,9 @@ function setupMessageHandler(state: WSConnectionState): void {
 
             // Dispatch streaming messages (tick, proposal_open_contract, etc.)
             // These are subscription updates that don't have matching req_id
+            const fanoutStart = performance.now();
             const msgType = message.msg_type;
-            if (msgType === 'tick' || msgType === 'proposal_open_contract' || msgType === 'ohlc') {
+            if (msgType === 'tick' || msgType === 'proposal_open_contract' || msgType === 'ohlc' || msgType === 'order_book') {
                 const listeners = streamingListeners.get(state.accountId);
                 if (listeners) {
                     for (const listener of listeners) {
@@ -263,10 +279,18 @@ function setupMessageHandler(state: WSConnectionState): void {
                     }
                 }
             }
+            const fanoutEnd = performance.now();
+            metrics.histogram('ws.fanout_ms', fanoutEnd - fanoutStart);
 
             state.lastActivity = Date.now();
         } catch (error) {
+            metrics.counter('ws.parse_error');
             wsLogger.error({ error }, 'WS message parse error');
+        } finally {
+            state.inboundInFlight = Math.max(0, state.inboundInFlight - 1);
+            metrics.gauge('ws.inbound_inflight', state.inboundInFlight);
+            metrics.gauge('ws.pending_requests', state.pendingMessages.size);
+            metrics.gauge('ws.outbound_queue_depth', state.messageQueue.length);
         }
     });
 }
@@ -282,6 +306,8 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
     }
 
     state.reconnectAttempts++;
+    metrics.counter('ws.reconnect_attempts');
+    recordReconnect(state.accountId);
     const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1);
 
     wsLogger.info({ accountId: state.accountId, delay, attempt: state.reconnectAttempts }, 'Reconnecting WebSocket');
@@ -338,9 +364,11 @@ export async function sendMessage<T = unknown>(
         } else {
             // Queue for later when connection is ready
             state.messageQueue.push(queuedMsg);
+            metrics.gauge('ws.outbound_queue_depth', state.messageQueue.length);
         }
 
         state.lastActivity = Date.now();
+        metrics.gauge('ws.pending_requests', state.pendingMessages.size);
     });
 }
 
@@ -361,6 +389,7 @@ export function sendMessageAsync(
     const reqId = getReqId();
     state.ws.send(JSON.stringify({ ...message, req_id: reqId }));
     state.lastActivity = Date.now();
+    metrics.gauge('ws.pending_requests', state.pendingMessages.size);
 }
 
 /**

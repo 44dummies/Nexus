@@ -4,20 +4,27 @@
  * Uses persistent WebSocket connections to receive real-time tick data.
  */
 
+import { performance } from 'perf_hooks';
 import { sendMessage, sendMessageAsync, getOrCreateConnection, registerStreamingListener, unregisterStreamingListener, registerConnectionReadyListener, unregisterConnectionReadyListener } from './wsManager';
 import { tickLogger } from './logger';
+import { metrics } from './metrics';
+import { RingBuffer, type PriceSeries } from './ringBuffer';
+import { throttleSubscription } from './subscriptionThrottle';
+import { recordTick } from './marketDataRecorder';
 
-interface TickData {
+export interface TickData {
     symbol: string;
     quote: number;
     epoch: number;
+    receivedAtMs?: number;
+    receivedPerfMs?: number;
 }
 
 interface TickSubscription {
     symbol: string;
     accountId: string;
     subscriptionId: string | null;
-    tickBuffer: number[];
+    tickBuffer: RingBuffer;
     bufferSize: number;
     lastTick: number | null;
     lastEpoch: number | null;
@@ -46,10 +53,16 @@ function createTickStreamHandler(accountId: string): (accId: string, message: Re
     return (_accId: string, message: Record<string, unknown>) => {
         if (message.msg_type === 'tick' && message.tick) {
             const tick = message.tick as { symbol: string; quote: number; epoch: number };
+            const recvPerfTs = typeof (message as { __recvPerfTs?: number }).__recvPerfTs === 'number'
+                ? (message as { __recvPerfTs?: number }).__recvPerfTs
+                : undefined;
+            const recvWallTs = typeof (message as { __recvWallTs?: number }).__recvWallTs === 'number'
+                ? (message as { __recvWallTs?: number }).__recvWallTs
+                : undefined;
             const key = getSubscriptionKey(accountId, tick.symbol);
             const subscription = subscriptions.get(key);
             if (subscription) {
-                processTick(subscription, tick);
+                processTick(subscription, tick, recvPerfTs, recvWallTs);
             }
         }
     };
@@ -95,7 +108,7 @@ export async function subscribeTicks(
         symbol,
         accountId,
         subscriptionId: null,
-        tickBuffer: [],
+        tickBuffer: new RingBuffer(TICK_BUFFER_SIZE),
         bufferSize: TICK_BUFFER_SIZE,
         lastTick: null,
         lastEpoch: null,
@@ -187,9 +200,14 @@ async function fetchTickHistory(
         }
 
         if (response.history?.prices) {
-            subscription.tickBuffer = response.history.prices.slice(-subscription.bufferSize);
+            const recent = response.history.prices.slice(-subscription.bufferSize);
+            for (const price of recent) {
+                if (Number.isFinite(price)) {
+                    subscription.tickBuffer.push(price);
+                }
+            }
             if (subscription.tickBuffer.length > 0) {
-                subscription.lastTick = subscription.tickBuffer[subscription.tickBuffer.length - 1];
+                subscription.lastTick = subscription.tickBuffer.getLatest();
                 if (response.history.times && response.history.times.length > 0) {
                     subscription.lastEpoch = response.history.times[response.history.times.length - 1];
                 }
@@ -209,6 +227,7 @@ async function startTickSubscription(
     symbol: string,
     subscription: TickSubscription
 ): Promise<void> {
+    await throttleSubscription(accountId);
     const response = await sendMessage<{
         tick?: {
             id: string;
@@ -244,17 +263,23 @@ async function startTickSubscription(
  */
 function processTick(
     subscription: TickSubscription,
-    tick: { quote: number; epoch: number; symbol: string }
+    tick: { quote: number; epoch: number; symbol: string },
+    recvPerfTs?: number,
+    recvWallTs?: number
 ): void {
     if (!subscription.isActive) return;
 
     const quote = typeof tick.quote === 'string' ? parseFloat(tick.quote) : tick.quote;
     if (!Number.isFinite(quote)) return;
 
+    metrics.counter('tick.received');
+    const bufferStart = performance.now();
     // Update buffer
     subscription.tickBuffer.push(quote);
-    if (subscription.tickBuffer.length > subscription.bufferSize) {
-        subscription.tickBuffer.shift();
+    const bufferEnd = performance.now();
+    metrics.histogram('tick.buffer_op_ms', bufferEnd - bufferStart);
+    if (typeof recvPerfTs === 'number') {
+        metrics.histogram('tick.recv_to_buffer_ms', bufferStart - recvPerfTs);
     }
 
     subscription.lastTick = quote;
@@ -265,7 +290,10 @@ function processTick(
         symbol: subscription.symbol,
         quote,
         epoch: tick.epoch,
+        receivedAtMs: recvWallTs ?? Date.now(),
+        receivedPerfMs: recvPerfTs ?? bufferStart,
     };
+    recordTick(subscription.symbol, quote, tickData.receivedAtMs ?? Date.now());
 
     for (const listener of subscription.listeners) {
         try {
@@ -373,7 +401,22 @@ async function unsubscribeTickStream(
 export function getTickBuffer(accountId: string, symbol: string): number[] {
     const key = getSubscriptionKey(accountId, symbol);
     const subscription = subscriptions.get(key);
-    return subscription?.tickBuffer.slice() || [];
+    const sliceStart = performance.now();
+    const buffer = subscription?.tickBuffer.toArray() || [];
+    const sliceEnd = performance.now();
+    metrics.histogram('tick.buffer_slice_ms', sliceEnd - sliceStart);
+    return buffer;
+}
+
+/**
+ * Get a window view into the ring buffer without copying.
+ */
+export function getTickWindowView(accountId: string, symbol: string, length?: number): PriceSeries | null {
+    const key = getSubscriptionKey(accountId, symbol);
+    const subscription = subscriptions.get(key);
+    if (!subscription) return null;
+    const windowSize = typeof length === 'number' ? length : subscription.tickBuffer.length;
+    return subscription.tickBuffer.getView(windowSize);
 }
 
 /**
