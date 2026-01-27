@@ -170,10 +170,31 @@ router.post('/', async (req, res) => {
             .limit(1);
 
         if (existingRuns && existingRuns.length > 0) {
-            return res.status(400).json({
-                error: 'Account has an active backend bot run in database. Stop it first or wait for it to finish.',
-                activeRunId: existingRuns[0].id
-            });
+            // Check if it's a zombie run (DB says running, but memory says no)
+            // We already checked hasActiveBackendRun(activeAccount) above, so we know it's not running in memory.
+            // This happens if the server restarted while a bot was running.
+            // We should auto-resolve this by marking the old run as stopped.
+
+            const zombieRunId = existingRuns[0].id;
+            console.warn(`Found zombie backend bot run ${zombieRunId}. Marking as stopped.`);
+
+            const { error: stopError } = await supabaseClient
+                .from('bot_runs')
+                .update({
+                    run_status: 'stopped',
+                    stopped_at: new Date().toISOString()
+                })
+                .eq('id', zombieRunId);
+
+            if (stopError) {
+                console.error('Failed to stop zombie bot run', stopError);
+                return res.status(500).json({
+                    error: 'Failed to clean up stale bot run. Please try again.',
+                    details: stopError
+                });
+            }
+
+            // Proceed with starting the new bot...
         }
 
         const now = new Date().toISOString();
