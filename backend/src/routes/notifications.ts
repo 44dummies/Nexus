@@ -1,12 +1,15 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
+import { getSupabaseClient } from '../lib/supabaseAdmin';
+import { parseLimitParam } from '../lib/requestUtils';
+import { requireAuth } from '../lib/authMiddleware';
 
 const router = Router();
 
+router.use(requireAuth);
+
 router.get('/', async (req, res) => {
-    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
-    if (!supabaseAdmin) {
+    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -14,12 +17,12 @@ router.get('/', async (req, res) => {
     const type = typeof req.query.type === 'string' ? req.query.type : null;
     const unreadOnly = req.query.unread === 'true';
 
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
 
-    let query = supabaseAdmin
+    let query = supabaseClient
         .from('notifications')
         .select('id, title, body, type, data, created_at, read_at')
         .eq('account_id', activeAccount)
@@ -48,12 +51,12 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
-    if (!supabaseAdmin) {
+    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
@@ -69,7 +72,7 @@ router.post('/', async (req, res) => {
         : [];
     const markAll = req.body?.all === true;
 
-    let query = supabaseAdmin
+    let query = supabaseClient
         .from('notifications')
         .update({ read_at: now })
         .eq('account_id', activeAccount);

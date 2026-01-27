@@ -14,6 +14,10 @@ let cachedUrl: string | null = null;
 let cachedKey: string | null = null;
 let cachedKeyType: SupabaseKeyType | null = null;
 
+let cachedAnonClient: SupabaseClient | null = null;
+let cachedAnonUrl: string | null = null;
+let cachedAnonKey: string | null = null;
+
 function resolveSupabaseConfig() {
     const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || '';
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -21,7 +25,7 @@ function resolveSupabaseConfig() {
     const key = serviceKey || anonKey || '';
     const keyType: SupabaseKeyType | null = serviceKey ? 'service' : anonKey ? 'anon' : null;
 
-    return { url, key, keyType };
+    return { url, key, keyType, serviceKey, anonKey };
 }
 
 export function getSupabaseAdmin(): SupabaseAdminResult {
@@ -56,4 +60,37 @@ export function getSupabaseAdmin(): SupabaseAdminResult {
     });
 
     return { client: cachedClient, keyType };
+}
+
+export function getSupabaseClient(): SupabaseAdminResult {
+    const { url, anonKey } = resolveSupabaseConfig();
+    const missing: string[] = [];
+
+    if (!url) {
+        missing.push('SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL');
+    }
+    if (!anonKey) {
+        missing.push('SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY');
+    }
+
+    if (!url || !anonKey) {
+        return {
+            client: null,
+            keyType: null,
+            error: 'Supabase anon client not configured',
+            missing,
+        };
+    }
+
+    if (cachedAnonClient && cachedAnonUrl === url && cachedAnonKey === anonKey) {
+        return { client: cachedAnonClient, keyType: 'anon' };
+    }
+
+    cachedAnonUrl = url;
+    cachedAnonKey = anonKey;
+    cachedAnonClient = createClient(url, anonKey, {
+        auth: { persistSession: false },
+    });
+
+    return { client: cachedAnonClient, keyType: 'anon' };
 }

@@ -9,11 +9,11 @@ export function parseLimitParam(value: string | undefined, defaultLimit: number,
     return Math.min(Math.floor(parsed), maxLimit);
 }
 
+/**
+ * @deprecated Use req.auth.accountId from auth middleware instead.
+ */
 export function getActiveAccountId(req: Request) {
-    return req.cookies?.deriv_active_account
-        || req.cookies?.deriv_demo_account
-        || req.cookies?.deriv_account
-        || null;
+    return req.auth?.accountId ?? null;
 }
 
 export function cookieSettings() {
@@ -49,21 +49,10 @@ export function buildStateCookieOptions() {
 }
 
 /**
- * Returns the active account ID only if it matches one of the authenticated account cookies.
- * This prevents spoofing by validating the active account against known session tokens.
+ * @deprecated Use req.auth.accountId from auth middleware instead.
  */
 export function getValidatedAccountId(req: Request): string | null {
-    const activeAccount = req.cookies?.deriv_active_account;
-    const realAccount = req.cookies?.deriv_account;
-    const demoAccount = req.cookies?.deriv_demo_account;
-
-    // Only return if active account matches one of the authenticated accounts
-    if (activeAccount && (activeAccount === realAccount || activeAccount === demoAccount)) {
-        return activeAccount;
-    }
-
-    // Fallback to the first available authenticated account
-    return realAccount || demoAccount || null;
+    return req.auth?.accountId ?? null;
 }
 
 export function buildClearCookieOptions() {

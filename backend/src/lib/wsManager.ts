@@ -9,9 +9,11 @@ interface QueuedMessage {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
     reqId: number;
+    queuedAt: number;
+    timeoutAt: number;
 }
 
-interface WSConnectionState {
+export interface WSConnectionState {
     ws: WebSocket | null;
     authorized: boolean;
     token: string;
@@ -23,10 +25,21 @@ interface WSConnectionState {
     inboundInFlight: number;
 }
 
+const MAX_QUEUE_DEPTH = Math.max(1, Number(process.env.WS_MAX_QUEUE_DEPTH) || 500);
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const CONNECTION_TIMEOUT_MS = 10000;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+function removeQueuedMessage(state: WSConnectionState, reqId: number): QueuedMessage | null {
+    const idx = state.messageQueue.findIndex((msg) => msg.reqId === reqId);
+    if (idx >= 0) {
+        const [msg] = state.messageQueue.splice(idx, 1);
+        metrics.gauge('ws.outbound_queue_depth', state.messageQueue.length);
+        return msg ?? null;
+    }
+    return null;
+}
 
 // Global connection pool: accountId -> connection state
 const connectionPool = new Map<string, WSConnectionState>();
@@ -171,9 +184,14 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
                     state.authorized = true;
                     notifyConnectionReady(state.accountId, isReconnect);
                     // Process queued messages
+                    const now = Date.now();
                     while (state.messageQueue.length > 0) {
                         const msg = state.messageQueue.shift();
                         if (msg) {
+                            if (now > msg.timeoutAt) {
+                                msg.reject(new Error('Message timeout'));
+                                continue;
+                            }
                             state.ws?.send(msg.data);
                             state.pendingMessages.set(msg.reqId, msg);
                         }
@@ -186,6 +204,8 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
                 reject(error);
             },
             reqId,
+            queuedAt: Date.now(),
+            timeoutAt: Date.now() + CONNECTION_TIMEOUT_MS,
         });
 
         state.ws.send(JSON.stringify({ authorize: state.token, req_id: reqId }));
@@ -249,15 +269,16 @@ function setupMessageHandler(state: WSConnectionState): void {
             metrics.histogram('ws.json_parse_ms', parseEnd - parseStart);
             message.__recvPerfTs = recvPerfTs;
             message.__recvWallTs = recvWallTs;
-            const reqId = message.req_id;
+            const reqId = typeof message.req_id === 'number' ? message.req_id : undefined;
 
             // Handle pending request-response messages
             if (reqId && state.pendingMessages.has(reqId)) {
                 const pending = state.pendingMessages.get(reqId)!;
                 state.pendingMessages.delete(reqId);
 
-                if (message.error) {
-                    pending.reject(new Error(message.error.message));
+                if (message.error && typeof message.error === 'object') {
+                    const errorMsg = (message.error as any).message || 'Unknown error';
+                    pending.reject(new Error(errorMsg));
                 } else {
                     pending.resolve(message);
                 }
@@ -340,28 +361,57 @@ export async function sendMessage<T = unknown>(
     const data = JSON.stringify({ ...message, req_id: reqId });
 
     return new Promise((resolve, reject) => {
+        let settled = false;
+        const settle = (fn: () => void) => {
+            if (settled) return;
+            settled = true;
+            fn();
+        };
+
         const timeout = setTimeout(() => {
-            state.pendingMessages.delete(reqId);
-            reject(new Error('Message timeout'));
+            settle(() => {
+                if (state.pendingMessages.has(reqId)) {
+                    state.pendingMessages.delete(reqId);
+                } else {
+                    removeQueuedMessage(state, reqId);
+                }
+                reject(new Error('Message timeout'));
+            });
         }, timeoutMs);
+
+        const resolveOnce = (response: unknown) => {
+            settle(() => {
+                clearTimeout(timeout);
+                resolve(response as T);
+            });
+        };
+
+        const rejectOnce = (error: Error) => {
+            settle(() => {
+                clearTimeout(timeout);
+                reject(error);
+            });
+        };
 
         const queuedMsg: QueuedMessage = {
             data,
-            resolve: (response) => {
-                clearTimeout(timeout);
-                resolve(response as T);
-            },
-            reject: (error) => {
-                clearTimeout(timeout);
-                reject(error);
-            },
+            resolve: resolveOnce,
+            reject: rejectOnce,
             reqId,
+            queuedAt: Date.now(),
+            timeoutAt: Date.now() + timeoutMs,
         };
 
         if (state.ws?.readyState === WebSocket.OPEN && state.authorized) {
             state.ws.send(data);
             state.pendingMessages.set(reqId, queuedMsg);
         } else {
+            if (state.messageQueue.length >= MAX_QUEUE_DEPTH) {
+                clearTimeout(timeout);
+                reject(new Error('Message queue full'));
+                return;
+            }
+
             // Queue for later when connection is ready
             state.messageQueue.push(queuedMsg);
             metrics.gauge('ws.outbound_queue_depth', state.messageQueue.length);
@@ -404,7 +454,11 @@ export function cleanupConnection(accountId: string): void {
             pending.reject(new Error('Connection closed'));
         }
         state.pendingMessages.clear();
+        for (const queued of state.messageQueue) {
+            queued.reject(new Error('Connection closed'));
+        }
         state.messageQueue = [];
+        metrics.gauge('ws.outbound_queue_depth', 0);
 
         if (state.ws) {
             state.ws.removeAllListeners();
@@ -450,3 +504,20 @@ export function cleanupIdleConnections(): void {
 
 // Cleanup idle connections every minute
 setInterval(cleanupIdleConnections, 60000);
+
+// Test helpers
+export function setConnectionStateForTest(accountId: string, state: WSConnectionState): void {
+    connectionPool.set(accountId, state);
+}
+
+export function getConnectionStateForTest(accountId: string): WSConnectionState | null {
+    return connectionPool.get(accountId) ?? null;
+}
+
+export function clearConnectionStateForTest(accountId?: string): void {
+    if (accountId) {
+        connectionPool.delete(accountId);
+    } else {
+        connectionPool.clear();
+    }
+}

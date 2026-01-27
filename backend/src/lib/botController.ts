@@ -47,7 +47,7 @@ interface BotRunConfig {
     };
 }
 
-interface ActiveBotRun {
+export interface ActiveBotRun {
     id: string;
     accountId: string;
     accountType: 'real' | 'demo';
@@ -580,4 +580,13 @@ export async function stopAllBotRuns(accountId: string): Promise<void> {
     for (const run of runs) {
         await stopBotRun(run.id);
     }
+}
+
+// Test helpers
+export function setBotRunForTest(run: ActiveBotRun): void {
+    activeBotRuns.set(run.id, run);
+}
+
+export function clearBotRunsForTest(): void {
+    activeBotRuns.clear();
 }

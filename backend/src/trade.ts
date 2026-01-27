@@ -1,25 +1,18 @@
 import WebSocket from 'ws';
-import { getSupabaseAdmin } from './lib/supabaseAdmin';
 import { ExecuteTradeParamsSchema, TradeSignalSchema, type ExecuteTradeParams } from './lib/validation';
 import { getOrCreateConnection, sendMessage, cleanupConnection, registerStreamingListener, unregisterStreamingListener } from './lib/wsManager';
-import {
-    getRiskCache,
-    initializeRiskCache,
-    recordTradeOpened,
-    recordTradeSettled,
-    evaluateCachedRisk
-} from './lib/riskCache';
+import { recordTradeSettled, recordTradeFailedAttempt } from './lib/riskCache';
 import { tradeLogger } from './lib/logger';
 import { registerPendingSettlement, clearPendingSettlement } from './lib/settlementSubscriptions';
 import { persistNotification, persistOrderStatus, persistTrade } from './lib/tradePersistence';
 import { metrics } from './lib/metrics';
 import { LATENCY_METRICS, nowMs, recordLatency, type LatencyTrace } from './lib/latencyTracker';
 import { executeProposalAndBuy, ExecutionError } from './lib/executionEngine';
-import { isKillSwitchActive, preTradeCheck, recordReject, recordSlippageReject, recordStuckOrder } from './lib/riskManager';
+import { recordReject, recordSlippageReject, recordStuckOrder } from './lib/riskManager';
+import { preTradeGate } from './lib/preTradeGate';
+import type { TradeRiskConfig } from './lib/riskConfig';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
-const { client: supabaseAdmin } = getSupabaseAdmin();
-
 interface DerivResponse {
     msg_type: string;
     error?: {
@@ -29,59 +22,48 @@ interface DerivResponse {
     [key: string]: unknown;
 }
 
-interface RiskConfig {
-    stopLoss: number;
-    takeProfit: number;
-    dailyLossLimitPct: number;
-    drawdownLimitPct: number;
-    maxConsecutiveLosses: number;
-    lossCooldownMs: number;
-}
-
-const RISK_DEFAULTS: RiskConfig = {
-    stopLoss: 0,
-    takeProfit: 0,
-    dailyLossLimitPct: 2,
-    drawdownLimitPct: 6,
-    maxConsecutiveLosses: 3,
-    lossCooldownMs: 2 * 60 * 60 * 1000,
-};
-
 const SETTLED_CONTRACT_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_SETTLED_CONTRACTS = 10000;
-const settledContracts = new Map<number, number>();
+type ContractFinalizationState = {
+    timestamp: number;
+    exposureClosed: boolean;
+    pnlApplied: boolean;
+};
 
-function pruneSettledContracts(now: number): void {
-    for (const [contractId, timestamp] of settledContracts) {
-        if (now - timestamp > SETTLED_CONTRACT_TTL_MS) {
-            settledContracts.delete(contractId);
+const contractFinalizations = new Map<number, ContractFinalizationState>();
+
+function pruneContractFinalizations(now: number): void {
+    for (const [contractId, state] of contractFinalizations) {
+        if (now - state.timestamp > SETTLED_CONTRACT_TTL_MS) {
+            contractFinalizations.delete(contractId);
         }
     }
 
-    if (settledContracts.size <= MAX_SETTLED_CONTRACTS) {
+    if (contractFinalizations.size <= MAX_SETTLED_CONTRACTS) {
         return;
     }
 
-    const overflow = settledContracts.size - MAX_SETTLED_CONTRACTS;
+    const overflow = contractFinalizations.size - MAX_SETTLED_CONTRACTS;
     let removed = 0;
-    for (const contractId of settledContracts.keys()) {
-        settledContracts.delete(contractId);
+    for (const contractId of contractFinalizations.keys()) {
+        contractFinalizations.delete(contractId);
         removed += 1;
         if (removed >= overflow) break;
     }
 }
 
-function markContractSettled(contractId: number): boolean {
-    const now = Date.now();
-    const existing = settledContracts.get(contractId);
-    if (existing && now - existing < SETTLED_CONTRACT_TTL_MS) {
-        return false;
+function getFinalizationState(contractId: number): ContractFinalizationState {
+    const existing = contractFinalizations.get(contractId);
+    if (existing) {
+        return existing;
     }
-    settledContracts.set(contractId, now);
-    if (settledContracts.size > MAX_SETTLED_CONTRACTS) {
-        pruneSettledContracts(now);
-    }
-    return true;
+    const state: ContractFinalizationState = {
+        timestamp: Date.now(),
+        exposureClosed: false,
+        pnlApplied: false,
+    };
+    contractFinalizations.set(contractId, state);
+    return state;
 }
 
 function recordTradeSettledOnce(accountId: string, contractId: number, stake: number, profit: number): boolean {
@@ -89,11 +71,41 @@ function recordTradeSettledOnce(accountId: string, contractId: number, stake: nu
         recordTradeSettled(accountId, stake, profit);
         return true;
     }
-    if (!markContractSettled(contractId)) {
+    const state = getFinalizationState(contractId);
+    if (state.pnlApplied) {
         return false;
     }
-    recordTradeSettled(accountId, stake, profit);
+    state.pnlApplied = true;
+    state.timestamp = Date.now();
+
+    const skipExposure = state.exposureClosed;
+    state.exposureClosed = true;
+
+    recordTradeSettled(accountId, stake, profit, { skipExposure });
+
+    if (contractFinalizations.size > MAX_SETTLED_CONTRACTS) {
+        pruneContractFinalizations(state.timestamp);
+    }
+
     return true;
+}
+
+function recordTradeFailedAttemptOnce(accountId: string, contractId: number | null, stake: number): void {
+    if (!Number.isFinite(contractId)) {
+        recordTradeFailedAttempt(accountId, stake);
+        return;
+    }
+    const id = contractId as number;
+    const state = getFinalizationState(id);
+    if (state.exposureClosed) {
+        return;
+    }
+    state.exposureClosed = true;
+    state.timestamp = Date.now();
+    recordTradeFailedAttempt(accountId, stake);
+    if (contractFinalizations.size > MAX_SETTLED_CONTRACTS) {
+        pruneContractFinalizations(state.timestamp);
+    }
 }
 
 /**
@@ -113,156 +125,6 @@ function calculateDurationMs(duration: number, durationUnit: string): number {
             return duration * 24 * 60 * 60 * 1000;
         default:
             return duration * 1000; // Default to seconds
-    }
-}
-
-const toNumber = (value: unknown, fallback = 0) => {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string') {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : fallback;
-    }
-    return fallback;
-};
-
-const getUtcDayRange = () => {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 1);
-    return {
-        startIso: start.toISOString(),
-        endIso: end.toISOString(),
-        dateKey: start.toISOString().slice(0, 10),
-        now,
-    };
-};
-
-async function getSettingValue(accountId: string, key: string) {
-    if (!supabaseAdmin) return null;
-    const { data } = await supabaseAdmin
-        .from('settings')
-        .select('value')
-        .eq('account_id', accountId)
-        .eq('key', key)
-        .maybeSingle();
-    return data?.value ?? null;
-}
-
-async function getRiskConfig(accountId: string, botRunId?: string | null) {
-    if (!supabaseAdmin) return null;
-    let runConfig: { risk?: Partial<RiskConfig> } | null = null;
-
-    if (botRunId) {
-        const { data } = await supabaseAdmin
-            .from('bot_runs')
-            .select('config')
-            .eq('account_id', accountId)
-            .eq('id', botRunId)
-            .maybeSingle();
-        runConfig = data?.config ?? null;
-    }
-
-    if (!runConfig) {
-        const { data } = await supabaseAdmin
-            .from('bot_runs')
-            .select('config')
-            .eq('account_id', accountId)
-            .eq('run_status', 'running')
-            .order('started_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-        runConfig = data?.config ?? null;
-    }
-
-    const risk = runConfig && typeof runConfig === 'object' ? (runConfig as { risk?: Partial<RiskConfig> }).risk : null;
-    return risk ?? null;
-}
-
-async function enforceServerRisk(accountId: string, botRunId?: string | null) {
-    if (!supabaseAdmin) {
-        throw new Error('Risk engine unavailable - database not configured');
-    }
-
-    const [riskConfig, riskStateValue, balanceSnapshot] = await Promise.all([
-        getRiskConfig(accountId, botRunId),
-        getSettingValue(accountId, 'risk_state'),
-        getSettingValue(accountId, 'balance_snapshot'),
-    ]);
-
-    const risk: RiskConfig = {
-        stopLoss: toNumber(riskConfig?.stopLoss, RISK_DEFAULTS.stopLoss),
-        takeProfit: toNumber(riskConfig?.takeProfit, RISK_DEFAULTS.takeProfit),
-        dailyLossLimitPct: toNumber(riskConfig?.dailyLossLimitPct, RISK_DEFAULTS.dailyLossLimitPct),
-        drawdownLimitPct: toNumber(riskConfig?.drawdownLimitPct, RISK_DEFAULTS.drawdownLimitPct),
-        maxConsecutiveLosses: Math.max(0, Math.floor(toNumber(riskConfig?.maxConsecutiveLosses, RISK_DEFAULTS.maxConsecutiveLosses))),
-        lossCooldownMs: toNumber(riskConfig?.lossCooldownMs, RISK_DEFAULTS.lossCooldownMs),
-    };
-
-    const { startIso, endIso, dateKey, now } = getUtcDayRange();
-
-    const { data: trades } = await supabaseAdmin
-        .from('trades')
-        .select('profit, created_at')
-        .eq('account_id', accountId)
-        .gte('created_at', startIso)
-        .lt('created_at', endIso)
-        .order('created_at', { ascending: false })
-        .limit(2000);
-
-    let totalLossToday = 0;
-    let totalProfitToday = 0;
-    let lossStreak = 0;
-    let streakComputed = false;
-
-    // Trades are ordered newest-first; compute streak from most recent until first win
-    (trades || []).forEach((trade) => {
-        const profit = Number(trade.profit ?? 0);
-        if (profit < 0) {
-            totalLossToday += Math.abs(profit);
-            if (!streakComputed) {
-                lossStreak += 1;
-            }
-        } else {
-            totalProfitToday += profit;
-            streakComputed = true; // Stop counting streak after first win
-        }
-    });
-
-    const riskState = riskStateValue && typeof riskStateValue === 'object' ? riskStateValue as {
-        date?: string;
-        dailyStartEquity?: number;
-        equityPeak?: number;
-    } : null;
-
-    const snapshot = balanceSnapshot && typeof balanceSnapshot === 'object' ? balanceSnapshot as {
-        balance?: number;
-        asOf?: string;
-    } : null;
-
-    const balance = typeof snapshot?.balance === 'number' ? snapshot?.balance : null;
-    const dailyStartEquity = riskState?.date === dateKey ? riskState?.dailyStartEquity ?? balance : balance;
-    const equityPeak = riskState?.date === dateKey ? riskState?.equityPeak ?? balance : balance;
-
-    if (typeof risk.dailyLossLimitPct === 'number' && risk.dailyLossLimitPct > 0 && typeof dailyStartEquity === 'number') {
-        const dailyLossLimit = (risk.dailyLossLimitPct / 100) * dailyStartEquity;
-        if (totalLossToday >= dailyLossLimit) {
-            throw new Error('Daily loss limit reached');
-        }
-    }
-
-    if (typeof risk.drawdownLimitPct === 'number' && risk.drawdownLimitPct > 0 && typeof equityPeak === 'number' && typeof balance === 'number') {
-        const drawdown = ((equityPeak - balance) / equityPeak) * 100;
-        if (drawdown >= risk.drawdownLimitPct) {
-            throw new Error('Drawdown limit reached');
-        }
-    }
-
-    if (risk.maxConsecutiveLosses > 0 && lossStreak >= risk.maxConsecutiveLosses) {
-        const lastLossTime = trades?.[0]?.created_at ? new Date(trades[0].created_at).getTime() : null;
-        if (lastLossTime && now.getTime() - lastLossTime < risk.lossCooldownMs) {
-            throw new Error('Loss cooldown active');
-        }
     }
 }
 
@@ -301,12 +163,14 @@ export async function executeTradeServer(
     }
 
     const { token, accountId, accountType, accountCurrency } = auth;
+    let stake = params.stake;
 
-    if (isKillSwitchActive(accountId)) {
-        throw new Error('Kill switch active');
-    }
-
-    await enforceServerRisk(accountId, params.botRunId ?? null);
+    const gate = await preTradeGate({
+        accountId,
+        stake,
+        botRunId: params.botRunId ?? null,
+    });
+    stake = gate.stake;
 
     return new Promise((resolve, reject) => {
         const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
@@ -321,6 +185,13 @@ export async function executeTradeServer(
         let proposalSentPerfTs: number | null = null;
         let buySentPerfTs: number | null = null;
         let contractId: number | null = null;
+        let rollbackApplied = false;
+
+        const rollback = () => {
+            if (rollbackApplied) return;
+            rollbackApplied = true;
+            recordTradeFailedAttemptOnce(accountId, contractId, stake);
+        };
 
         const cleanup = () => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -343,6 +214,7 @@ export async function executeTradeServer(
         const timeoutMs = Math.max(30000, baseDurationMs + 15000); // Min 30s, or duration + 15s buffer
 
         const timeout = setTimeout(() => {
+            rollback();
             cleanup();
             reject(new Error('Trade execution timed out'));
         }, timeoutMs);
@@ -375,6 +247,7 @@ export async function executeTradeServer(
                     status: response.error.code || 'error',
                     payload: { message: response.error.message, code: response.error.code },
                 }).catch((err) => tradeLogger.error({ err }, 'Order status error persist failed'));
+                rollback();
                 cleanup();
                 clearTimeout(timeout);
                 reject(new Error(response.error.message));
@@ -385,7 +258,7 @@ export async function executeTradeServer(
                 timestamps.proposalRequestedAt = Date.now();
                 const proposalReq = {
                     proposal: 1,
-                    amount: params.stake,
+                    amount: stake,
                     basis: 'stake',
                     contract_type: signal,
                     currency: accountCurrency || 'USD',
@@ -465,6 +338,7 @@ export async function executeTradeServer(
                                     tolerancePct: entrySlippagePct,
                                 },
                             }).catch((err) => tradeLogger.error({ err }, 'Order status persist failed'));
+                            rollback();
                             cleanup();
                             clearTimeout(timeout);
                             reject(new Error('Slippage exceeded tolerance'));
@@ -541,6 +415,7 @@ export async function executeTradeServer(
                     }
                     recordLatency(LATENCY_METRICS.sendToFill, latencyTrace?.orderSentTs ?? proposalSentPerfTs ?? undefined, fillPerfTs);
                     metrics.counter('trade.fill');
+                    recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit);
                     cleanup();
                     clearTimeout(timeout);
                     resolve({
@@ -556,7 +431,7 @@ export async function executeTradeServer(
                         botRunId: params.botRunId ?? null,
                         contractId: contract.contract_id,
                         symbol: params.symbol,
-                        stake: params.stake,
+                        stake,
                         duration: params.duration || 5,
                         durationUnit: params.durationUnit || 't',
                         profit: contract.profit,
@@ -604,6 +479,7 @@ export async function executeTradeServer(
                 status: 'socket_error',
                 payload: { message: err.message },
             }).catch((error) => tradeLogger.error({ error }, 'Order status error persist failed'));
+            rollback();
             cleanup();
             clearTimeout(timeout);
             reject(err);
@@ -620,21 +496,7 @@ export async function executeTradeServerFast(
     signal: 'CALL' | 'PUT',
     params: ExecuteTradeParams,
     auth: { token: string; accountId: string; accountType: 'real' | 'demo'; accountCurrency?: string | null },
-    riskOverrides?: {
-        dailyLossLimitPct?: number;
-        drawdownLimitPct?: number;
-        maxConsecutiveLosses?: number;
-        cooldownMs?: number;
-        lossCooldownMs?: number;
-        maxStake?: number;
-        maxConcurrentTrades?: number;
-        maxOrderSize?: number;
-        maxNotional?: number;
-        maxExposure?: number;
-        maxOrdersPerSecond?: number;
-        maxOrdersPerMinute?: number;
-        maxCancelsPerSecond?: number;
-    },
+    riskOverrides?: Partial<TradeRiskConfig>,
     latencyTrace?: LatencyTrace
 ): Promise<TradeResultFast> {
     const startTime = Date.now();
@@ -650,72 +512,15 @@ export async function executeTradeServerFast(
     }
 
     const { token, accountId, accountType, accountCurrency } = auth;
-    if (isKillSwitchActive(accountId)) {
-        throw new Error('Kill switch active');
-    }
     let stake = params.stake;
 
-    // Check cached risk - fast path
-    let riskEntry = getRiskCache(accountId);
-    if (!riskEntry) {
-        // Initialize cache from balance
-        const balanceSnapshot = await getSettingValue(accountId, 'balance_snapshot');
-        const snapshot = balanceSnapshot && typeof balanceSnapshot === 'object'
-            ? balanceSnapshot as { balance?: number }
-            : null;
-        const balance = typeof snapshot?.balance === 'number' ? snapshot.balance : 10000;
-        riskEntry = initializeRiskCache(accountId, { equity: balance });
-    }
-
-    // Fast risk evaluation from cache
-    const riskStatus = evaluateCachedRisk(accountId, {
-        proposedStake: stake,
-        maxStake: riskOverrides?.maxStake ?? params.stake * 10, // Allow reasonable stakes
-        dailyLossLimitPct: riskOverrides?.dailyLossLimitPct ?? 2,
-        drawdownLimitPct: riskOverrides?.drawdownLimitPct ?? 6,
-        maxConsecutiveLosses: riskOverrides?.maxConsecutiveLosses ?? 3,
-        cooldownMs: riskOverrides?.cooldownMs ?? 3000, // 3s cooldown between trades
-        lossCooldownMs: riskOverrides?.lossCooldownMs ?? 60000, // 1 min after max loss streak
-        maxConcurrentTrades: riskOverrides?.maxConcurrentTrades,
+    const gate = await preTradeGate({
+        accountId,
+        stake,
+        botRunId: params.botRunId ?? null,
+        riskOverrides,
     });
-
-    if (riskStatus.status === 'HALT') {
-        throw new Error(riskStatus.reason === 'DAILY_LOSS'
-            ? 'Daily loss limit reached'
-            : 'Drawdown limit reached');
-    }
-
-    if (riskStatus.status === 'MAX_CONCURRENT') {
-        throw new Error('Maximum concurrent trades reached (5)');
-    }
-
-    if (riskStatus.status === 'COOLDOWN') {
-        const waitMs = riskStatus.cooldownMs ?? 1000;
-        throw new Error(`Cooldown active - wait ${Math.ceil(waitMs / 1000)}s`);
-    }
-
-    if (riskStatus.status === 'REDUCE_STAKE') {
-        const maxStake = riskOverrides?.maxStake ?? params.stake * 10;
-        stake = Math.min(stake, maxStake);
-    }
-
-    const preTrade = preTradeCheck(accountId, stake, {
-        maxOrderSize: riskOverrides?.maxOrderSize,
-        maxNotional: riskOverrides?.maxNotional,
-        maxExposure: riskOverrides?.maxExposure,
-        maxOrdersPerSecond: riskOverrides?.maxOrdersPerSecond,
-        maxOrdersPerMinute: riskOverrides?.maxOrdersPerMinute,
-        maxCancelsPerSecond: riskOverrides?.maxCancelsPerSecond,
-    });
-    if (!preTrade.allowed) {
-        throw new Error(`Risk limit: ${preTrade.reason}`);
-    }
-
-    // Record trade opening (updates concurrent count)
-    const openResult = recordTradeOpened(accountId, stake);
-    if (!openResult.allowed) {
-        throw new Error(openResult.reason ?? 'Risk check failed');
-    }
+    stake = gate.stake;
 
     try {
         const execResult = await executeProposalAndBuy({
@@ -805,8 +610,8 @@ export async function executeTradeServerFast(
                 metrics.counter('trade.slippage_reject');
             }
         }
-        // Rollback concurrent trade count on failure
-        recordTradeSettled(accountId, stake, 0);
+        // Rollback concurrent trade count on failure (do not touch streaks)
+        recordTradeFailedAttemptOnce(accountId, null, stake);
         throw error;
     }
 }
@@ -856,7 +661,7 @@ async function trackSettlementAsync(
 
         if (subscribeResponse.error) {
             tradeLogger.error({ error: subscribeResponse.error.message, contractId }, 'Settlement subscription failed');
-            recordTradeSettledOnce(accountId, contractId, stake, 0); // Decrement concurrent count
+            recordTradeFailedAttemptOnce(accountId, contractId, stake); // Decrement concurrent count only
             clearPendingSettlement(accountId, contractId);
             return;
         }
@@ -934,12 +739,12 @@ async function trackSettlementAsync(
             await handleSettlement(accountId, accountType, stake, params, settledContract);
         } else {
             // Timeout case - still decrement concurrent count
-            recordTradeSettledOnce(accountId, contractId, stake, 0);
+            recordTradeFailedAttemptOnce(accountId, contractId, stake);
         }
 
     } catch (error) {
         tradeLogger.error({ error, contractId }, 'Settlement tracking error');
-        recordTradeSettledOnce(accountId, contractId, stake, 0);
+        recordTradeFailedAttemptOnce(accountId, contractId, stake);
         clearPendingSettlement(accountId, contractId);
     } finally {
         // Always attempt to forget the subscription to stop updates

@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import crypto from 'crypto';
+import helmet from 'helmet';
 
 import authRouter from './routes/auth';
 import tradesRouter from './routes/trades';
@@ -20,6 +22,7 @@ const app = express();
 initMetrics();
 
 app.set('trust proxy', 1);
+app.use(helmet());
 
 const rawOrigins = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '';
 // Normalize origins: trim whitespace and remove trailing slashes
@@ -83,6 +86,17 @@ app.use(cors({
 
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
+
+// Correlation/request ID middleware
+app.use((req, res, next) => {
+    const headerId = req.get('x-request-id') || req.get('x-correlation-id');
+    const requestId = (typeof headerId === 'string' && headerId.trim().length > 0)
+        ? headerId.trim()
+        : crypto.randomUUID();
+    req.requestId = requestId;
+    res.setHeader('x-request-id', requestId);
+    next();
+});
 
 // Rate limiting middleware (100 requests/minute per IP)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

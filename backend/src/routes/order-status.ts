@@ -1,24 +1,27 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
+import { getSupabaseClient } from '../lib/supabaseAdmin';
+import { parseLimitParam } from '../lib/requestUtils';
+import { requireAuth } from '../lib/authMiddleware';
 
 const router = Router();
 
+router.use(requireAuth);
+
 router.get('/', async (req, res) => {
-    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
-    if (!supabaseAdmin) {
+    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
     const limit = parseLimitParam(req.query.limit as string | undefined, 50, 200);
     const contractId = req.query.contractId as string | undefined;
 
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
 
-    let query = supabaseAdmin
+    let query = supabaseClient
         .from('order_status')
         .select('id, contract_id, trade_id, event, status, price, latency_ms, payload, created_at')
         .eq('account_id', activeAccount)

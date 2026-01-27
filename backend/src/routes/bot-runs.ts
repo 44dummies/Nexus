@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getValidatedAccountId } from '../lib/requestUtils';
+import { getSupabaseClient } from '../lib/supabaseAdmin';
 import {
     startBotRun,
     stopBotRun,
@@ -10,17 +9,40 @@ import {
     getAccountBotRuns,
     hasActiveBackendRun,
 } from '../lib/botController';
-import { StartBackendSchema, StopBackendSchema } from '../lib/validation';
+import {
+    StartBackendSchema,
+    StopBackendSchema,
+    StartBotSchema,
+    StopBotSchema,
+    PauseBackendSchema,
+    ResumeBackendSchema,
+    StatusBackendSchema
+} from '../lib/validation';
+import { requireAuth } from '../lib/authMiddleware';
 
 const router = Router();
+router.use(requireAuth);
+
+type BotRunStatus = ReturnType<typeof getBotRunStatus>;
+
+export function enforceRunOwnership(activeAccount: string, runId: string): { status: number; error?: string; run?: BotRunStatus } {
+    const status = getBotRunStatus(runId);
+    if (!status) {
+        return { status: 404, error: 'Bot run not found' };
+    }
+    if (status.accountId !== activeAccount) {
+        return { status: 403, error: 'Unauthorized' };
+    }
+    return { status: 200, run: status };
+}
 
 router.post('/', async (req, res) => {
-    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
-    if (!supabaseAdmin) {
+    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
@@ -28,11 +50,14 @@ router.post('/', async (req, res) => {
     const action = typeof req.body?.action === 'string' ? req.body.action : '';
 
     if (action === 'start') {
-        const botId = typeof req.body?.botId === 'string' ? req.body.botId : null;
-        const config = req.body?.config ?? null;
+        const validation = StartBotSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
+        }
+        const { botId, config } = validation.data;
         const now = new Date().toISOString();
 
-        const { error: stopError } = await supabaseAdmin
+        const { error: stopError } = await supabaseClient
             .from('bot_runs')
             .update({ run_status: 'stopped', stopped_at: now })
             .eq('account_id', activeAccount)
@@ -48,7 +73,7 @@ router.post('/', async (req, res) => {
             });
         }
 
-        const { data, error: insertError } = await supabaseAdmin
+        const { data, error: insertError } = await supabaseClient
             .from('bot_runs')
             .insert({
                 account_id: activeAccount,
@@ -74,9 +99,13 @@ router.post('/', async (req, res) => {
     }
 
     if (action === 'stop') {
-        const runId = typeof req.body?.runId === 'string' ? req.body.runId : null;
+        const validation = StopBotSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
+        }
+        const { runId } = validation.data;
         if (runId) {
-            const { error: stopError } = await supabaseAdmin
+            const { error: stopError } = await supabaseClient
                 .from('bot_runs')
                 .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
                 .eq('id', runId)
@@ -94,7 +123,7 @@ router.post('/', async (req, res) => {
             return res.json({ success: true });
         }
 
-        const { error: stopError } = await supabaseAdmin
+        const { error: stopError } = await supabaseClient
             .from('bot_runs')
             .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
             .eq('account_id', activeAccount)
@@ -115,8 +144,6 @@ router.post('/', async (req, res) => {
 
     // ==================== BACKEND MODE ACTIONS ====================
 
-
-
     if (action === 'start-backend') {
         const validation = StartBackendSchema.safeParse(req.body);
         if (!validation.success) {
@@ -125,28 +152,16 @@ router.post('/', async (req, res) => {
 
         const { botId, symbol, stake, maxStake, duration, durationUnit, cooldownMs, strategyConfig, risk, performance, entry } = validation.data;
 
-        // IMPORTANT: Select token based on active account type to prevent cross-mode trading
-        const accountType = req.cookies?.deriv_active_type === 'demo' ? 'demo' : 'real';
-        const token = accountType === 'demo'
-            ? req.cookies?.deriv_demo_token
-            : req.cookies?.deriv_token;
-        const currency = accountType === 'demo'
-            ? (req.cookies?.deriv_demo_currency || 'USD')
-            : (req.cookies?.deriv_currency || 'USD');
-
-        if (!token) {
-            return res.status(401).json({
-                error: `No Deriv ${accountType} token available. Please log in with a ${accountType} account.`
-            });
+        const auth = req.auth;
+        if (!auth?.token) {
+            return res.status(401).json({ error: 'User not authenticated' });
         }
 
-        // Check if already has backend run (in-memory)
         if (hasActiveBackendRun(activeAccount)) {
             return res.status(400).json({ error: 'Account already has an active backend bot run' });
         }
 
-        // Also check DB for active backend runs (in case of server restart or multi-instance)
-        const { data: existingRuns } = await supabaseAdmin
+        const { data: existingRuns } = await supabaseClient
             .from('bot_runs')
             .select('id')
             .eq('account_id', activeAccount)
@@ -161,9 +176,8 @@ router.post('/', async (req, res) => {
             });
         }
 
-        // Create DB record first
         const now = new Date().toISOString();
-        const { data, error: insertError } = await supabaseAdmin
+        const { data, error: insertError } = await supabaseClient
             .from('bot_runs')
             .insert({
                 account_id: activeAccount,
@@ -200,8 +214,8 @@ router.post('/', async (req, res) => {
             await startBotRun(
                 runId,
                 activeAccount,
-                accountType as 'real' | 'demo',
-                token,
+                auth.accountType,
+                auth.token,
                 {
                     strategyId: botId,
                     symbol,
@@ -214,7 +228,7 @@ router.post('/', async (req, res) => {
                     risk,
                     performance,
                 },
-                currency
+                auth.currency || 'USD'
             );
 
             return res.json({ runId, mode: 'backend', status: 'running' });
@@ -224,8 +238,6 @@ router.post('/', async (req, res) => {
         }
     }
 
-
-
     if (action === 'stop-backend') {
         const validation = StopBackendSchema.safeParse(req.body);
         if (!validation.success) {
@@ -234,6 +246,10 @@ router.post('/', async (req, res) => {
         const { runId } = validation.data;
 
         if (runId) {
+            const ownership = enforceRunOwnership(activeAccount, runId);
+            if (ownership.status !== 200) {
+                return res.status(ownership.status).json({ error: ownership.error });
+            }
             await stopBotRun(runId);
             return res.json({ success: true });
         }
@@ -247,11 +263,15 @@ router.post('/', async (req, res) => {
     }
 
     if (action === 'pause-backend') {
-        const runId = typeof req.body?.runId === 'string' ? req.body.runId : null;
-        const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+        const validation = PauseBackendSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
+        }
+        const { runId, reason } = validation.data;
 
-        if (!runId) {
-            return res.status(400).json({ error: 'runId required' });
+        const ownership = enforceRunOwnership(activeAccount, runId);
+        if (ownership.status !== 200) {
+            return res.status(ownership.status).json({ error: ownership.error });
         }
 
         await pauseBotRun(runId, reason);
@@ -259,10 +279,15 @@ router.post('/', async (req, res) => {
     }
 
     if (action === 'resume-backend') {
-        const runId = typeof req.body?.runId === 'string' ? req.body.runId : null;
+        const validation = ResumeBackendSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
+        }
+        const { runId } = validation.data;
 
-        if (!runId) {
-            return res.status(400).json({ error: 'runId required' });
+        const ownership = enforceRunOwnership(activeAccount, runId);
+        if (ownership.status !== 200) {
+            return res.status(ownership.status).json({ error: ownership.error });
         }
 
         await resumeBotRun(runId);
@@ -270,13 +295,18 @@ router.post('/', async (req, res) => {
     }
 
     if (action === 'status-backend') {
-        const runId = typeof req.body?.runId === 'string' ? req.body.runId : null;
+        const validation = StatusBackendSchema.safeParse(req.body);
+        if (!validation.success) {
+            return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
+        }
+        const { runId } = validation.data;
 
         if (runId) {
-            const status = getBotRunStatus(runId);
-            if (!status) {
-                return res.json({ active: false });
+            const ownership = enforceRunOwnership(activeAccount, runId);
+            if (ownership.status !== 200 || !ownership.run) {
+                return res.status(ownership.status).json({ error: ownership.error });
             }
+            const status = ownership.run;
             return res.json({
                 active: true,
                 id: status.id,

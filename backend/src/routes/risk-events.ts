@@ -1,25 +1,30 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
-import { getValidatedAccountId, parseLimitParam } from '../lib/requestUtils';
+import { getSupabaseClient } from '../lib/supabaseAdmin';
+import { parseLimitParam } from '../lib/requestUtils';
 import { clearKillSwitch, triggerKillSwitch } from '../lib/riskManager';
+import { requireAuth } from '../lib/authMiddleware';
+import { riskLogger } from '../lib/logger';
+import { assertKillSwitchAuthorization } from '../lib/killSwitchAuth';
 
 const router = Router();
 
+router.use(requireAuth);
+
 router.get('/', async (req, res) => {
-    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
-    if (!supabaseAdmin) {
+    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
     const limit = parseLimitParam(req.query.limit as string | undefined, 50, 200);
     const type = typeof req.query.type === 'string' ? req.query.type : null;
 
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
 
-    let query = supabaseAdmin
+    let query = supabaseClient
         .from('risk_events')
         .select('id, event_type, detail, metadata, created_at')
         .eq('account_id', activeAccount)
@@ -45,12 +50,12 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-    const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
-    if (!supabaseAdmin) {
+    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
@@ -59,7 +64,7 @@ router.post('/', async (req, res) => {
     const detail = typeof req.body?.detail === 'string' ? req.body.detail : null;
     const metadata = req.body?.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : null;
 
-    const { error: insertError } = await supabaseAdmin.from('risk_events').insert({
+    const { error: insertError } = await supabaseClient.from('risk_events').insert({
         account_id: activeAccount,
         event_type: eventType,
         detail,
@@ -80,29 +85,42 @@ router.post('/', async (req, res) => {
 });
 
 router.post('/kill-switch', async (req, res) => {
-    const activeAccount = getValidatedAccountId(req);
+    const activeAccount = req.auth?.accountId;
     if (!activeAccount) {
         return res.status(401).json({ error: 'No active account' });
     }
 
-    const adminToken = process.env.RISK_ADMIN_TOKEN;
     const providedToken = req.get('x-risk-token');
-    if (adminToken && providedToken !== adminToken) {
-        return res.status(403).json({ error: 'Unauthorized' });
-    }
 
     const action = typeof req.body?.action === 'string' ? req.body.action : '';
     const reason = typeof req.body?.reason === 'string' ? req.body.reason : 'manual';
     const scope = typeof req.body?.scope === 'string' ? req.body.scope : 'account';
     const targetAccount = scope === 'global' ? null : activeAccount;
 
+    const authz = assertKillSwitchAuthorization(scope, providedToken);
+    if (!authz.ok) {
+        return res.status(authz.status).json({ error: authz.error });
+    }
+
     if (action === 'activate') {
         triggerKillSwitch(targetAccount, reason, true);
+        riskLogger.info({
+            requestId: req.requestId,
+            actorAccountId: activeAccount,
+            scope,
+            action,
+        }, 'Kill switch activated');
         return res.json({ success: true, status: 'active', scope });
     }
 
     if (action === 'clear') {
         clearKillSwitch(targetAccount);
+        riskLogger.info({
+            requestId: req.requestId,
+            actorAccountId: activeAccount,
+            scope,
+            action,
+        }, 'Kill switch cleared');
         return res.json({ success: true, status: 'cleared', scope });
     }
 

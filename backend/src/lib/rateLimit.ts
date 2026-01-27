@@ -1,3 +1,5 @@
+import type { Request, Response, NextFunction } from 'express';
+
 /**
  * Simple in-memory rate limiting middleware
  * For production, consider using Redis-based rate limiting
@@ -24,6 +26,7 @@ interface RateLimitOptions {
     windowMs?: number;      // Window duration in ms (default: 60000 = 1 minute)
     maxRequests?: number;   // Max requests per window (default: 100)
     skipPaths?: string[];   // Paths to skip rate limiting
+    keyGenerator?: (req: Request) => string; // Custom key generator
 }
 
 /**
@@ -33,27 +36,23 @@ export function createRateLimit(options: RateLimitOptions = {}) {
     const windowMs = options.windowMs || 60000;
     const maxRequests = options.maxRequests || 100;
     const skipPaths = new Set(options.skipPaths || ['/health']);
+    const keyGenerator = options.keyGenerator || ((req: Request) => req.ip || req.get('x-forwarded-for') || 'unknown');
 
-    return function rateLimit(
-        req: { ip?: string; get: (header: string) => string | undefined; path: string },
-        res: { status: (code: number) => { json: (data: unknown) => void }; setHeader: (name: string, value: string | number) => void },
-        next: () => void
-    ) {
+    return function rateLimit(req: Request, res: Response, next: NextFunction) {
         // Skip rate limiting for certain paths
         if (skipPaths.has(req.path)) {
             return next();
         }
 
-        // Get client identifier (IP or forwarded IP)
-        const clientId = req.get('x-forwarded-for')?.split(',')[0].trim() || req.ip || 'unknown';
+        const key = keyGenerator(req);
         const now = Date.now();
 
-        let entry = rateLimitStore.get(clientId);
+        let entry = rateLimitStore.get(key);
 
         if (!entry || now - entry.windowStart >= windowMs) {
             // Start new window
             entry = { count: 1, windowStart: now };
-            rateLimitStore.set(clientId, entry);
+            rateLimitStore.set(key, entry);
         } else {
             entry.count++;
         }
@@ -80,10 +79,31 @@ export function createRateLimit(options: RateLimitOptions = {}) {
 }
 
 /**
- * Default rate limiter: 100 requests per minute
+ * Default rate limiter: 300 requests per minute
  */
 export const defaultRateLimit = createRateLimit({
     windowMs: 60000,
-    maxRequests: 100,
+    maxRequests: 300,
     skipPaths: ['/health'],
+});
+
+/**
+ * Strict rate limiter for Auth routes: 5 requests per minute per IP
+ */
+export const authRateLimit = createRateLimit({
+    windowMs: 60000,
+    maxRequests: 5,
+});
+
+/**
+ * Moderate rate limiter for Trading: 50 requests per minute per Account ID
+ * Falls back to IP if not authenticated
+ */
+export const tradeRateLimit = createRateLimit({
+    windowMs: 60000,
+    maxRequests: 50,
+    keyGenerator: (req: Request) => {
+        // Use accountId if available (from authMiddleware), else IP
+        return req.auth?.accountId || req.ip || 'unknown';
+    }
 });

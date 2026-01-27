@@ -5,6 +5,7 @@ import { authorizeTokenCached } from '../lib/deriv';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { buildCookieOptions, buildStateCookieOptions, buildClearCookieOptions } from '../lib/requestUtils';
 import { encryptToken } from '../lib/sessionCrypto';
+import { authRateLimit } from '../lib/rateLimit';
 
 const router = Router();
 
@@ -119,7 +120,7 @@ const refreshAuthCookies = (req: Request, res: Response) => {
     setIf('deriv_active_currency');
 };
 
-router.post('/start', async (_req, res) => {
+router.post('/start', authRateLimit as any, async (_req, res) => {
     const appId = (process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '').trim();
     if (!appId) {
         return res.status(500).json({ error: 'Missing Deriv app id' });
@@ -141,7 +142,7 @@ router.post('/start', async (_req, res) => {
     return res.json({ url: url.toString() });
 });
 
-router.get('/callback', async (req, res) => {
+router.get('/callback', authRateLimit as any, async (req, res) => {
     const searchParams = req.query;
     const stateParam = typeof searchParams.state === 'string' ? searchParams.state : null;
     const stateCookie = req.cookies?.deriv_oauth_state;
@@ -252,14 +253,10 @@ router.get('/session', async (req, res) => {
             type: acct.is_virtual ? 'demo' : 'real',
         })) || [];
 
-        const derivedActiveAccount = activeAccountCookie
-            || authorize?.loginid
-            || (activeType === 'demo' ? demoAccount : account)
-            || null;
+        const derivedActiveAccount = authorize?.loginid || null;
 
-        const derivedActiveCurrency = activeCurrencyCookie
-            || authorize?.currency
-            || (activeType === 'demo' ? demoCurrency : currency)
+        const derivedActiveCurrency = authorize?.currency
+            || activeCurrencyCookie
             || null;
 
         const balanceValue = authorize?.balance;
@@ -286,10 +283,7 @@ router.get('/session', async (req, res) => {
             currency,
             demoAccount,
             demoCurrency,
-            accounts: accountList.length > 0 ? accountList : [
-                ...(account ? [{ id: account, currency: currency || 'USD', type: account.startsWith('CR') ? 'real' : 'demo' }] : []),
-                ...(demoAccount ? [{ id: demoAccount, currency: demoCurrency || 'USD', type: 'demo' as const }] : []),
-            ],
+            accounts: accountList,
             activeAccountId: derivedActiveAccount,
             activeAccountType: activeType,
             activeCurrency: derivedActiveCurrency,
@@ -300,7 +294,7 @@ router.get('/session', async (req, res) => {
     }
 });
 
-router.post('/session', async (req, res) => {
+router.post('/session', authRateLimit as any, async (req, res) => {
     const action = typeof req.body?.action === 'string' ? req.body.action : '';
 
     if (action === 'logout') {

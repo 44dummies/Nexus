@@ -13,7 +13,10 @@ export const ExecuteTradeParamsSchema = z.object({
     entryMode: z.enum(['HYBRID_LIMIT_MARKET', 'MARKET']).optional(),
     entryTargetPrice: z.number().positive().optional(),
     entrySlippagePct: z.number().min(0).optional(),
-});
+    // Allow payload fields that might be present in req.body
+    signal: TradeSignalSchema.optional(),
+    useFast: z.boolean().optional(),
+}).strict();
 
 export type TradeSignal = z.infer<typeof TradeSignalSchema>;
 export type ExecuteTradeParams = z.infer<typeof ExecuteTradeParamsSchema>;
@@ -39,16 +42,28 @@ export const BotRunRiskSchema = z.object({
     maxCancelsPerSecond: z.number().int().min(1).max(100).optional(),
     volatilityWindow: z.number().int().min(5).max(500).optional(),
     volatilityThreshold: z.number().min(0).optional(),
-}).optional();
+}).strict().optional();
 
 export const PerformanceConfigSchema = z.object({
     microBatchSize: z.number().int().min(1).max(100).optional(),
     microBatchIntervalMs: z.number().min(0).max(1000).optional(),
     strategyBudgetMs: z.number().min(0).max(50).optional(),
     enableComputeBudget: z.boolean().optional(),
-}).optional();
+}).strict().optional();
 
-// Bot-run start-backend action schema
+// Frontend Bot Actions (Legacy)
+export const StartBotSchema = z.object({
+    action: z.literal('start'),
+    botId: z.string().min(1).nullable().optional(),
+    config: z.record(z.unknown()).nullable().optional(),
+}).strict();
+
+export const StopBotSchema = z.object({
+    action: z.literal('stop'),
+    runId: z.string().uuid().nullable().optional(),
+}).strict();
+
+// Backend Bot Actions
 export const StartBackendSchema = z.object({
     action: z.literal('start-backend'),
     botId: z.string().min(1).max(100).default('rsi'),
@@ -69,14 +84,29 @@ export const StartBackendSchema = z.object({
         slippagePct: z.number().min(0).optional(),
         aggressiveness: z.number().min(0).max(1).optional(),
         minEdgePct: z.number().min(0).optional(),
-    }).optional(),
-});
+    }).strict().optional(),
+}).strict();
 
-// Bot-run stop-backend action schema
 export const StopBackendSchema = z.object({
     action: z.literal('stop-backend'),
     runId: z.string().uuid().optional(),
-});
+}).strict();
+
+export const PauseBackendSchema = z.object({
+    action: z.literal('pause-backend'),
+    runId: z.string().uuid(),
+    reason: z.string().max(200).optional(),
+}).strict();
+
+export const ResumeBackendSchema = z.object({
+    action: z.literal('resume-backend'),
+    runId: z.string().uuid(),
+}).strict();
+
+export const StatusBackendSchema = z.object({
+    action: z.literal('status-backend'),
+    runId: z.string().uuid().optional(),
+}).strict();
 
 export type BotRunRisk = z.infer<typeof BotRunRiskSchema>;
 export type StartBackendPayload = z.infer<typeof StartBackendSchema>;
