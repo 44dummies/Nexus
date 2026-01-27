@@ -104,7 +104,7 @@ function BotsContent() {
             }
             setActiveRunId(status.botRunId);
             setBotRunning(true);
-            const strategyId = status.strategyId ?? status.botId;
+            const strategyId = status.strategyId;
             if (strategyId) {
                 setSelectedBotId(strategyId);
             }
