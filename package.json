@@ -1,0 +1,11 @@
+{
+    "name": "derivnexus-root",
+    "private": true,
+    "engines": {
+        "node": ">=20.0.0"
+    },
+    "scripts": {
+        "build": "npm --prefix backend install --include=dev && npm --prefix backend run build",
+        "start": "npm --prefix backend run start"
+    }
+}
