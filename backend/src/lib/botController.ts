@@ -4,16 +4,20 @@
  * Links: symbol → tick stream → strategy → trade executor
  */
 
-import { subscribeTicks, unsubscribeAll, getTickWindowView, type TickData } from './tickStream';
-import { calculateATR, evaluateStrategy, getRequiredTicks, getStrategyName, type StrategyConfig, type TradeSignal } from './strategyEngine';
-import { getRiskCache, initializeRiskCache, evaluateCachedRisk, recordTradeOpened } from './riskCache';
-import { executeTradeServerFast, type TradeResultFast } from '../trade';
+import { subscribeTicks, unsubscribeTicks, getTickWindowView, type TickData } from './tickStream';
+import { calculateATR, evaluateStrategy, getRequiredTicks, type StrategyConfig, type TradeSignal } from './strategyEngine';
+import { getRiskCache, initializeRiskCache } from './riskCache';
+import { executeTradeServerFast } from '../trade';
 import { getSupabaseAdmin } from './supabaseAdmin';
 import { botLogger } from './logger';
 import { metrics } from './metrics';
 import { LATENCY_METRICS, createLatencyTrace, nowMs, recordLatency } from './latencyTracker';
 import { ensureMarketData, getImbalanceTopN, getMarketDataMode, getShortHorizonMomentum, getSpread } from './marketData';
 import { isKillSwitchActive, registerKillSwitchListener, triggerKillSwitch } from './riskManager';
+import { preTradeGate } from './preTradeGate';
+import { dropRiskConfig, primeRiskConfig } from './riskConfigCache';
+import { persistenceQueue } from './persistenceQueue';
+import type { TradeRiskConfig } from './riskConfig';
 
 interface BotRunConfig {
     strategyId: string;
@@ -59,15 +63,10 @@ export interface ActiveBotRun {
     tradesExecuted: number;
     totalProfit: number;
     currency: string;
-    pendingTicks: TickData[];
-    batchTimer: ReturnType<typeof setTimeout> | null;
 }
 
 // Active bot runs: botRunId -> ActiveBotRun
 const activeBotRuns = new Map<string, ActiveBotRun>();
-
-// Cleanup timeout handles
-const cleanupHandles = new Map<string, ReturnType<typeof setTimeout>>();
 
 const { client: supabaseAdmin } = getSupabaseAdmin();
 
@@ -75,6 +74,148 @@ const DEFAULT_MICROBATCH_SIZE = Math.max(1, Number(process.env.BOT_MICROBATCH_SI
 const DEFAULT_MICROBATCH_INTERVAL_MS = Math.max(0, Number(process.env.BOT_MICROBATCH_INTERVAL_MS) || 0);
 const DEFAULT_STRATEGY_BUDGET_MS = Math.max(0, Number(process.env.STRATEGY_BUDGET_MS) || 1);
 const ENABLE_STRATEGY_BUDGET = (process.env.ENABLE_STRATEGY_BUDGET || 'false') === 'true';
+
+const symbolActors = new Map<string, SymbolActor>();
+
+function getSymbolKey(accountId: string, symbol: string): string {
+    return `${accountId}:${symbol}`;
+}
+
+class SymbolActor {
+    private accountId: string;
+    private token: string;
+    private symbol: string;
+    private key: string;
+    private runIds = new Set<string>();
+    private pendingTicks: TickData[] = [];
+    private batchTimer: ReturnType<typeof setTimeout> | null = null;
+    private batchSize = DEFAULT_MICROBATCH_SIZE;
+    private batchIntervalMs = DEFAULT_MICROBATCH_INTERVAL_MS;
+    private disposed = false;
+    private tickListener: (tick: TickData) => void;
+
+    constructor(accountId: string, token: string, symbol: string) {
+        this.accountId = accountId;
+        this.token = token;
+        this.symbol = symbol;
+        this.key = getSymbolKey(accountId, symbol);
+        this.tickListener = (tick) => this.enqueueTick(tick);
+    }
+
+    async init(): Promise<void> {
+        await subscribeTicks(this.accountId, this.token, this.symbol, this.tickListener);
+        ensureMarketData(this.accountId, this.token, this.symbol).catch((error) => {
+            botLogger.warn({ accountId: this.accountId, symbol: this.symbol, error }, 'Market data init failed');
+        });
+    }
+
+    addRun(runId: string): void {
+        this.runIds.add(runId);
+        this.recomputeBatching();
+    }
+
+    removeRun(runId: string): void {
+        this.runIds.delete(runId);
+        this.recomputeBatching();
+        if (this.runIds.size === 0) {
+            this.dispose();
+        }
+    }
+
+    private recomputeBatching(): void {
+        let size = DEFAULT_MICROBATCH_SIZE;
+        let interval = DEFAULT_MICROBATCH_INTERVAL_MS;
+        for (const runId of this.runIds) {
+            const run = activeBotRuns.get(runId);
+            if (!run) continue;
+            const perf = run.config.performance;
+            if (typeof perf?.microBatchSize === 'number') {
+                size = Math.min(size, perf.microBatchSize);
+            }
+            if (typeof perf?.microBatchIntervalMs === 'number') {
+                interval = Math.min(interval, perf.microBatchIntervalMs);
+            }
+        }
+        this.batchSize = Math.max(1, Math.floor(size));
+        this.batchIntervalMs = Math.max(0, Math.floor(interval));
+    }
+
+    private enqueueTick(tick: TickData): void {
+        if (this.disposed) return;
+
+        if (this.batchSize <= 1 && this.batchIntervalMs === 0) {
+            this.processTick(tick);
+            return;
+        }
+
+        this.pendingTicks.push(tick);
+        metrics.gauge('tick.batch_queue_depth', this.pendingTicks.length);
+
+        if (!this.batchTimer) {
+            this.batchTimer = setTimeout(() => {
+                this.flushBatch();
+            }, this.batchIntervalMs);
+        }
+    }
+
+    private flushBatch(): void {
+        if (this.disposed) return;
+        this.batchTimer = null;
+        const batch = this.pendingTicks.splice(0, this.batchSize);
+        metrics.histogram('tick.batch_size', batch.length);
+        metrics.counter('tick.batch_flush');
+        metrics.gauge('tick.batch_queue_depth', this.pendingTicks.length);
+
+        for (const tick of batch) {
+            this.processTick(tick);
+        }
+
+        if (this.pendingTicks.length > 0) {
+            this.batchTimer = setTimeout(() => {
+                this.flushBatch();
+            }, this.batchIntervalMs);
+        }
+    }
+
+    private processTick(tick: TickData): void {
+        if (this.disposed) return;
+        if (this.runIds.size === 0) return;
+
+        for (const runId of this.runIds) {
+            const run = activeBotRuns.get(runId);
+            if (!run || run.status !== 'running') continue;
+            handleTickForRun(run, tick);
+        }
+    }
+
+    private dispose(): void {
+        if (this.disposed) return;
+        this.disposed = true;
+        if (this.batchTimer) {
+            clearTimeout(this.batchTimer);
+            this.batchTimer = null;
+        }
+        this.pendingTicks = [];
+        unsubscribeTicks(this.accountId, this.symbol, this.tickListener);
+        symbolActors.delete(this.key);
+    }
+}
+
+async function getOrCreateSymbolActor(accountId: string, token: string, symbol: string): Promise<SymbolActor> {
+    const key = getSymbolKey(accountId, symbol);
+    const existing = symbolActors.get(key);
+    if (existing) return existing;
+
+    const actor = new SymbolActor(accountId, token, symbol);
+    symbolActors.set(key, actor);
+    try {
+        await actor.init();
+        return actor;
+    } catch (error) {
+        symbolActors.delete(key);
+        throw error;
+    }
+}
 
 registerKillSwitchListener((accountId, state) => {
     if (!state.active) return;
@@ -138,20 +279,20 @@ export async function startBotRun(
         tradesExecuted: 0,
         totalProfit: 0,
         currency,
-        pendingTicks: [],
-        batchTimer: null,
     };
 
     activeBotRuns.set(botRunId, botRun);
 
-    // Subscribe to tick stream
-    await subscribeTicks(accountId, token, config.symbol, (tick) => {
-        enqueueTick(botRunId, tick);
-    });
-    // Initialize market data (order_book if available; synthetic fallback otherwise)
-    ensureMarketData(accountId, token, config.symbol).catch((error) => {
-        botLogger.warn({ botRunId, symbol: config.symbol, error }, 'Market data init failed');
-    });
+    primeRiskConfig(botRunId, accountId, config.risk ?? null);
+
+    try {
+        const actor = await getOrCreateSymbolActor(accountId, token, config.symbol);
+        actor.addRun(botRunId);
+    } catch (error) {
+        activeBotRuns.delete(botRunId);
+        dropRiskConfig(botRunId);
+        throw error;
+    }
 
     botLogger.info({ botRunId, strategyId: config.strategyId, symbol: config.symbol }, 'Bot run started');
 
@@ -168,16 +309,6 @@ export async function startBotRun(
     }
 }
 
-function getBatchSize(config: BotRunConfig): number {
-    const size = config.performance?.microBatchSize ?? DEFAULT_MICROBATCH_SIZE;
-    return Math.max(1, Math.floor(size));
-}
-
-function getBatchIntervalMs(config: BotRunConfig): number {
-    const interval = config.performance?.microBatchIntervalMs ?? DEFAULT_MICROBATCH_INTERVAL_MS;
-    return Math.max(0, Math.floor(interval));
-}
-
 function shouldEnforceBudget(config: BotRunConfig): boolean {
     const flag = config.performance?.enableComputeBudget;
     if (typeof flag === 'boolean') return flag;
@@ -189,70 +320,39 @@ function getBudgetMs(config: BotRunConfig): number {
     return Math.max(0, budget);
 }
 
+function queueBotLog(payload: {
+    bot_run_id: string;
+    account_id: string;
+    level: 'trade' | 'error' | 'info' | 'signal' | 'result';
+    message: string;
+    data?: Record<string, unknown>;
+}): void {
+    if (!supabaseAdmin) return;
+    persistenceQueue.enqueue(async () => {
+        await supabaseAdmin.from('bot_logs').insert(payload);
+    }).catch((error) => {
+        botLogger.warn({ error, botRunId: payload.bot_run_id }, 'Bot log enqueue failed');
+    });
+}
+
 /**
  * Enqueue incoming tick for micro-batching
  */
-function enqueueTick(botRunId: string, tick: TickData): void {
-    const botRun = activeBotRuns.get(botRunId);
-    if (!botRun || botRun.status !== 'running') return;
-
-    const batchSize = getBatchSize(botRun.config);
-    const intervalMs = getBatchIntervalMs(botRun.config);
-
-    if (batchSize <= 1 && intervalMs === 0) {
-        handleTickCore(botRunId, tick);
-        return;
-    }
-
-    botRun.pendingTicks.push(tick);
-    metrics.gauge('tick.batch_queue_depth', botRun.pendingTicks.length);
-
-    if (!botRun.batchTimer) {
-        botRun.batchTimer = setTimeout(() => {
-            flushTickBatch(botRunId);
-        }, intervalMs);
-    }
-}
-
-function flushTickBatch(botRunId: string): void {
-    const botRun = activeBotRuns.get(botRunId);
-    if (!botRun || botRun.status !== 'running') return;
-
-    botRun.batchTimer = null;
-    const batchSize = getBatchSize(botRun.config);
-    const batch = botRun.pendingTicks.splice(0, batchSize);
-    metrics.histogram('tick.batch_size', batch.length);
-    metrics.counter('tick.batch_flush');
-    metrics.gauge('tick.batch_queue_depth', botRun.pendingTicks.length);
-
-    for (const tick of batch) {
-        handleTickCore(botRunId, tick);
-    }
-
-    if (botRun.pendingTicks.length > 0) {
-        const intervalMs = getBatchIntervalMs(botRun.config);
-        botRun.batchTimer = setTimeout(() => {
-            flushTickBatch(botRunId);
-        }, intervalMs);
-    }
-}
-
 /**
  * Handle incoming tick for a bot run
  */
-function handleTickCore(botRunId: string, tick: TickData): void {
-    const botRun = activeBotRuns.get(botRunId);
-    if (!botRun || botRun.status !== 'running') return;
+function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
+    if (botRun.status !== 'running') return;
 
     const { accountId, config } = botRun;
     if (isKillSwitchActive(accountId)) {
-        pauseBotRun(botRunId, 'Kill switch active').catch(() => undefined);
+        pauseBotRun(botRun.id, 'Kill switch active').catch(() => undefined);
         return;
     }
+
     const requiredTicks = getRequiredTicks(config.strategyId, config.strategyConfig);
     const prices = getTickWindowView(accountId, config.symbol, requiredTicks);
 
-    // Check if we have enough ticks
     if (!prices || prices.length < requiredTicks) {
         return;
     }
@@ -263,23 +363,25 @@ function handleTickCore(botRunId: string, tick: TickData): void {
         const atr = calculateATR(prices, window);
         if (typeof atr === 'number' && atr > volatilityThreshold) {
             triggerKillSwitch(accountId, 'VOLATILITY_SPIKE', false);
-            pauseBotRun(botRunId, 'Volatility spike guard').catch(() => undefined);
+            pauseBotRun(botRun.id, 'Volatility spike guard').catch(() => undefined);
             return;
         }
     }
 
-    // Check cooldown
     const now = Date.now();
     if (botRun.lastTradeAt && now - botRun.lastTradeAt < config.cooldownMs) {
         return;
     }
 
-    // Get loss streak from risk cache
     const riskEntry = getRiskCache(accountId);
     const lossStreak = riskEntry?.lossStreak ?? 0;
 
-    // Evaluate strategy
+    const latencyTrace = createLatencyTrace({
+        tickReceivedTs: tick.receivedPerfMs,
+    });
+
     const strategyStart = nowMs();
+    latencyTrace.strategyStartTs = strategyStart;
     const microContext = config.strategyId === 'microstructure'
         ? {
             imbalance: getImbalanceTopN(accountId, config.symbol, config.strategyConfig?.imbalanceLevels ?? 10),
@@ -297,11 +399,14 @@ function handleTickCore(botRunId: string, tick: TickData): void {
         microContext
     );
     const strategyEnd = nowMs();
+    latencyTrace.strategyEndTs = strategyEnd;
+    latencyTrace.decisionTs = strategyEnd;
     metrics.histogram('strategy.compute_ms', strategyEnd - strategyStart);
     metrics.counter('strategy.eval_count');
-    if (typeof tick.receivedPerfMs === 'number') {
-        recordLatency(LATENCY_METRICS.tickToDecision, tick.receivedPerfMs, strategyEnd);
-    }
+    recordLatency(LATENCY_METRICS.strategyCompute, strategyStart, strategyEnd);
+    recordLatency(LATENCY_METRICS.tickToStrategy, tick.receivedPerfMs, strategyStart);
+    recordLatency(LATENCY_METRICS.tickToDecision, tick.receivedPerfMs, strategyEnd);
+
     const budgetMs = getBudgetMs(config);
     if (shouldEnforceBudget(config) && budgetMs > 0 && (strategyEnd - strategyStart) > budgetMs) {
         metrics.counter('strategy.budget_overrun');
@@ -312,149 +417,119 @@ function handleTickCore(botRunId: string, tick: TickData): void {
 
     metrics.counter(`strategy.signal.${evaluation.signal.toLowerCase()}`);
 
-    // Calculate stake with multiplier
     let stake = config.stake;
     if (evaluation.stakeMultiplier) {
         stake = Math.max(0.35, stake * evaluation.stakeMultiplier);
     }
 
-    // Check risk limits using actual stake
-    const riskStatus = evaluateCachedRisk(accountId, {
-        proposedStake: stake,
-        maxStake: config.maxStake ?? config.stake * 10,
-        dailyLossLimitPct: config.risk?.dailyLossLimitPct ?? 2,
-        drawdownLimitPct: config.risk?.drawdownLimitPct ?? 6,
-        maxConsecutiveLosses: config.risk?.maxConsecutiveLosses ?? 3,
-        cooldownMs: config.cooldownMs,
-        lossCooldownMs: config.risk?.lossCooldownMs,
-        maxConcurrentTrades: config.risk?.maxConcurrentTrades,
-    });
-
-    if (riskStatus.status === 'HALT') {
-        botLogger.warn({ botRunId, reason: riskStatus.reason }, 'Bot risk halt');
-        pauseBotRun(botRunId, `Risk limit: ${riskStatus.reason}`);
+    let gateResult: { stake: number; risk: TradeRiskConfig } | undefined;
+    try {
+        const gate = preTradeGate({
+            accountId,
+            stake,
+            botRunId: botRun.id,
+            riskOverrides: config.risk,
+        }, latencyTrace);
+        stake = gate.stake;
+        gateResult = gate;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Risk gate rejected';
+        if (message.toLowerCase().includes('daily loss') || message.toLowerCase().includes('drawdown') || message.toLowerCase().includes('risk halt')) {
+            botLogger.warn({ botRunId: botRun.id, reason: message }, 'Bot risk halt');
+            pauseBotRun(botRun.id, `Risk limit: ${message}`);
+        }
         return;
     }
 
-    if (riskStatus.status === 'MAX_CONCURRENT') {
-        return; // Silently wait for concurrent trades to settle
-    }
+    recordLatency(LATENCY_METRICS.strategyToGate, latencyTrace.strategyEndTs, latencyTrace.gateStartTs);
 
-    if (riskStatus.status === 'COOLDOWN') {
-        return;
-    }
-
-    if (riskStatus.status === 'REDUCE_STAKE') {
-        const maxStake = config.maxStake ?? config.stake * 10;
-        stake = Math.min(stake, maxStake);
-    }
-
-    // Execute trade
-    const latencyTrace = createLatencyTrace({
-        tickReceivedTs: tick.receivedPerfMs,
-        decisionTs: strategyEnd,
-    });
-    executeTrade(botRunId, evaluation.signal, stake, evaluation.detail, latencyTrace, evaluation.confidence, evaluation.reasonCodes);
+    executeTradeForRun(
+        botRun,
+        evaluation.signal,
+        stake,
+        latencyTrace,
+        evaluation.detail,
+        evaluation.confidence,
+        evaluation.reasonCodes,
+        gateResult
+    );
 }
 
 /**
  * Execute a trade for a bot run
  */
-async function executeTrade(
-    botRunId: string,
+function executeTradeForRun(
+    botRun: ActiveBotRun,
     signal: TradeSignal,
     stake: number,
-    detail?: string,
     latencyTrace?: ReturnType<typeof createLatencyTrace>,
+    detail?: string,
     confidence?: number,
-    reasonCodes?: string[]
-): Promise<void> {
-    const botRun = activeBotRuns.get(botRunId);
-    if (!botRun || botRun.status !== 'running') return;
+    reasonCodes?: string[],
+    preGate?: { stake: number; risk: TradeRiskConfig }
+): void {
+    if (botRun.status !== 'running') return;
 
     const { accountId, accountType, token, config, currency } = botRun;
 
-    // Mark trade time immediately
     botRun.lastTradeAt = Date.now();
 
-    try {
-        const result = await executeTradeServerFast(
-            signal,
-            {
-                symbol: config.symbol,
-                stake,
-                duration: config.duration,
-                durationUnit: config.durationUnit,
-                botId: config.strategyId,
-                botRunId: botRunId,
-                entryMode: 'MARKET',
-            },
-            {
-                token,
-                accountId,
-                accountType,
-                accountCurrency: currency,
-            },
-            {
-                dailyLossLimitPct: config.risk?.dailyLossLimitPct ?? 2,
-                drawdownLimitPct: config.risk?.drawdownLimitPct ?? 6,
-                maxConsecutiveLosses: config.risk?.maxConsecutiveLosses ?? 3,
-                cooldownMs: config.cooldownMs,
-                lossCooldownMs: config.risk?.lossCooldownMs,
-                maxStake: config.maxStake ?? config.stake * 10,
-                maxConcurrentTrades: config.risk?.maxConcurrentTrades,
-                maxOrderSize: config.risk?.maxOrderSize,
-                maxNotional: config.risk?.maxNotional,
-                maxExposure: config.risk?.maxExposure,
-                maxOrdersPerSecond: config.risk?.maxOrdersPerSecond,
-                maxOrdersPerMinute: config.risk?.maxOrdersPerMinute,
-                maxCancelsPerSecond: config.risk?.maxCancelsPerSecond,
-            },
-            latencyTrace
-        );
-
+    executeTradeServerFast(
+        signal,
+        {
+            symbol: config.symbol,
+            stake,
+            duration: config.duration,
+            durationUnit: config.durationUnit,
+            botId: config.strategyId,
+            botRunId: botRun.id,
+            entryMode: 'MARKET',
+        },
+        {
+            token,
+            accountId,
+            accountType,
+            accountCurrency: currency,
+        },
+        config.risk,
+        latencyTrace,
+        preGate
+    ).then((result) => {
         botRun.tradesExecuted += 1;
 
         botLogger.info({
-            botRunId,
+            botRunId: botRun.id,
             signal,
             contractId: result.contractId,
             executionTimeMs: result.executionTimeMs,
         }, 'Trade executed');
 
-        // Log to database
-        if (supabaseAdmin) {
-            await supabaseAdmin.from('bot_logs').insert({
-                bot_run_id: botRunId,
-                account_id: accountId,
-                level: 'trade',
-                message: `${signal} - $${stake} - Contract #${result.contractId}`,
-                data: {
-                    signal,
-                    stake,
-                    contractId: result.contractId,
-                    executionTimeMs: result.executionTimeMs,
-                    detail,
-                    confidence,
-                    reasonCodes,
-                },
-            });
-        }
-
-    } catch (error) {
+        queueBotLog({
+            bot_run_id: botRun.id,
+            account_id: accountId,
+            level: 'trade',
+            message: `${signal} - $${stake} - Contract #${result.contractId}`,
+            data: {
+                signal,
+                stake,
+                contractId: result.contractId,
+                executionTimeMs: result.executionTimeMs,
+                detail,
+                confidence,
+                reasonCodes,
+            },
+        });
+    }).catch((error) => {
         const message = error instanceof Error ? error.message : 'Trade failed';
-        botLogger.error({ botRunId, signal, stake, error: message }, 'Trade failed');
-
-        if (supabaseAdmin) {
-            await supabaseAdmin.from('bot_logs').insert({
-                bot_run_id: botRunId,
-                account_id: accountId,
-                level: 'error',
-                message: `Trade failed: ${message}`,
-                data: { signal, stake, detail },
-            });
-        }
-    }
+        botLogger.error({ botRunId: botRun.id, signal, stake, error: message }, 'Trade failed');
+        queueBotLog({
+            bot_run_id: botRun.id,
+            account_id: accountId,
+            level: 'error',
+            message: `Trade failed: ${message}`,
+            data: { signal, stake, detail },
+        });
+    });
 }
 
 /**
@@ -510,16 +585,15 @@ export async function stopBotRun(botRunId: string): Promise<void> {
 
     botRun.status = 'stopped';
 
-    // Unsubscribe from ticks
-    unsubscribeAll(botRun.accountId);
-    if (botRun.batchTimer) {
-        clearTimeout(botRun.batchTimer);
-        botRun.batchTimer = null;
+    const actorKey = getSymbolKey(botRun.accountId, botRun.config.symbol);
+    const actor = symbolActors.get(actorKey);
+    if (actor) {
+        actor.removeRun(botRunId);
     }
-    botRun.pendingTicks = [];
 
     // Remove from active runs
     activeBotRuns.delete(botRunId);
+    dropRiskConfig(botRunId);
 
     botLogger.info({
         botRunId,

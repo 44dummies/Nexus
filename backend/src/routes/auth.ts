@@ -6,6 +6,7 @@ import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { buildCookieOptions, buildStateCookieOptions, buildClearCookieOptions } from '../lib/requestUtils';
 import { encryptToken } from '../lib/sessionCrypto';
 import { authRateLimit } from '../lib/rateLimit';
+import { warmRiskCache } from '../lib/riskCache';
 
 const router = Router();
 
@@ -270,6 +271,7 @@ router.get('/session', async (req, res) => {
             const accountIdForSnapshot = derivedActiveAccount || authorize?.loginid || null;
             if (accountIdForSnapshot) {
                 persistRiskSnapshots(accountIdForSnapshot, balance).catch(() => undefined);
+                warmRiskCache(accountIdForSnapshot, balance).catch(() => undefined);
             }
         }
 

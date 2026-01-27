@@ -1,9 +1,11 @@
 import { getSupabaseAdmin } from './supabaseAdmin';
 import { decryptToken } from './sessionCrypto';
-import { getOrCreateConnection, sendMessage } from './wsManager';
+import { getOrCreateConnection, sendMessage, sendMessageAsync } from './wsManager';
 import { persistNotification, persistOrderStatus, persistTrade } from './tradePersistence';
 import { recordTradeSettled, getRiskCache, initializeRiskCache } from './riskCache';
 import logger from './logger';
+import { loadAllOpenContractsFromSettings, seedOpenContracts, finalizeOpenContract, trackOpenContract } from './openContracts';
+import { registerPendingSettlement } from './settlementSubscriptions';
 
 type BuyRow = {
     account_id: string | null;
@@ -65,10 +67,50 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
         }
 
         const buyRows = (buys || []) as BuyRow[];
-        if (buyRows.length === 0) return;
+
+        const openContractsByAccount = await loadAllOpenContractsFromSettings();
+        for (const [accountId, contracts] of openContractsByAccount.entries()) {
+            seedOpenContracts(accountId, contracts);
+        }
+
+        const candidates = new Map<string, {
+            accountId: string;
+            contractId: number;
+            createdAt?: string | null;
+            stake?: number | null;
+            symbol?: string | null;
+        }>();
+
+        for (const row of buyRows) {
+            if (!row.account_id || !Number.isFinite(row.contract_id)) continue;
+            const accountId = row.account_id as string;
+            const contractId = row.contract_id as number;
+            candidates.set(`${accountId}:${contractId}`, {
+                accountId,
+                contractId,
+                createdAt: row.created_at ?? null,
+            });
+        }
+
+        for (const [accountId, contracts] of openContractsByAccount.entries()) {
+            for (const entry of contracts) {
+                if (!Number.isFinite(entry.contractId)) continue;
+                candidates.set(`${accountId}:${entry.contractId}`, {
+                    accountId,
+                    contractId: entry.contractId,
+                    createdAt: typeof entry.openedAt === 'number'
+                        ? new Date(entry.openedAt).toISOString()
+                        : null,
+                    stake: entry.stake ?? null,
+                    symbol: entry.symbol ?? null,
+                });
+            }
+        }
+
+        if (candidates.size === 0) return;
 
         const contractIds = Array.from(new Set(
-            buyRows.map((row) => row.contract_id).filter((id): id is number => Number.isFinite(id))
+            Array.from(candidates.values()).map((row) => row.contractId).filter((id): id is number => Number.isFinite(id))
         ));
         if (contractIds.length === 0) return;
 
@@ -92,16 +134,22 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
             .map((row: { contract_id: number | null }) => row.contract_id)
             .filter((id: number | null): id is number => Number.isFinite(id)));
 
-        const candidates = buyRows.filter((row) => {
-            if (!row.account_id || !Number.isFinite(row.contract_id)) return false;
-            if (existingSet.has(row.contract_id as number)) return false;
-            if (settledSet.has(row.contract_id as number)) return false;
+        for (const row of candidates.values()) {
+            if (existingSet.has(row.contractId) || settledSet.has(row.contractId)) {
+                finalizeOpenContract(row.accountId, row.contractId);
+            }
+        }
+
+        const candidateRows = Array.from(candidates.values()).filter((row) => {
+            if (!row.accountId || !Number.isFinite(row.contractId)) return false;
+            if (existingSet.has(row.contractId)) return false;
+            if (settledSet.has(row.contractId)) return false;
             return true;
         });
 
-        if (candidates.length === 0) return;
+        if (candidateRows.length === 0) return;
 
-        const accountIds = Array.from(new Set(candidates.map((row) => row.account_id).filter(Boolean)));
+        const accountIds = Array.from(new Set(candidateRows.map((row) => row.accountId).filter(Boolean)));
         const { data: sessions } = await supabaseAdmin
             .from('sessions')
             .select('account_id, account_type, token_encrypted, currency')
@@ -117,9 +165,9 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
             });
         });
 
-        for (const row of candidates) {
-            const accountId = row.account_id as string;
-            const contractId = row.contract_id as number;
+        for (const row of candidateRows) {
+            const accountId = row.accountId as string;
+            const contractId = row.contractId as number;
             const session = sessionMap.get(accountId);
             if (!session?.token) continue;
 
@@ -150,11 +198,26 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
 
                 const contract = response.proposal_open_contract;
                 if (!contract.is_sold) {
+                    registerPendingSettlement(accountId, contractId);
+                    sendMessageAsync(accountId, {
+                        proposal_open_contract: 1,
+                        contract_id: contractId,
+                        subscribe: 1,
+                    });
+                    const stake = toNumber(contract.buy_price) ?? row.stake ?? null;
+                    if (stake !== null) {
+                        trackOpenContract(accountId, {
+                            contractId,
+                            stake,
+                            symbol: typeof contract.symbol === 'string' ? contract.symbol : row.symbol ?? null,
+                            openedAt: Date.now(),
+                        });
+                    }
                     continue;
                 }
 
                 const profit = toNumber(contract.profit) ?? 0;
-                const stake = toNumber(contract.buy_price);
+                const stake = toNumber(contract.buy_price) ?? row.stake ?? null;
                 const symbol = typeof contract.symbol === 'string' ? contract.symbol : null;
                 const duration = toNumber(contract.duration);
                 const durationUnit = typeof contract.duration_unit === 'string' ? contract.duration_unit : null;
@@ -170,7 +233,7 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
                     durationUnit,
                     profit,
                     status,
-                    createdAt: row.created_at ?? undefined,
+                    createdAt: row.createdAt ?? undefined,
                 });
 
                 await persistNotification({
@@ -200,7 +263,9 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
                     },
                 });
 
-                const dateKey = getDateKey(row.created_at);
+                finalizeOpenContract(accountId, contractId);
+
+                const dateKey = getDateKey(row.createdAt ?? null);
                 const cache = getRiskCache(accountId);
                 if (cache && dateKey && cache.dateKey === dateKey && stake !== null) {
                     recordTradeSettled(accountId, stake, profit);

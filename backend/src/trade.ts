@@ -11,6 +11,7 @@ import { executeProposalAndBuy, ExecutionError } from './lib/executionEngine';
 import { recordReject, recordSlippageReject, recordStuckOrder } from './lib/riskManager';
 import { preTradeGate } from './lib/preTradeGate';
 import type { TradeRiskConfig } from './lib/riskConfig';
+import { finalizeOpenContract, trackOpenContract } from './lib/openContracts';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 interface DerivResponse {
@@ -30,12 +31,12 @@ type ContractFinalizationState = {
     pnlApplied: boolean;
 };
 
-const contractFinalizations = new Map<number, ContractFinalizationState>();
+const contractFinalizations = new Map<string, ContractFinalizationState>();
 
 function pruneContractFinalizations(now: number): void {
-    for (const [contractId, state] of contractFinalizations) {
+    for (const [contractKey, state] of contractFinalizations) {
         if (now - state.timestamp > SETTLED_CONTRACT_TTL_MS) {
-            contractFinalizations.delete(contractId);
+            contractFinalizations.delete(contractKey);
         }
     }
 
@@ -45,15 +46,16 @@ function pruneContractFinalizations(now: number): void {
 
     const overflow = contractFinalizations.size - MAX_SETTLED_CONTRACTS;
     let removed = 0;
-    for (const contractId of contractFinalizations.keys()) {
-        contractFinalizations.delete(contractId);
+    for (const contractKey of contractFinalizations.keys()) {
+        contractFinalizations.delete(contractKey);
         removed += 1;
         if (removed >= overflow) break;
     }
 }
 
-function getFinalizationState(contractId: number): ContractFinalizationState {
-    const existing = contractFinalizations.get(contractId);
+function getFinalizationState(accountId: string, contractId: number): ContractFinalizationState {
+    const key = `${accountId}:${contractId}`;
+    const existing = contractFinalizations.get(key);
     if (existing) {
         return existing;
     }
@@ -62,7 +64,7 @@ function getFinalizationState(contractId: number): ContractFinalizationState {
         exposureClosed: false,
         pnlApplied: false,
     };
-    contractFinalizations.set(contractId, state);
+    contractFinalizations.set(key, state);
     return state;
 }
 
@@ -71,7 +73,7 @@ function recordTradeSettledOnce(accountId: string, contractId: number, stake: nu
         recordTradeSettled(accountId, stake, profit);
         return true;
     }
-    const state = getFinalizationState(contractId);
+    const state = getFinalizationState(accountId, contractId);
     if (state.pnlApplied) {
         return false;
     }
@@ -96,7 +98,7 @@ function recordTradeFailedAttemptOnce(accountId: string, contractId: number | nu
         return;
     }
     const id = contractId as number;
-    const state = getFinalizationState(id);
+    const state = getFinalizationState(accountId, id);
     if (state.exposureClosed) {
         return;
     }
@@ -165,11 +167,11 @@ export async function executeTradeServer(
     const { token, accountId, accountType, accountCurrency } = auth;
     let stake = params.stake;
 
-    const gate = await preTradeGate({
+    const gate = preTradeGate({
         accountId,
         stake,
         botRunId: params.botRunId ?? null,
-    });
+    }, latencyTrace);
     stake = gate.stake;
 
     return new Promise((resolve, reject) => {
@@ -270,6 +272,7 @@ export async function executeTradeServer(
                 proposalSentPerfTs = nowMs();
                 if (latencyTrace) {
                     latencyTrace.orderSentTs = proposalSentPerfTs;
+                    latencyTrace.proposalSentTs = proposalSentPerfTs;
                 }
                 recordLatency(LATENCY_METRICS.decisionToSend, latencyTrace?.decisionTs, proposalSentPerfTs);
                 ws.send(JSON.stringify(proposalReq));
@@ -294,6 +297,16 @@ export async function executeTradeServer(
                     LATENCY_METRICS.sendToProposalAck,
                     proposalSentPerfTs ?? latencyTrace?.orderSentTs,
                     proposalAckPerfTs
+                );
+                recordLatency(
+                    LATENCY_METRICS.proposalRtt,
+                    proposalSentPerfTs ?? latencyTrace?.proposalSentTs ?? latencyTrace?.orderSentTs,
+                    proposalAckPerfTs
+                );
+                recordLatency(
+                    LATENCY_METRICS.gateToProposal,
+                    latencyTrace?.gateEndTs,
+                    proposalSentPerfTs ?? latencyTrace?.orderSentTs
                 );
                 metrics.counter('trade.proposal_ack');
                 timestamps.proposalReceivedAt = Date.now();
@@ -369,11 +382,24 @@ export async function executeTradeServer(
             if (response.msg_type === 'buy') {
                 const buy = response.buy as { contract_id: number; buy_price?: number; payout?: number };
                 contractId = buy.contract_id;
+                trackOpenContract(accountId, {
+                    contractId: buy.contract_id,
+                    stake,
+                    symbol: params.symbol,
+                    openedAt: Date.now(),
+                    botRunId: params.botRunId ?? null,
+                    botId: params.botId ?? null,
+                });
                 const buyAckPerfTs = nowMs();
                 if (latencyTrace) {
                     latencyTrace.buyAckTs = buyAckPerfTs;
+                    latencyTrace.buySentTs = latencyTrace.buySentTs ?? buySentPerfTs ?? undefined;
+                    latencyTrace.proposalSentTs = latencyTrace.proposalSentTs ?? proposalSentPerfTs ?? undefined;
+                    latencyTrace.orderSentTs = latencyTrace.orderSentTs ?? proposalSentPerfTs ?? undefined;
                 }
                 recordLatency(LATENCY_METRICS.sendToBuyAck, buySentPerfTs ?? latencyTrace?.buySentTs, buyAckPerfTs);
+                recordLatency(LATENCY_METRICS.buyRtt, buySentPerfTs ?? latencyTrace?.buySentTs, buyAckPerfTs);
+                recordLatency(LATENCY_METRICS.tickToBuyAck, latencyTrace?.tickReceivedTs, buyAckPerfTs);
                 metrics.counter('trade.buy_ack');
                 timestamps.buyConfirmedAt = Date.now();
                 const buyLatency = timestamps.buySentAt
@@ -412,10 +438,14 @@ export async function executeTradeServer(
                     const fillPerfTs = nowMs();
                     if (latencyTrace) {
                         latencyTrace.fillTs = fillPerfTs;
+                        latencyTrace.settleTs = fillPerfTs;
                     }
                     recordLatency(LATENCY_METRICS.sendToFill, latencyTrace?.orderSentTs ?? proposalSentPerfTs ?? undefined, fillPerfTs);
+                    recordLatency(LATENCY_METRICS.buyToSettle, latencyTrace?.buyAckTs, fillPerfTs);
+                    recordLatency(LATENCY_METRICS.tickToSettle, latencyTrace?.tickReceivedTs, fillPerfTs);
                     metrics.counter('trade.fill');
                     recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit);
+                    finalizeOpenContract(accountId, contract.contract_id);
                     cleanup();
                     clearTimeout(timeout);
                     resolve({
@@ -497,7 +527,8 @@ export async function executeTradeServerFast(
     params: ExecuteTradeParams,
     auth: { token: string; accountId: string; accountType: 'real' | 'demo'; accountCurrency?: string | null },
     riskOverrides?: Partial<TradeRiskConfig>,
-    latencyTrace?: LatencyTrace
+    latencyTrace?: LatencyTrace,
+    preGate?: { stake: number; risk: TradeRiskConfig }
 ): Promise<TradeResultFast> {
     const startTime = Date.now();
 
@@ -514,12 +545,12 @@ export async function executeTradeServerFast(
     const { token, accountId, accountType, accountCurrency } = auth;
     let stake = params.stake;
 
-    const gate = await preTradeGate({
+    const gate = preGate ?? preTradeGate({
         accountId,
         stake,
         botRunId: params.botRunId ?? null,
         riskOverrides,
-    });
+    }, latencyTrace);
     stake = gate.stake;
 
     try {
@@ -538,6 +569,7 @@ export async function executeTradeServerFast(
         });
 
         if (latencyTrace) {
+            latencyTrace.proposalSentTs = execResult.proposalSentTs;
             latencyTrace.orderSentTs = execResult.proposalSentTs;
             latencyTrace.proposalAckTs = execResult.proposalAckTs;
             latencyTrace.buySentTs = execResult.buySentTs;
@@ -546,13 +578,25 @@ export async function executeTradeServerFast(
         recordLatency(LATENCY_METRICS.decisionToSend, latencyTrace?.decisionTs, execResult.proposalSentTs);
         recordLatency(LATENCY_METRICS.sendToProposalAck, execResult.proposalSentTs, execResult.proposalAckTs);
         recordLatency(LATENCY_METRICS.sendToBuyAck, execResult.buySentTs, execResult.buyAckTs);
+        recordLatency(LATENCY_METRICS.gateToProposal, latencyTrace?.gateEndTs, execResult.proposalSentTs);
+        recordLatency(LATENCY_METRICS.proposalRtt, execResult.proposalSentTs, execResult.proposalAckTs);
+        recordLatency(LATENCY_METRICS.buyRtt, execResult.buySentTs, execResult.buyAckTs);
+        recordLatency(LATENCY_METRICS.tickToBuyAck, latencyTrace?.tickReceivedTs, execResult.buyAckTs);
         metrics.counter('trade.proposal_sent');
         metrics.counter('trade.proposal_ack');
         metrics.counter('trade.buy_sent');
         metrics.counter('trade.buy_ack');
 
-        const proposal = execResult.proposal;
         const buy = execResult.buy;
+
+        trackOpenContract(accountId, {
+            contractId: buy.contract_id,
+            stake,
+            symbol: params.symbol,
+            openedAt: Date.now(),
+            botRunId: params.botRunId ?? null,
+            botId: params.botId ?? null,
+        });
 
         const executionTimeMs = Date.now() - startTime;
         metrics.histogram('trade.execution_ms', executionTimeMs);
@@ -674,8 +718,11 @@ async function trackSettlementAsync(
             const fillPerfTs = nowMs();
             if (latencyTrace) {
                 latencyTrace.fillTs = fillPerfTs;
+                latencyTrace.settleTs = fillPerfTs;
             }
             recordLatency(LATENCY_METRICS.sendToFill, latencyTrace?.orderSentTs, fillPerfTs);
+            recordLatency(LATENCY_METRICS.buyToSettle, latencyTrace?.buyAckTs, fillPerfTs);
+            recordLatency(LATENCY_METRICS.tickToSettle, latencyTrace?.tickReceivedTs, fillPerfTs);
             metrics.counter('trade.fill');
             await handleSettlement(accountId, accountType, stake, params, initialContract);
             clearPendingSettlement(accountId, contractId);
@@ -691,6 +738,7 @@ async function trackSettlementAsync(
             payout?: number;
         } | null>((resolve) => {
             let settled = false;
+            let timeout: ReturnType<typeof setTimeout> | null = null;
 
             const listener = (_accId: string, message: Record<string, unknown>) => {
                 if (settled) return;
@@ -706,11 +754,18 @@ async function trackSettlementAsync(
 
                     if (contract.contract_id === contractId && contract.is_sold) {
                         settled = true;
+                        if (timeout) {
+                            clearTimeout(timeout);
+                            timeout = null;
+                        }
                         const fillPerfTs = nowMs();
                         if (latencyTrace) {
                             latencyTrace.fillTs = fillPerfTs;
+                            latencyTrace.settleTs = fillPerfTs;
                         }
                         recordLatency(LATENCY_METRICS.sendToFill, latencyTrace?.orderSentTs, fillPerfTs);
+                        recordLatency(LATENCY_METRICS.buyToSettle, latencyTrace?.buyAckTs, fillPerfTs);
+                        recordLatency(LATENCY_METRICS.tickToSettle, latencyTrace?.tickReceivedTs, fillPerfTs);
                         metrics.counter('trade.fill');
                         unregisterStreamingListener(accountId, listener);
                         clearPendingSettlement(accountId, contractId);
@@ -723,9 +778,10 @@ async function trackSettlementAsync(
             registerStreamingListener(accountId, listener);
 
             // Timeout fallback
-            setTimeout(() => {
+            timeout = setTimeout(() => {
                 if (!settled) {
                     settled = true;
+                    timeout = null;
                     unregisterStreamingListener(accountId, listener);
                     tradeLogger.warn({ contractId }, 'Settlement timeout - contract not sold within timeout');
                     recordStuckOrder(accountId, contractId);
@@ -767,12 +823,19 @@ async function handleSettlement(
     params: ExecuteTradeParams,
     contract: { contract_id: number; is_sold: boolean; profit: number; status?: string; payout?: number }
 ): Promise<void> {
+    const state = getFinalizationState(accountId, contract.contract_id);
+    if (state.pnlApplied) {
+        return;
+    }
+
     if (!recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit)) {
         return;
     }
 
-    // Persist trade to database
-    await persistTrade({
+    finalizeOpenContract(accountId, contract.contract_id);
+
+    // Persist trade to database (queued)
+    persistTrade({
         accountId,
         accountType,
         botId: params.botId ?? null,
@@ -785,10 +848,22 @@ async function handleSettlement(
         profit: contract.profit,
         status: contract.status || 'settled',
         entryProfileId: params.entryProfileId ?? null,
-    });
+    }).then((tradeId) => {
+        persistOrderStatus({
+            accountId,
+            tradeId: tradeId ?? null,
+            contractId: contract.contract_id,
+            event: 'contract_settled',
+            status: contract.status || 'settled',
+            payload: {
+                profit: contract.profit,
+                payout: contract.payout,
+            },
+        }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
+    }).catch((err) => tradeLogger.error({ err }, 'Trade persistence failed'));
 
-    // Send notification
-    await persistNotification({
+    // Send notification (queued)
+    persistNotification({
         accountId,
         title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
         body: `Contract #${contract.contract_id} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
@@ -799,16 +874,5 @@ async function handleSettlement(
             status: contract.status,
             symbol: params.symbol,
         },
-    });
-
-    persistOrderStatus({
-        accountId,
-        contractId: contract.contract_id,
-        event: 'contract_settled',
-        status: contract.status || 'settled',
-        payload: {
-            profit: contract.profit,
-            payout: contract.payout,
-        },
-    }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
+    }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
 }

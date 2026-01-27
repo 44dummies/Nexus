@@ -1,6 +1,8 @@
-import { evaluateCachedRisk, getOrHydrateRiskCache, recordTradeOpened } from './riskCache';
+import { evaluateCachedRisk, getRiskCache, recordTradeOpened } from './riskCache';
 import { isKillSwitchActive, preTradeCheck } from './riskManager';
-import { getRiskConfig, RISK_DEFAULTS, toNumber, type TradeRiskConfig } from './riskConfig';
+import { RISK_DEFAULTS, toNumber, type TradeRiskConfig } from './riskConfig';
+import { getRiskConfigCached } from './riskConfigCache';
+import { nowMs, recordLatency, LATENCY_METRICS, type LatencyTrace, markTrace } from './latencyTracker';
 
 export interface PreTradeGateContext {
     accountId: string;
@@ -12,17 +14,21 @@ export interface PreTradeGateContext {
 const DEFAULT_TRADE_COOLDOWN_MS = 3000;
 const DEFAULT_LOSS_COOLDOWN_MS = 60000;
 
-export async function preTradeGate(ctx: PreTradeGateContext): Promise<{ stake: number; risk: TradeRiskConfig }> {
+export function preTradeGate(
+    ctx: PreTradeGateContext,
+    latency?: LatencyTrace
+): { stake: number; risk: TradeRiskConfig } {
+    const gateStart = latency ? markTrace(latency, 'gateStartTs', nowMs()) : nowMs();
     if (isKillSwitchActive(ctx.accountId)) {
         throw new Error('Kill switch active');
     }
 
-    const cacheEntry = await getOrHydrateRiskCache(ctx.accountId);
+    const cacheEntry = getRiskCache(ctx.accountId);
     if (!cacheEntry) {
         throw new Error('Risk state unavailable');
     }
 
-    const storedConfig = await getRiskConfig(ctx.accountId, ctx.botRunId);
+    const storedConfig = getRiskConfigCached(ctx.botRunId);
     const merged = {
         ...storedConfig,
         ...ctx.riskOverrides,
@@ -103,5 +109,9 @@ export async function preTradeGate(ctx: PreTradeGateContext): Promise<{ stake: n
         throw new Error(openResult.reason ?? 'Risk check failed');
     }
 
+    if (latency) {
+        markTrace(latency, 'gateEndTs', nowMs());
+        recordLatency(LATENCY_METRICS.gateDuration, gateStart, latency.gateEndTs);
+    }
     return { stake, risk };
 }

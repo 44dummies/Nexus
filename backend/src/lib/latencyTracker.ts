@@ -7,17 +7,33 @@ export const LATENCY_METRICS = {
     sendToProposalAck: 'latency.send_to_proposal_ack_ms',
     sendToBuyAck: 'latency.send_to_buy_ack_ms',
     sendToFill: 'latency.send_to_fill_ms',
+    tickToStrategy: 'latency.tick_to_strategy_ms',
+    strategyCompute: 'latency.strategy_compute_ms',
+    strategyToGate: 'latency.strategy_to_gate_ms',
+    gateDuration: 'latency.gate_ms',
+    gateToProposal: 'latency.gate_to_proposal_ms',
+    proposalRtt: 'latency.proposal_rtt_ms',
+    buyRtt: 'latency.buy_rtt_ms',
+    buyToSettle: 'latency.buy_to_settle_ms',
+    tickToBuyAck: 'latency.tick_to_buy_ack_ms',
+    tickToSettle: 'latency.tick_to_settle_ms',
 };
 
 export interface LatencyTrace {
     traceId: string;
     tickReceivedTs?: number;
+    strategyStartTs?: number;
+    strategyEndTs?: number;
+    gateStartTs?: number;
+    gateEndTs?: number;
+    proposalSentTs?: number;
     decisionTs?: number;
     orderSentTs?: number;
     proposalAckTs?: number;
     buySentTs?: number;
     buyAckTs?: number;
     fillTs?: number;
+    settleTs?: number;
 }
 
 let traceSeq = 0;

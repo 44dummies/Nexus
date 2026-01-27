@@ -216,6 +216,20 @@ export async function getOrHydrateRiskCache(accountId: string): Promise<RiskCach
     return hydrateRiskCache(accountId);
 }
 
+export async function warmRiskCache(accountId: string, balanceHint?: number): Promise<RiskCacheEntry | null> {
+    const existing = getRiskCache(accountId);
+    if (existing) return existing;
+
+    const hydrated = await hydrateRiskCache(accountId);
+    if (hydrated) return hydrated;
+
+    if (typeof balanceHint === 'number' && Number.isFinite(balanceHint)) {
+        return initializeRiskCache(accountId, { equity: balanceHint });
+    }
+
+    return null;
+}
+
 /**
  * Initialize risk cache from database values
  */

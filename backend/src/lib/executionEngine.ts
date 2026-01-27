@@ -34,19 +34,29 @@ class TokenBucket {
         this.lastRefill = nowMs();
     }
 
-    tryConsume(amount: number = 1): boolean {
-        const now = nowMs();
+    private refill(now: number): void {
         const elapsed = now - this.lastRefill;
-        if (elapsed > 0) {
-            const refill = elapsed * this.refillPerMs;
-            this.tokens = Math.min(this.capacity, this.tokens + refill);
-            this.lastRefill = now;
-        }
+        if (elapsed <= 0) return;
+        const refill = elapsed * this.refillPerMs;
+        this.tokens = Math.min(this.capacity, this.tokens + refill);
+        this.lastRefill = now;
+    }
+
+    tryConsume(amount: number = 1, now: number = nowMs()): boolean {
+        this.refill(now);
         if (this.tokens >= amount) {
             this.tokens -= amount;
             return true;
         }
         return false;
+    }
+
+    nextAvailableAt(amount: number = 1, now: number = nowMs()): number {
+        this.refill(now);
+        if (this.tokens >= amount) return now;
+        if (this.refillPerMs <= 0) return Number.POSITIVE_INFINITY;
+        const deficit = amount - this.tokens;
+        return now + (deficit / this.refillPerMs);
     }
 }
 
@@ -82,15 +92,26 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 async function throttleOrWait(limiter: TokenBucket, metricPrefix: string): Promise<void> {
     if (limiter.tryConsume()) return;
     const start = nowMs();
-    while (nowMs() - start < THROTTLE_MAX_WAIT_MS) {
-        await sleep(5);
+    const deadline = start + THROTTLE_MAX_WAIT_MS;
+
+    while (true) {
+        const now = nowMs();
+        const nextAt = limiter.nextAvailableAt(1, now);
+        if (!Number.isFinite(nextAt) || nextAt > deadline) {
+            metrics.counter(`${metricPrefix}.throttle_reject`);
+            throw new ExecutionError('THROTTLE', 'Throttle limit reached');
+        }
+        const delay = Math.max(1, Math.min(nextAt - now, deadline - now));
+        await sleep(delay);
         if (limiter.tryConsume()) {
             metrics.histogram(`${metricPrefix}.throttle_wait_ms`, nowMs() - start);
             return;
         }
+        if (nowMs() >= deadline) {
+            metrics.counter(`${metricPrefix}.throttle_reject`);
+            throw new ExecutionError('THROTTLE', 'Throttle limit reached');
+        }
     }
-    metrics.counter(`${metricPrefix}.throttle_reject`);
-    throw new ExecutionError('THROTTLE', 'Throttle limit reached');
 }
 
 export interface ExecutionRequest {
