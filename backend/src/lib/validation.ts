@@ -32,7 +32,7 @@ export const BotRunRiskSchema = z.object({
     dailyLossLimitPct: z.number().min(0).max(100).optional(),
     drawdownLimitPct: z.number().min(0).max(100).optional(),
     maxConsecutiveLosses: z.number().int().min(0).max(20).optional(),
-    lossCooldownMs: z.number().min(0).max(3600000).optional(), // Max 1 hour
+    lossCooldownMs: z.number().min(0).max(86400000).optional(), // Max 24 hours
     maxConcurrentTrades: z.number().int().min(1).max(50).optional(),
     maxOrderSize: z.number().min(0).optional(),
     maxNotional: z.number().min(0).optional(),

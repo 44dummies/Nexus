@@ -152,18 +152,24 @@ function BotsContent() {
                     },
                 }),
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const message = typeof data?.error === 'string' ? data.error : 'Failed to start bot';
+                throw new Error(message);
+            }
             if (data?.runId) {
                 setActiveRunId(data.runId);
             }
+            setBotRunning(true);
+            toast.success('Bot Started', {
+                description: `Trading with ${selectedBot.name}`,
+            });
         } catch (err) {
             console.error('Failed to start bot run', err);
+            const message = err instanceof Error ? err.message : 'Failed to start bot';
+            toast.error(message);
+            return;
         }
-
-        setBotRunning(true);
-        toast.success('Bot Started', {
-            description: `Trading with ${selectedBot.name}`,
-        });
     };
 
     const handleStopBot = async () => {

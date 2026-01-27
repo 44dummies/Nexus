@@ -103,13 +103,14 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
     const handleStop = async () => {
         setIsBusy(true);
         try {
+            const payload: { action: 'stop-backend'; runId?: string } = { action: 'stop-backend' };
+            if (activeRunId) {
+                payload.runId = activeRunId;
+            }
             const res = await apiFetch('/api/bot-runs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'stop-backend',
-                    runId: activeRunId,
-                }),
+                body: JSON.stringify(payload),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
