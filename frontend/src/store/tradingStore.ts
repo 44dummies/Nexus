@@ -43,6 +43,7 @@ interface TradingState {
     // Bot state
     botRunning: boolean;
     selectedBotId: string | null;
+    selectedSymbol: string | null;
     botConfigs: Record<string, BotConfig>;
     entryProfileId: string | null;
     entryMode: 'HYBRID_LIMIT_MARKET' | 'MARKET';
@@ -89,6 +90,7 @@ interface TradingState {
     setBotRunning: (running: boolean) => void;
     setConnectionStatus: (connected: boolean) => void;
     setSelectedBotId: (botId: string) => void;
+    setSelectedSymbol: (symbol: string | null) => void;
     setActiveRunId: (runId: string | null) => void;
     setBotConfigFor: (botId: string, config: Partial<BotConfig>) => void;
     setEntryConfig: (config: Partial<Pick<TradingState, 'entryProfileId' | 'entryMode' | 'entryTimeoutMs' | 'entryPollingMs' | 'entrySlippagePct' | 'entryAggressiveness' | 'entryMinEdgePct'>>) => void;
@@ -123,6 +125,7 @@ export const useTradingStore = create<TradingState>()(
             prevTick: 0,
             botRunning: false,
             selectedBotId: 'rsi',
+            selectedSymbol: 'R_100',
             botConfigs: DEFAULT_BOT_CONFIGS,
             entryProfileId: 'balanced',
             entryMode: 'HYBRID_LIMIT_MARKET',
@@ -189,6 +192,7 @@ export const useTradingStore = create<TradingState>()(
                         lastLossTime: null,
                         lastTradeTime: null,
                         activeRunId: null,
+                        selectedSymbol: 'R_100',
                     });
                 }
             },
@@ -252,6 +256,8 @@ export const useTradingStore = create<TradingState>()(
             setConnectionStatus: (connected) => set({ isConnected: connected }),
 
             setSelectedBotId: (botId) => set({ selectedBotId: botId }),
+
+            setSelectedSymbol: (symbol) => set({ selectedSymbol: symbol }),
 
             setActiveRunId: (runId) => set({ activeRunId: runId }),
 
@@ -363,6 +369,7 @@ export const useTradingStore = create<TradingState>()(
                 prevTick: 0,
                 botRunning: false,
                 selectedBotId: 'rsi',
+                selectedSymbol: 'R_100',
                 botConfigs: DEFAULT_BOT_CONFIGS,
                 entryProfileId: 'balanced',
                 entryMode: 'HYBRID_LIMIT_MARKET',

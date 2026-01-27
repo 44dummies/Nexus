@@ -635,6 +635,29 @@ export function getAccountBotRuns(accountId: string): ActiveBotRun[] {
 }
 
 /**
+ * Get the active backend bot run for an account (prefers running over paused).
+ */
+export function getActiveBackendRun(accountId: string): ActiveBotRun | null {
+    let fallback: ActiveBotRun | null = null;
+    for (const run of activeBotRuns.values()) {
+        if (run.accountId !== accountId) continue;
+        if (run.status === 'running') return run;
+        if (!fallback) fallback = run;
+    }
+    return fallback;
+}
+
+/**
+ * Stop the active backend bot run for an account, if any.
+ */
+export async function stopActiveBackendRun(accountId: string): Promise<ActiveBotRun | null> {
+    const run = getActiveBackendRun(accountId);
+    if (!run) return null;
+    await stopBotRun(run.id);
+    return run;
+}
+
+/**
  * Check if an account has an active backend bot run
  */
 export function hasActiveBackendRun(accountId: string): boolean {

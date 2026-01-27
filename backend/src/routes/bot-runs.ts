@@ -6,8 +6,9 @@ import {
     pauseBotRun,
     resumeBotRun,
     getBotRunStatus,
-    getAccountBotRuns,
     hasActiveBackendRun,
+    getActiveBackendRun,
+    stopActiveBackendRun,
 } from '../lib/botController';
 import {
     StartBackendSchema,
@@ -252,7 +253,7 @@ router.post('/', async (req, res) => {
                 auth.currency || 'USD'
             );
 
-            return res.json({ runId, mode: 'backend', status: 'running' });
+            return res.json({ botRunId: runId, mode: 'backend', status: 'running' });
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to start backend bot';
             return res.status(500).json({ error: message });
@@ -267,43 +268,21 @@ router.post('/', async (req, res) => {
         const { runId } = validation.data;
 
         if (runId) {
+            // Verify ownership explicitly for requested ID
             const ownership = enforceRunOwnership(activeAccount, runId);
             if (ownership.status !== 200) {
-                // If the run isn't active in memory, attempt to clear a stale DB entry.
-                if (ownership.status === 404) {
-                    const { error: staleStopError } = await supabaseClient
-                        .from('bot_runs')
-                        .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
-                        .eq('id', runId)
-                        .eq('account_id', activeAccount)
-                        .eq('backend_mode', true)
-                        .eq('run_status', 'running');
-
-                    if (staleStopError) {
-                        console.error('Supabase stale bot run stop failed', { error: staleStopError });
-                        return res.status(500).json({
-                            error: staleStopError.message,
-                            code: staleStopError.code,
-                            hint: staleStopError.hint,
-                            details: staleStopError.details,
-                        });
-                    }
-
-                    return res.json({ success: true, staleCleared: true });
-                }
-
+                // If not found in memory, try detailed lookup or just fail
+                // For now, if 404, we accept it might be ghost, but ownership returns 404
                 return res.status(ownership.status).json({ error: ownership.error });
             }
             await stopBotRun(runId);
-            return res.json({ success: true });
+            return res.json({ stopped: true, botRunId: runId });
         }
 
-        // Stop all backend runs for this account
-        const runs = getAccountBotRuns(activeAccount);
-        for (const run of runs) {
-            await stopBotRun(run.id);
-        }
-        // Also clear any stale DB entries marked as running.
+        // Stop active backend run for this account, if any
+        const stoppedRun = await stopActiveBackendRun(activeAccount);
+
+        // Also clear any stale DB entries marked as running for this account
         const { error: staleStopError } = await supabaseClient
             .from('bot_runs')
             .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
@@ -313,14 +292,10 @@ router.post('/', async (req, res) => {
 
         if (staleStopError) {
             console.error('Supabase stale bot run stop failed', { error: staleStopError });
-            return res.status(500).json({
-                error: staleStopError.message,
-                code: staleStopError.code,
-                hint: staleStopError.hint,
-                details: staleStopError.details,
-            });
+            // Non-blocking but logged
         }
-        return res.json({ success: true, stoppedCount: runs.length });
+
+        return res.json({ stopped: true, botRunId: stoppedRun?.id ?? null });
     }
 
     if (action === 'pause-backend') {
@@ -362,36 +337,33 @@ router.post('/', async (req, res) => {
         }
         const { runId } = validation.data;
 
+        let run = null;
         if (runId) {
-            const ownership = enforceRunOwnership(activeAccount, runId);
-            if (ownership.status !== 200 || !ownership.run) {
-                return res.status(ownership.status).json({ error: ownership.error });
+            const status = getBotRunStatus(runId);
+            if (status && status.accountId === activeAccount) {
+                run = status;
             }
-            const status = ownership.run;
-            return res.json({
-                active: true,
-                id: status.id,
-                status: status.status,
-                strategyId: status.config.strategyId,
-                symbol: status.config.symbol,
-                tradesExecuted: status.tradesExecuted,
-                totalProfit: status.totalProfit,
-                startedAt: status.startedAt.toISOString(),
-            });
+        } else {
+            run = getActiveBackendRun(activeAccount);
         }
 
-        // Return all backend runs for account
-        const runs = getAccountBotRuns(activeAccount);
+        if (!run) {
+            return res.json({ active: false });
+        }
+
         return res.json({
-            hasBackendRuns: runs.length > 0,
-            runs: runs.map(r => ({
-                id: r.id,
-                status: r.status,
-                strategyId: r.config.strategyId,
-                symbol: r.config.symbol,
-                tradesExecuted: r.tradesExecuted,
-                totalProfit: r.totalProfit,
-            })),
+            active: true,
+            botRunId: run.id,
+            strategyId: run.config.strategyId,
+            symbol: run.config.symbol,
+            startedAt: run.startedAt.toISOString(),
+            configSummary: {
+                stake: run.config.stake,
+                maxStake: run.config.maxStake,
+                duration: run.config.duration,
+                durationUnit: run.config.durationUnit,
+                cooldownMs: run.config.cooldownMs,
+            },
         });
     }
 

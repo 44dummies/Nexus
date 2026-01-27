@@ -2,6 +2,82 @@ import { useTradingStore } from '@/store/tradingStore';
 import { showTradeToast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 
+export type BackendRunStatus = {
+    active: boolean;
+    botRunId?: string;
+    strategyId?: string;
+    symbol?: string;
+    startedAt?: string;
+    configSummary?: Record<string, unknown>;
+};
+
+export type StartBackendPayload = {
+    action: 'start-backend';
+    botId: string;
+    symbol: string;
+    stake: number;
+    maxStake?: number;
+    duration: number;
+    durationUnit: 't' | 'm' | 's' | 'h' | 'd';
+    cooldownMs: number;
+    strategyConfig?: Record<string, unknown>;
+    risk?: Record<string, unknown>;
+    performance?: Record<string, unknown>;
+    entry?: Record<string, unknown>;
+};
+
+export async function startBackendRun(payload: StartBackendPayload) {
+    const res = await apiFetch('/api/bot-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const message = typeof data?.error === 'string' ? data.error : 'Failed to start bot';
+        throw new Error(message);
+    }
+    const runId = data?.botRunId ?? data?.runId;
+    if (!runId) {
+        throw new Error('Failed to start bot');
+    }
+    return { botRunId: runId as string, ...data };
+}
+
+export async function stopBackendRun(botRunId?: string) {
+    const res = await apiFetch('/api/bot-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'stop-backend',
+            ...(botRunId ? { runId: botRunId } : {}),
+        }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const message = typeof data?.error === 'string' ? data.error : 'Failed to stop bot';
+        throw new Error(message);
+    }
+    return data;
+}
+
+export async function getBackendRunStatus(botRunId?: string): Promise<BackendRunStatus> {
+    const res = await apiFetch('/api/bot-runs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            action: 'status-backend',
+            ...(botRunId ? { runId: botRunId } : {}),
+        }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        const message = typeof data?.error === 'string' ? data.error : 'Failed to fetch bot status';
+        throw new Error(message);
+    }
+    return data as BackendRunStatus;
+}
+
 interface BotEngineOptions {
     ws: WebSocket;
     symbol: string;
@@ -76,9 +152,10 @@ export class BotEngine {
             });
             const result = await response.json();
 
-            if (result.runId) {
-                this.backendRunId = result.runId;
-                this.addLog('success', `Backend bot started (ID: ${result.runId})`);
+            const runId = result.botRunId ?? result.runId;
+            if (runId) {
+                this.backendRunId = runId;
+                this.addLog('success', `Backend bot started (ID: ${runId})`);
             } else {
                 throw new Error('No run ID returned');
             }

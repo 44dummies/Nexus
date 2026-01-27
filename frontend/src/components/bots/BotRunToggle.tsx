@@ -1,19 +1,17 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { apiFetch } from '@/lib/api';
 import { getBotConfig } from '@/lib/bot/config';
 import { useTradingStore } from '@/store/tradingStore';
 import { toast } from 'sonner';
+import { getBackendRunStatus, startBackendRun, stopBackendRun } from '@/lib/bot/engine';
 
 interface BotRunToggleProps {
     size?: 'default' | 'sm' | 'lg' | 'icon' | 'icon-sm' | 'icon-lg';
     className?: string;
 }
-
-const DEFAULT_SYMBOL = 'R_100';
 
 export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps) {
     const [isBusy, setIsBusy] = useState(false);
@@ -21,7 +19,9 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
         botRunning,
         isAuthorized,
         activeRunId,
+        activeAccountId,
         selectedBotId,
+        selectedSymbol,
         botConfigs,
         baseStake,
         maxStake,
@@ -33,13 +33,28 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
         drawdownLimitPct,
         maxConsecutiveLosses,
         lossCooldownMs,
+        entryProfileId,
+        entryMode,
+        entryTimeoutMs,
+        entryPollingMs,
+        entrySlippagePct,
+        entryAggressiveness,
+        entryMinEdgePct,
         setBotRunning,
         setActiveRunId,
+        setSelectedBotId,
+        setSelectedSymbol,
     } = useTradingStore();
 
+    const selectedStrategy = selectedBotId || 'rsi';
+    const selectedBotConfig = getBotConfig(selectedStrategy, botConfigs);
     const handleStart = async () => {
         if (!isAuthorized) {
             toast.error('Not Connected', { description: 'Please connect to Deriv first' });
+            return;
+        }
+        if (!selectedSymbol) {
+            toast.error('Select market first');
             return;
         }
         if (baseStake <= 0) {
@@ -47,50 +62,57 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
             return;
         }
 
-        const selectedStrategy = selectedBotId || 'rsi';
-        const selectedBotConfig = getBotConfig(selectedStrategy, botConfigs);
         const duration = selectedBotConfig.duration ?? 5;
         const durationUnit = selectedBotConfig.durationUnit ?? 't';
         const botCooldownMs = selectedBotConfig.cooldownMs ?? cooldownMs;
 
         setIsBusy(true);
         try {
-            const res = await apiFetch('/api/bot-runs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'start-backend',
-                    botId: selectedStrategy,
-                    symbol: DEFAULT_SYMBOL,
-                    stake: baseStake,
+            const { botRunId } = await startBackendRun({
+                action: 'start-backend',
+                botId: selectedStrategy,
+                symbol: selectedSymbol,
+                stake: baseStake,
+                maxStake,
+                duration,
+                durationUnit,
+                cooldownMs: botCooldownMs,
+                strategyConfig: selectedBotConfig,
+                risk: {
+                    baseStake,
                     maxStake,
-                    duration,
-                    durationUnit,
+                    stopLoss,
+                    takeProfit,
                     cooldownMs: botCooldownMs,
-                    strategyConfig: selectedBotConfig,
-                    risk: {
-                        baseStake,
-                        maxStake,
-                        stopLoss,
-                        takeProfit,
-                        cooldownMs: botCooldownMs,
-                        baseRiskPct,
-                        dailyLossLimitPct,
-                        drawdownLimitPct,
-                        maxConsecutiveLosses,
-                        lossCooldownMs,
-                    },
-                }),
+                    baseRiskPct,
+                    dailyLossLimitPct,
+                    drawdownLimitPct,
+                    maxConsecutiveLosses,
+                    lossCooldownMs,
+                },
+                entry: {
+                    profileId: entryProfileId,
+                    mode: entryMode,
+                    timeoutMs: entryTimeoutMs,
+                    pollingMs: entryPollingMs,
+                    slippagePct: entrySlippagePct,
+                    aggressiveness: entryAggressiveness,
+                    minEdgePct: entryMinEdgePct,
+                },
             });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to start bot');
+            const status = await getBackendRunStatus(botRunId);
+            if (!status.active || !status.botRunId) {
+                throw new Error('Backend did not start the bot');
             }
-
-            if (data?.runId) {
-                setActiveRunId(data.runId);
-            }
+            setActiveRunId(status.botRunId);
             setBotRunning(true);
+            const strategyId = status.strategyId ?? status.botId;
+            if (strategyId) {
+                setSelectedBotId(strategyId);
+            }
+            if (status.symbol) {
+                setSelectedSymbol(status.symbol);
+            }
             toast.success('Bot Started');
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to start bot';
@@ -103,52 +125,87 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
     const handleStop = async () => {
         setIsBusy(true);
         try {
-            const payload: { action: 'stop-backend'; runId?: string } = { action: 'stop-backend' };
-            if (activeRunId) {
-                payload.runId = activeRunId;
-            }
-            const res = await apiFetch('/api/bot-runs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-            });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to stop bot');
-            }
-            setActiveRunId(null);
-            setBotRunning(false);
-            toast.info('Bot Stopped');
+            await stopBackendRun(activeRunId ?? undefined);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to stop bot';
+            toast.error(message);
+        }
+        try {
+            const status = await getBackendRunStatus();
+            if (!status.active) {
+                setActiveRunId(null);
+                setBotRunning(false);
+                toast.info('Bot Stopped');
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to sync bot status';
             toast.error(message);
         } finally {
             setIsBusy(false);
         }
     };
 
+    useEffect(() => {
+        if (!isAuthorized || !activeAccountId) return;
+        let isMounted = true;
+        getBackendRunStatus()
+            .then((status) => {
+                if (!isMounted) return;
+                if (status.active && status.botRunId) {
+                    setActiveRunId(status.botRunId);
+                    setBotRunning(true);
+                    const strategyId = status.strategyId ?? status.botId;
+                    if (strategyId) {
+                        setSelectedBotId(strategyId);
+                    }
+                    if (status.symbol) {
+                        setSelectedSymbol(status.symbol);
+                    }
+                } else if (!status.active) {
+                    setActiveRunId(null);
+                    setBotRunning(false);
+                }
+            })
+            .catch((error) => {
+                if (!isMounted) return;
+                const message = error instanceof Error ? error.message : 'Failed to sync bot status';
+                toast.error(message);
+            });
+        return () => {
+            isMounted = false;
+        };
+    }, [isAuthorized, activeAccountId]);
+
+    const canStart = Boolean(selectedSymbol && selectedBotConfig);
+    const disableButton = !isAuthorized || isBusy || (!botRunning && !canStart);
+
     const buttonClass = botRunning
         ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white'
         : 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white';
 
     return (
-        <Button
-            onClick={botRunning ? handleStop : handleStart}
-            size={size}
-            className={`${buttonClass} ${className}`}
-            disabled={!isAuthorized || isBusy}
-        >
-            {botRunning ? (
-                <>
-                    <Square className="w-4 h-4" />
-                    Stop Bot
-                </>
-            ) : (
-                <>
-                    <Play className="w-4 h-4" />
-                    Start Bot
-                </>
+        <div className="flex items-center gap-2">
+            <Button
+                onClick={botRunning ? handleStop : handleStart}
+                size={size}
+                className={`${buttonClass} ${className}`}
+                disabled={disableButton}
+            >
+                {botRunning ? (
+                    <>
+                        <Square className="w-4 h-4" />
+                        Stop Bot
+                    </>
+                ) : (
+                    <>
+                        <Play className="w-4 h-4" />
+                        Start Bot
+                    </>
+                )}
+            </Button>
+            {!botRunning && !canStart && (
+                <span className="text-xs text-muted-foreground">Select market first</span>
             )}
-        </Button>
+        </div>
     );
 }

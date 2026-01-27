@@ -1,8 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { apiFetch } from '@/lib/api';
 import { useTradingStore } from '@/store/tradingStore';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
@@ -16,6 +15,7 @@ import { BotTuningPanel } from '@/components/bots/BotTuningPanel';
 import { BOT_CATALOG } from '@/lib/bot/catalog';
 import { getBotConfig } from '@/lib/bot/config';
 import { getExecutionProfile } from '@/lib/bot/executionProfiles';
+import { getBackendRunStatus, startBackendRun, stopBackendRun } from '@/lib/bot/engine';
 
 // Available markets for bot trading
 const MARKETS = [
@@ -53,8 +53,11 @@ function BotsContent() {
         isAuthorized,
         totalProfitToday,
         totalLossToday,
+        activeAccountId,
         setSelectedBotId,
         selectedBotId,
+        selectedSymbol,
+        setSelectedSymbol,
         entryProfileId,
         entryMode,
         entryTimeoutMs,
@@ -68,9 +71,6 @@ function BotsContent() {
         activeRunId,
         setActiveRunId,
     } = useTradingStore();
-
-    // Local state for market selection
-    const [selectedMarket, setSelectedMarket] = useState('R_100');
 
     const selectedStrategy = selectedBotId || 'rsi';
     const selectedBot = BOT_CATALOG.find((bot) => bot.id === selectedStrategy) || BOT_CATALOG[0];
@@ -96,11 +96,51 @@ function BotsContent() {
         }
     };
 
+    const syncBackendStatus = async (runId?: string) => {
+        const status = await getBackendRunStatus(runId);
+        if (status.active) {
+            if (!status.botRunId) {
+                throw new Error('Backend did not return bot run ID');
+            }
+            setActiveRunId(status.botRunId);
+            setBotRunning(true);
+            const strategyId = status.strategyId ?? status.botId;
+            if (strategyId) {
+                setSelectedBotId(strategyId);
+            }
+            if (status.symbol) {
+                setSelectedSymbol(status.symbol);
+            }
+        } else {
+            setActiveRunId(null);
+            setBotRunning(false);
+        }
+        return status;
+    };
+
+    useEffect(() => {
+        if (!isAuthorized || !activeAccountId) return;
+        let isMounted = true;
+        syncBackendStatus().catch((err) => {
+            if (!isMounted) return;
+            const message = err instanceof Error ? err.message : 'Failed to sync bot status';
+            toast.error(message);
+        });
+        return () => {
+            isMounted = false;
+        };
+    }, [isAuthorized, activeAccountId]);
+
     const handleStartBot = async () => {
         if (!isAuthorized) {
             toast.error('Not Connected', {
                 description: 'Please connect to Deriv first',
             });
+            return;
+        }
+
+        if (!selectedSymbol) {
+            toast.error('Select market first');
             return;
         }
 
@@ -116,51 +156,42 @@ function BotsContent() {
         const botCooldownMs = selectedBotConfig.cooldownMs ?? cooldownMs;
 
         try {
-            const res = await apiFetch('/api/bot-runs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'start-backend',
-                    botId: selectedStrategy,
-                    symbol: selectedMarket,
-                    stake: baseStake,
-                    maxStake: maxStake,
-                    duration,
-                    durationUnit,
+            const { botRunId } = await startBackendRun({
+                action: 'start-backend',
+                botId: selectedStrategy,
+                symbol: selectedSymbol,
+                stake: baseStake,
+                maxStake: maxStake,
+                duration,
+                durationUnit,
+                cooldownMs: botCooldownMs,
+                strategyConfig: selectedBotConfig,
+                risk: {
+                    baseStake,
+                    maxStake,
+                    stopLoss,
+                    takeProfit,
                     cooldownMs: botCooldownMs,
-                    strategyConfig: selectedBotConfig,
-                    risk: {
-                        baseStake,
-                        maxStake,
-                        stopLoss,
-                        takeProfit,
-                        cooldownMs: botCooldownMs,
-                        baseRiskPct,
-                        dailyLossLimitPct,
-                        drawdownLimitPct,
-                        maxConsecutiveLosses,
-                        lossCooldownMs,
-                    },
-                    entry: {
-                        profileId: entryProfileId,
-                        mode: entryMode,
-                        timeoutMs: entryTimeoutMs,
-                        pollingMs: entryPollingMs,
-                        slippagePct: entrySlippagePct,
-                        aggressiveness: entryAggressiveness,
-                        minEdgePct: entryMinEdgePct,
-                    },
-                }),
+                    baseRiskPct,
+                    dailyLossLimitPct,
+                    drawdownLimitPct,
+                    maxConsecutiveLosses,
+                    lossCooldownMs,
+                },
+                entry: {
+                    profileId: entryProfileId,
+                    mode: entryMode,
+                    timeoutMs: entryTimeoutMs,
+                    pollingMs: entryPollingMs,
+                    slippagePct: entrySlippagePct,
+                    aggressiveness: entryAggressiveness,
+                    minEdgePct: entryMinEdgePct,
+                },
             });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                const message = typeof data?.error === 'string' ? data.error : 'Failed to start bot';
-                throw new Error(message);
+            const status = await syncBackendStatus(botRunId);
+            if (!status.active) {
+                throw new Error('Backend did not start the bot');
             }
-            if (data?.runId) {
-                setActiveRunId(data.runId);
-            }
-            setBotRunning(true);
             toast.success('Bot Started', {
                 description: `Trading with ${selectedBot.name}`,
             });
@@ -173,30 +204,25 @@ function BotsContent() {
     };
 
     const handleStopBot = async () => {
-        if (!activeRunId) {
-            console.warn('No active run ID to stop');
-            setBotRunning(false);
+        let status = null;
+        try {
+            await stopBackendRun(activeRunId ?? undefined);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to stop bot';
+            toast.error(message);
+        }
+        try {
+            status = await syncBackendStatus();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to sync bot status';
+            toast.error(message);
             return;
         }
-
-        try {
-            await apiFetch('/api/bot-runs', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'stop-backend',
-                    runId: activeRunId,
-                }),
+        if (status && !status.active) {
+            toast.info('Bot Stopped', {
+                description: 'Trading has been paused',
             });
-        } catch (err) {
-            console.error('Failed to stop bot run', err);
-        } finally {
-            setActiveRunId(null);
         }
-        setBotRunning(false);
-        toast.info('Bot Stopped', {
-            description: 'Trading has been paused',
-        });
     };
 
     const netPnL = totalProfitToday - totalLossToday;
@@ -260,8 +286,8 @@ function BotsContent() {
                             <span className="text-xs text-muted-foreground uppercase tracking-widest">Symbol</span>
                         </div>
                         <select
-                            value={selectedMarket}
-                            onChange={(e) => setSelectedMarket(e.target.value)}
+                            value={selectedSymbol ?? ''}
+                            onChange={(e) => setSelectedSymbol(e.target.value)}
                             disabled={botRunning}
                             className="w-full p-3 rounded-xl bg-background/50 border border-border/50 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -282,7 +308,7 @@ function BotsContent() {
                             ))}
                         </select>
                         <p className="text-xs text-muted-foreground mt-2">
-                            Selected: <span className="font-mono text-foreground">{selectedMarket}</span>
+                            Selected: <span className="font-mono text-foreground">{selectedSymbol ?? '—'}</span>
                         </p>
                     </div>
 
