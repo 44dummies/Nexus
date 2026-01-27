@@ -248,6 +248,29 @@ router.post('/', async (req, res) => {
         if (runId) {
             const ownership = enforceRunOwnership(activeAccount, runId);
             if (ownership.status !== 200) {
+                // If the run isn't active in memory, attempt to clear a stale DB entry.
+                if (ownership.status === 404) {
+                    const { error: staleStopError } = await supabaseClient
+                        .from('bot_runs')
+                        .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
+                        .eq('id', runId)
+                        .eq('account_id', activeAccount)
+                        .eq('backend_mode', true)
+                        .eq('run_status', 'running');
+
+                    if (staleStopError) {
+                        console.error('Supabase stale bot run stop failed', { error: staleStopError });
+                        return res.status(500).json({
+                            error: staleStopError.message,
+                            code: staleStopError.code,
+                            hint: staleStopError.hint,
+                            details: staleStopError.details,
+                        });
+                    }
+
+                    return res.json({ success: true, staleCleared: true });
+                }
+
                 return res.status(ownership.status).json({ error: ownership.error });
             }
             await stopBotRun(runId);
@@ -258,6 +281,23 @@ router.post('/', async (req, res) => {
         const runs = getAccountBotRuns(activeAccount);
         for (const run of runs) {
             await stopBotRun(run.id);
+        }
+        // Also clear any stale DB entries marked as running.
+        const { error: staleStopError } = await supabaseClient
+            .from('bot_runs')
+            .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
+            .eq('account_id', activeAccount)
+            .eq('backend_mode', true)
+            .eq('run_status', 'running');
+
+        if (staleStopError) {
+            console.error('Supabase stale bot run stop failed', { error: staleStopError });
+            return res.status(500).json({
+                error: staleStopError.message,
+                code: staleStopError.code,
+                hint: staleStopError.hint,
+                details: staleStopError.details,
+            });
         }
         return res.json({ success: true, stoppedCount: runs.length });
     }
