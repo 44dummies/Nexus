@@ -1,10 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { motion, Variants } from 'framer-motion';
 import { ArrowRight, ShieldCheck, Activity } from 'lucide-react';
 import { Scene3D } from '@/components/three/Scene3D';
 import { apiFetch } from '@/lib/api';
 import { LogoMark } from '@/components/brand/LogoMark';
+import { toast } from 'sonner';
 
 // Animation Variants
 const containerVariants: Variants = {
@@ -31,21 +33,34 @@ const itemVariants: Variants = {
 };
 
 export default function LoginPage() {
-  const handleLogin = () => {
-    apiFetch('/api/auth/start', { method: 'POST' })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error('Auth start failed');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleLogin = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      const res = await apiFetch('/api/auth/start', { method: 'POST' });
+      if (!res.ok) {
+        const retryAfter = Number(res.headers.get('Retry-After'));
+        if (res.status === 429 && Number.isFinite(retryAfter)) {
+          toast.error(`Too many attempts. Try again in ${retryAfter}s.`);
+        } else {
+          toast.error('Auth start failed');
         }
-        const data = await res.json();
-        if (!data?.url) {
-          throw new Error('Missing OAuth URL');
-        }
-        window.location.href = data.url;
-      })
-      .catch((err) => {
-        console.error('Login failed', err);
-      });
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!data?.url) {
+        toast.error('Missing OAuth URL');
+        return;
+      }
+      window.location.href = data.url;
+    } catch (err) {
+      console.error('Login failed', err);
+      toast.error('Login failed');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -81,9 +96,10 @@ export default function LoginPage() {
         <motion.div variants={itemVariants} className="w-full max-w-sm space-y-8">
           <button
             onClick={handleLogin}
-            className="group relative w-full flex items-center justify-center gap-3 bg-accent text-accent-foreground px-8 py-4 rounded-xl font-semibold text-base hover:bg-accent/90 transition-all duration-300 shadow-soft-lg"
+            disabled={isSubmitting}
+            className="group relative w-full flex items-center justify-center gap-3 bg-accent text-accent-foreground px-8 py-4 rounded-xl font-semibold text-base hover:bg-accent/90 transition-all duration-300 shadow-soft-lg disabled:cursor-not-allowed disabled:opacity-70"
           >
-            <span>Continue with Deriv</span>
+            <span>{isSubmitting ? 'Connecting...' : 'Continue with Deriv'}</span>
             <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
           </button>
 

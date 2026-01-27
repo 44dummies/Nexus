@@ -1,10 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import { motion, Variants } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Activity, ArrowRight, ShieldCheck } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { LogoMark } from '@/components/brand/LogoMark';
+import { toast } from 'sonner';
 
 const containerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -30,15 +32,33 @@ const itemVariants: Variants = {
 };
 
 export function LoginForm() {
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
     const handleDerivConnect = async () => {
+        if (isSubmitting) return;
+        setIsSubmitting(true);
         try {
             const res = await apiFetch('/api/auth/start', { method: 'POST' });
-            const data = await res.json();
+            if (!res.ok) {
+                const retryAfter = Number(res.headers.get('Retry-After'));
+                if (res.status === 429 && Number.isFinite(retryAfter)) {
+                    toast.error(`Too many attempts. Try again in ${retryAfter}s.`);
+                } else {
+                    toast.error('Auth start failed');
+                }
+                return;
+            }
+            const data = await res.json().catch(() => ({}));
             if (data?.url) {
                 window.location.href = data.url;
+                return;
             }
+            toast.error('Missing OAuth URL');
         } catch (err) {
             console.error('Failed to start OAuth flow', err);
+            toast.error('Failed to start OAuth flow');
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -73,9 +93,10 @@ export function LoginForm() {
                 <motion.div variants={itemVariants} className="w-full max-w-xs space-y-6">
                     <Button
                         onClick={handleDerivConnect}
+                        disabled={isSubmitting}
                         className="w-full h-14 rounded-full bg-accent text-accent-foreground hover:bg-accent/90 font-medium text-base tracking-wide transition-all duration-300"
                     >
-                        <span>Continue with Deriv</span>
+                        <span>{isSubmitting ? 'Connecting...' : 'Continue with Deriv'}</span>
                         <ArrowRight className="w-4 h-4 ml-2" />
                     </Button>
 

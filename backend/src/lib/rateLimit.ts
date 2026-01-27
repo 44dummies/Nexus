@@ -92,7 +92,7 @@ export const defaultRateLimit = createRateLimit({
  */
 export const authRateLimit = createRateLimit({
     windowMs: 60000,
-    maxRequests: 5,
+    maxRequests: 20,
 });
 
 /**
