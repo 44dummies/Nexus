@@ -106,9 +106,8 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
             }
             setActiveRunId(status.botRunId);
             setBotRunning(true);
-            const strategyId = status.strategyId ?? status.botId;
-            if (strategyId) {
-                setSelectedBotId(strategyId);
+            if (status.strategyId) {
+                setSelectedBotId(status.strategyId);
             }
             if (status.symbol) {
                 setSelectedSymbol(status.symbol);
@@ -154,9 +153,8 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
                 if (status.active && status.botRunId) {
                     setActiveRunId(status.botRunId);
                     setBotRunning(true);
-                    const strategyId = status.strategyId ?? status.botId;
-                    if (strategyId) {
-                        setSelectedBotId(strategyId);
+                    if (status.strategyId) {
+                        setSelectedBotId(status.strategyId);
                     }
                     if (status.symbol) {
                         setSelectedSymbol(status.symbol);
