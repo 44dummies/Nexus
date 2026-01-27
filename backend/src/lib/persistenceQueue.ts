@@ -27,7 +27,7 @@ export class AsyncTaskQueue {
             return Promise.reject(new Error(`${this.name} queue full`));
         }
         return new Promise<T>((resolve, reject) => {
-            this.queue.push({ task, resolve, reject });
+            this.queue.push({ task, resolve, reject } as QueueItem<unknown>);
             this.updateMetrics();
             this.schedule();
         });

@@ -23,8 +23,6 @@ function buildRun(accountId: string, runId: string): ActiveBotRun {
         tradesExecuted: 0,
         totalProfit: 0,
         currency: 'USD',
-        pendingTicks: [],
-        batchTimer: null,
     };
 }
 
