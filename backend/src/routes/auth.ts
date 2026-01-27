@@ -291,8 +291,41 @@ router.get('/session', async (req, res) => {
             activeCurrency: derivedActiveCurrency,
         });
     } catch (error) {
-        clearAuthCookies(res);
-        return res.status(401).json({ authenticated: false, error: (error as Error).message });
+        const err = error as Error & { code?: string };
+        const code = err.code;
+
+        // Only clear cookies if the token is definitely invalid
+        if (code === 'InvalidToken' || err.message.includes('InvalidToken')) {
+            clearAuthCookies(res);
+            return res.status(401).json({ authenticated: false, error: err.message, code: 'InvalidToken' });
+        }
+
+        // For timeouts or network errors, do NOT clear cookies.
+        // The user might be valid, just the upstream is flaky.
+        if (code === 'Timeout' || code === 'NetworkError') {
+            console.warn('Auth session check timed out or failed network check', { code, error: err.message });
+            // Return 401 so the frontend knows we couldn't verify, but keep cookies.
+            // Or return 503 if we want to signal service unavailable. 
+            // Stick to 401 with a special flag if needed, or just 401. 
+            // Frontend likely redirects on 401. 
+            // If we return 401, the frontend might redirect to login. 
+            // If we want to prevent redirect, we might need a different status or the frontend needs to handle it.
+            // However, the goal is "don't clear cookies".
+            return res.status(401).json({ authenticated: false, error: err.message, code: code || 'TransientError' });
+        }
+
+        // Default behavior for unknown errors: assume auth failed but maybe be conservative?
+        // safest is to clear if we don't know. 
+        // But the original issue was aggressive clearing.
+        // Let's only clear if we are sure it's an auth error.
+
+        // Actually, if we are not sure, maybe we should preserve?
+        // Let's stick to the plan: only clear if we KNOW it's bad.
+        // But if `authorizeToken` returns an error from Deriv that is NOT InvalidToken (e.g. `RateLimit`), we shouldn't clear.
+
+        console.warn('Auth check failed with unknown error', { error: err.message, code });
+        // Don't clear cookies for unknown errors to be safe against flakes.
+        return res.status(401).json({ authenticated: false, error: err.message });
     }
 });
 

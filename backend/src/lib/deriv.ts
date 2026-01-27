@@ -28,7 +28,9 @@ function authorizeToken(token: string) {
         const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
         const timeout = setTimeout(() => {
             ws.close();
-            reject(new Error('Authorization timed out'));
+            const err = new Error('Authorization timed out');
+            (err as any).code = 'Timeout';
+            reject(err);
         }, 8000);
 
         ws.on('open', () => {
@@ -46,10 +48,13 @@ function authorizeToken(token: string) {
             if (response.error) {
                 clearTimeout(timeout);
                 ws.close();
-                reject(new Error(response.error.message));
+                const err = new Error(response.error.message);
+                (err as any).code = response.error.code;
+                reject(err);
                 return;
             }
 
+            // ... inside successful response ...
             if (response.msg_type === 'authorize') {
                 clearTimeout(timeout);
                 ws.close();
@@ -60,6 +65,7 @@ function authorizeToken(token: string) {
         ws.on('error', (err) => {
             clearTimeout(timeout);
             ws.close();
+            (err as any).code = 'NetworkError';
             reject(err);
         });
     });
