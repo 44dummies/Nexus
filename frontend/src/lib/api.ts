@@ -1,4 +1,7 @@
-export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/$/, '');
+const isServer = typeof window === 'undefined';
+export const API_BASE_URL = isServer
+    ? (process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/$/, '')
+    : '';
 
 export function apiUrl(path: string) {
     if (!API_BASE_URL) return path;

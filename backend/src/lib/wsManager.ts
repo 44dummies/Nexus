@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { performance } from 'perf_hooks';
 import { wsLogger } from './logger';
 import { metrics } from './metrics';
-import { recordReconnect } from './riskManager';
+
 
 interface QueuedMessage {
     data: string;
@@ -23,6 +23,8 @@ export interface WSConnectionState {
     reconnectAttempts: number;
     lastActivity: number;
     inboundInFlight: number;
+    reconnecting?: boolean;
+    lastAuthError?: string | null;
 }
 
 const MAX_QUEUE_DEPTH = Math.max(1, Number(process.env.WS_MAX_QUEUE_DEPTH) || 500);
@@ -46,6 +48,23 @@ const connectionPool = new Map<string, WSConnectionState>();
 
 let globalReqId = 1000;
 const getReqId = () => globalReqId++;
+
+type ReconnectListener = (accountId: string) => void;
+const reconnectListeners = new Set<ReconnectListener>();
+
+export function registerReconnectListener(listener: ReconnectListener) {
+    reconnectListeners.add(listener);
+}
+
+function notifyReconnect(accountId: string) {
+    for (const listener of reconnectListeners) {
+        try {
+            listener(accountId);
+        } catch (error) {
+            wsLogger.error({ accountId, error }, 'Reconnect listener error');
+        }
+    }
+}
 
 type ConnectionReadyListener = (accountId: string, isReconnect: boolean) => void;
 const connectionReadyListeners = new Map<string, Set<ConnectionReadyListener>>();
@@ -112,6 +131,8 @@ export async function getOrCreateConnection(
         reconnectAttempts: 0,
         lastActivity: Date.now(),
         inboundInFlight: 0,
+        reconnecting: false,
+        lastAuthError: null,
     };
 
     connectionPool.set(accountId, state);
@@ -328,7 +349,7 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
 
     state.reconnectAttempts++;
     metrics.counter('ws.reconnect_attempts');
-    recordReconnect(state.accountId);
+    notifyReconnect(state.accountId);
     const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1);
 
     wsLogger.info({ accountId: state.accountId, delay, attempt: state.reconnectAttempts }, 'Reconnecting WebSocket');

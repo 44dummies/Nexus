@@ -155,7 +155,8 @@ export class BotEngine {
             const runId = result.botRunId ?? result.runId;
             if (runId) {
                 this.backendRunId = runId;
-                this.addLog('success', `Backend bot started (ID: ${runId})`);
+                useTradingStore.getState().setActiveRunId(runId);
+                // SSE will handle logging success
             } else {
                 throw new Error('No run ID returned');
             }
@@ -189,6 +190,7 @@ export class BotEngine {
                 this.addLog('error', 'Failed to stop backend bot cleanly');
             }
             this.backendRunId = null;
+            useTradingStore.getState().setActiveRunId(null);
         }
     }
 
@@ -240,6 +242,8 @@ export class BotEngine {
 
         // We could poll status here occasionally or rely on SSE/WebSocket updates 
         // from backend for trade notifications (which we already have via notifications API)
+        // NOTE: useBotStream hook should be used in the React Component layer (Context or specific Monitor component)
+        // Engine is a class, hooks can't be used here.
     }
 
     private addLog(level: 'info' | 'success' | 'warning' | 'error', message: string) {

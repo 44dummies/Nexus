@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from './supabaseAdmin';
 import { riskLogger } from './logger';
 import { clearPendingSettlement, registerPendingSettlement } from './settlementSubscriptions';
 import { decryptToken } from './sessionCrypto';
-import { getOrCreateConnection, registerStreamingListener, sendMessage, sendMessageAsync } from './wsManager';
+import { getOrCreateConnection, registerStreamingListener, sendMessage, sendMessageAsync, registerReconnectListener } from './wsManager';
 import { getRiskCache, initializeRiskCache, recordTradeSettled, setOpenTradeState } from './riskCache';
 
 interface RollingCounterConfig {
@@ -460,6 +460,10 @@ export async function initRiskManager(): Promise<void> {
             latencyBreaches = 0;
         }
     }, LATENCY_BLOWOUT_WINDOW_MS);
+
+    registerReconnectListener((accountId) => {
+        recordReconnect(accountId);
+    });
 }
 
 const LATENCY_METRICS_KEY = 'latency.send_to_buy_ack_ms';

@@ -2,6 +2,7 @@
 import React from 'react';
 
 import { useTradingStore } from '@/store/tradingStore';
+import { useBotStream } from '@/hooks/useBotStream';
 import { TrendingUp, TrendingDown, Activity, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -16,7 +17,10 @@ function LiveFeed() {
         botRunning,
         clearLogs,
         tradeResults,
+        activeRunId,
     } = useTradingStore();
+
+    useBotStream(activeRunId);
 
     const direction = lastTick > prevTick ? 'up' : lastTick < prevTick ? 'down' : 'neutral';
     const change = lastTick - prevTick;

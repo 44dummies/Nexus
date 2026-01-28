@@ -4,6 +4,7 @@
  * Links: symbol → tick stream → strategy → trade executor
  */
 
+import { EventEmitter } from 'events';
 import { subscribeTicks, unsubscribeTicks, getTickWindowView, type TickData } from './tickStream';
 import { calculateATR, evaluateStrategy, getRequiredTicks, type StrategyConfig, type TradeSignal } from './strategyEngine';
 import { getRiskCache, initializeRiskCache } from './riskCache';
@@ -49,6 +50,15 @@ interface BotRunConfig {
         volatilityWindow?: number;
         volatilityThreshold?: number;
     };
+    entry?: {
+        profileId?: string;
+        mode?: 'HYBRID_LIMIT_MARKET' | 'MARKET';
+        timeoutMs?: number;
+        pollingMs?: number;
+        slippagePct?: number;
+        aggressiveness?: number;
+        minEdgePct?: number;
+    };
 }
 
 export interface ActiveBotRun {
@@ -76,6 +86,18 @@ const DEFAULT_STRATEGY_BUDGET_MS = Math.max(0, Number(process.env.STRATEGY_BUDGE
 const ENABLE_STRATEGY_BUDGET = (process.env.ENABLE_STRATEGY_BUDGET || 'false') === 'true';
 
 const symbolActors = new Map<string, SymbolActor>();
+const botEvents = new EventEmitter();
+botEvents.setMaxListeners(200);
+
+export function subscribeToBotEvents(botRunId: string, callback: (event: any) => void): () => void {
+    const handler = (payload: any) => {
+        if (payload.botRunId === botRunId) {
+            callback(payload);
+        }
+    };
+    botEvents.on('event', handler);
+    return () => botEvents.off('event', handler);
+}
 
 function getSymbolKey(accountId: string, symbol: string): string {
     return `${accountId}:${symbol}`;
@@ -333,6 +355,12 @@ function queueBotLog(payload: {
     }).catch((error) => {
         botLogger.warn({ error, botRunId: payload.bot_run_id }, 'Bot log enqueue failed');
     });
+
+    botEvents.emit('event', {
+        type: 'log',
+        botRunId: payload.bot_run_id,
+        data: payload
+    });
 }
 
 /**
@@ -451,7 +479,8 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         evaluation.detail,
         evaluation.confidence,
         evaluation.reasonCodes,
-        gateResult
+        gateResult,
+        prices.get(prices.length - 1)
     );
 }
 
@@ -466,7 +495,8 @@ function executeTradeForRun(
     detail?: string,
     confidence?: number,
     reasonCodes?: string[],
-    preGate?: { stake: number; risk: TradeRiskConfig }
+    preGate?: { stake: number; risk: TradeRiskConfig },
+    currentPrice?: number,
 ): void {
     if (botRun.status !== 'running') return;
 
@@ -483,7 +513,9 @@ function executeTradeForRun(
             durationUnit: config.durationUnit,
             botId: config.strategyId,
             botRunId: botRun.id,
-            entryMode: 'MARKET',
+            entryMode: config.entry?.mode || 'MARKET',
+            entrySlippagePct: config.entry?.slippagePct,
+            entryTargetPrice: currentPrice,
         },
         {
             token,
@@ -542,6 +574,7 @@ export async function pauseBotRun(botRunId: string, reason?: string): Promise<vo
     botRun.status = 'paused';
 
     botLogger.info({ botRunId, reason }, 'Bot run paused');
+    botEvents.emit('event', { type: 'status', botRunId, status: 'paused', reason });
 
     if (supabaseAdmin) {
         await supabaseAdmin
@@ -564,6 +597,7 @@ export async function resumeBotRun(botRunId: string): Promise<void> {
     botRun.status = 'running';
 
     botLogger.info({ botRunId }, 'Bot run resumed');
+    botEvents.emit('event', { type: 'status', botRunId, status: 'running' });
 
     if (supabaseAdmin) {
         await supabaseAdmin
@@ -600,6 +634,7 @@ export async function stopBotRun(botRunId: string): Promise<void> {
         tradesExecuted: botRun.tradesExecuted,
         totalProfit: botRun.totalProfit,
     }, 'Bot run stopped');
+    botEvents.emit('event', { type: 'status', botRunId, status: 'stopped' });
 
     if (supabaseAdmin) {
         await supabaseAdmin

@@ -9,6 +9,7 @@ import {
     hasActiveBackendRun,
     getActiveBackendRun,
     stopActiveBackendRun,
+    subscribeToBotEvents,
 } from '../lib/botController';
 import {
     StartBackendSchema,
@@ -217,6 +218,7 @@ router.post('/', async (req, res) => {
                     strategyConfig,
                     risk,
                     performance,
+                    entry,
                 },
             })
             .select('id')
@@ -249,6 +251,7 @@ router.post('/', async (req, res) => {
                     strategyConfig,
                     risk,
                     performance,
+                    entry,
                 },
                 auth.currency || 'USD'
             );
@@ -368,6 +371,47 @@ router.post('/', async (req, res) => {
     }
 
     return res.status(400).json({ error: 'Unsupported action' });
+});
+
+router.get('/:id/stream', (req, res) => {
+    const runId = req.params.id;
+    const activeAccount = req.auth?.accountId;
+
+    if (!activeAccount) {
+        return res.status(401).json({ error: 'No active account' });
+    }
+
+    // Verify ownership? 
+    // Since stream is read-only and we filter events by runId, enforcing ownership is good practice.
+    // But `enforceRunOwnership` checks memory. If bot is stopped/archived, we might still want logs?
+    // But this stream is for LIVE events. So checking memory is correct.
+    const ownership = enforceRunOwnership(activeAccount, runId);
+    if (ownership.status !== 200) {
+        return res.status(ownership.status).json({ error: ownership.error });
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    res.write(`event: connected\ndata: {"ok":true}\n\n`);
+
+    const unsubscribe = subscribeToBotEvents(runId, (event) => {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+
+    // Send keepalive every 30s
+    const keepAlive = setInterval(() => {
+        res.write(': keepalive\n\n');
+    }, 30000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        unsubscribe();
+    });
 });
 
 export default router;

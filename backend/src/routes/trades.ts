@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getSupabaseClient } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { subscribeTradeStream } from '../lib/tradeStream';
-import { executeTradeServer, executeTradeServerFast } from '../trade';
+import { executeTradeServerFast } from '../trade';
 import { requireAuth } from '../lib/authMiddleware';
 import { tradeRateLimit } from '../lib/rateLimit';
 
@@ -81,26 +81,13 @@ router.post('/execute', async (req, res) => {
     }
 
     try {
-        // Use fast execution by default, fall back to slow if useFast=false
-        const useFast = req.body?.useFast !== false;
-
-        if (useFast) {
-            const result = await executeTradeServerFast(signal as 'CALL' | 'PUT', params, {
-                token: auth.token,
-                accountId: auth.accountId,
-                accountType: auth.accountType,
-                accountCurrency: auth.currency || undefined,
-            });
-            return res.json(result);
-        } else {
-            const result = await executeTradeServer(signal as 'CALL' | 'PUT', params, {
-                token: auth.token,
-                accountId: auth.accountId,
-                accountType: auth.accountType,
-                accountCurrency: auth.currency || undefined,
-            });
-            return res.json(result);
-        }
+        const result = await executeTradeServerFast(signal as 'CALL' | 'PUT', params, {
+            token: auth.token,
+            accountId: auth.accountId,
+            accountType: auth.accountType,
+            accountCurrency: auth.currency || undefined,
+        });
+        return res.json(result);
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Trade execution failed';
         return res.status(400).json({ error: message });
