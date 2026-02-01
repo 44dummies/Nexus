@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient } from '../lib/supabaseAdmin';
+import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import {
     startBotRun,
     stopBotRun,
@@ -39,7 +39,7 @@ export function enforceRunOwnership(activeAccount: string, runId: string): { sta
 }
 
 router.post('/', async (req, res) => {
-    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }

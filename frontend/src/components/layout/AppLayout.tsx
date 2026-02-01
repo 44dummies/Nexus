@@ -42,18 +42,40 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const isConnectingRef = useRef(false);
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const reconnectAttemptsRef = useRef(0);
+    const sessionRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     // Sliding session: Refresh cookie every 5 minutes to keep session alive while app is open
+    // Only run on authenticated routes (not on login page)
     useEffect(() => {
-        const interval = setInterval(() => {
-            apiFetch('/api/auth/session').catch(console.error);
-        }, 5 * 60 * 1000); // 5 minutes
+        // Don't run session refresh on login page
+        if (pathname === '/') {
+            return;
+        }
+
+        const refreshSession = async () => {
+            try {
+                const res = await apiFetch('/api/auth/session');
+                // Only log errors for non-401 responses
+                if (!res.ok && res.status !== 401) {
+                    console.error('Session refresh failed with status:', res.status);
+                }
+            } catch (err) {
+                // Silently ignore network errors for session refresh
+            }
+        };
 
         // Initial refresh on mount
-        apiFetch('/api/auth/session').catch(console.error);
+        refreshSession();
 
-        return () => clearInterval(interval);
-    }, []);
+        sessionRefreshRef.current = setInterval(refreshSession, 5 * 60 * 1000); // 5 minutes
+
+        return () => {
+            if (sessionRefreshRef.current) {
+                clearInterval(sessionRefreshRef.current);
+                sessionRefreshRef.current = null;
+            }
+        };
+    }, [pathname]);
 
     const connectWebSocket = useCallback(() => {
         if (isConnectingRef.current) return;
@@ -128,10 +150,23 @@ export default function AppLayout({ children }: AppLayoutProps) {
             return;
         }
 
+        let isMounted = true;
+
         const initSession = async () => {
             try {
                 const res = await apiFetch('/api/auth/session');
+                
+                // Handle 401/403 without triggering re-renders
+                if (res.status === 401 || res.status === 403) {
+                    if (isMounted) {
+                        router.push('/');
+                    }
+                    return;
+                }
+
                 const data = await res.json();
+
+                if (!isMounted) return;
 
                 if (!data.authenticated) {
                     router.push('/');
@@ -156,12 +191,17 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 connectWebSocket();
             } catch (err) {
                 console.error('Session init failed:', err);
+                // On network error, redirect to login
+                if (isMounted) {
+                    router.push('/');
+                }
             }
         };
 
         initSession();
 
         return () => {
+            isMounted = false;
             if (reconnectTimerRef.current) {
                 clearTimeout(reconnectTimerRef.current);
                 reconnectTimerRef.current = null;

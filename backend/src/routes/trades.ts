@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseClient } from '../lib/supabaseAdmin';
+import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { subscribeTradeStream } from '../lib/tradeStream';
 import { executeTradeServerFast } from '../trade';
@@ -16,7 +16,7 @@ router.use(requireAuth);
 router.use(tradeRateLimit as any);
 
 router.get('/', async (req, res) => {
-    const { client: supabaseClient, error: configError, missing } = getSupabaseClient();
+    const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
