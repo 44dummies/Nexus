@@ -25,11 +25,16 @@ export interface WSConnectionState {
     inboundInFlight: number;
     reconnecting?: boolean;
     lastAuthError?: string | null;
+    connecting?: Promise<void> | null;
+    reconnectPromise?: Promise<void> | null;
+    shouldReconnect?: boolean;
+    closed?: boolean;
 }
 
 const MAX_QUEUE_DEPTH = Math.max(1, Number(process.env.WS_MAX_QUEUE_DEPTH) || 500);
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_JITTER_MS = Math.max(0, Number(process.env.WS_RECONNECT_JITTER_MS) || 250);
 const CONNECTION_TIMEOUT_MS = 10000;
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -48,6 +53,32 @@ const connectionPool = new Map<string, WSConnectionState>();
 
 let globalReqId = 1000;
 const getReqId = () => globalReqId++;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function isActiveState(state: WSConnectionState): boolean {
+    return connectionPool.get(state.accountId) === state && state.closed !== true;
+}
+
+function shouldAttemptReconnect(state: WSConnectionState): boolean {
+    return state.shouldReconnect !== false;
+}
+
+function rejectPendingMessages(state: WSConnectionState, error: Error): void {
+    for (const pending of state.pendingMessages.values()) {
+        pending.reject(error);
+    }
+    state.pendingMessages.clear();
+    metrics.gauge('ws.pending_requests', 0);
+}
+
+function rejectQueuedMessages(state: WSConnectionState, error: Error): void {
+    for (const queued of state.messageQueue) {
+        queued.reject(error);
+    }
+    state.messageQueue = [];
+    metrics.gauge('ws.outbound_queue_depth', 0);
+}
 
 type ReconnectListener = (accountId: string) => void;
 const reconnectListeners = new Set<ReconnectListener>();
@@ -100,6 +131,37 @@ function notifyConnectionReady(accountId: string, isReconnect: boolean) {
     }
 }
 
+async function connectAndAuthorize(state: WSConnectionState, appId: string, isReconnect: boolean): Promise<void> {
+    if (state.connecting) {
+        return state.connecting;
+    }
+    if (!isActiveState(state)) {
+        throw new Error('Connection closed');
+    }
+
+    const attempt = (async () => {
+        state.authorized = false;
+        state.lastAuthError = null;
+        await connect(state, appId);
+        if (!isActiveState(state)) {
+            if (state.ws?.readyState === WebSocket.OPEN) {
+                state.ws.close();
+            }
+            throw new Error('Connection superseded');
+        }
+        await authorize(state, isReconnect);
+    })();
+
+    state.connecting = attempt;
+    try {
+        await attempt;
+    } finally {
+        if (state.connecting === attempt) {
+            state.connecting = null;
+        }
+    }
+}
+
 /**
  * Get or create a persistent WebSocket connection for an account
  */
@@ -110,14 +172,48 @@ export async function getOrCreateConnection(
 ): Promise<WSConnectionState> {
     const existing = connectionPool.get(accountId);
 
-    if (existing && existing.ws?.readyState === WebSocket.OPEN && existing.authorized) {
-        existing.lastActivity = Date.now();
-        return existing;
-    }
-
-    // Clean up stale connection if exists
     if (existing) {
-        cleanupConnection(accountId);
+        if (existing.token !== token) {
+            existing.token = token;
+            existing.lastAuthError = null;
+        }
+        existing.lastActivity = Date.now();
+
+        if (existing.ws?.readyState === WebSocket.OPEN && existing.authorized) {
+            return existing;
+        }
+
+        if (existing.reconnectPromise) {
+            try {
+                await existing.reconnectPromise;
+            } catch {
+                // ignore and fall through to direct connect attempt
+            }
+            if (existing.ws?.readyState === WebSocket.OPEN && existing.authorized) {
+                return existing;
+            }
+        }
+
+        if (existing.connecting) {
+            try {
+                await existing.connecting;
+            } catch {
+                // ignore and fall through to direct connect attempt
+            }
+            if (existing.ws?.readyState === WebSocket.OPEN && existing.authorized) {
+                return existing;
+            }
+        }
+
+        try {
+            await connectAndAuthorize(existing, appId, false);
+            return existing;
+        } catch (error) {
+            if (isActiveState(existing)) {
+                cleanupConnection(accountId);
+            }
+            throw error;
+        }
     }
 
     // Create new connection
@@ -133,13 +229,16 @@ export async function getOrCreateConnection(
         inboundInFlight: 0,
         reconnecting: false,
         lastAuthError: null,
+        connecting: null,
+        reconnectPromise: null,
+        shouldReconnect: true,
+        closed: false,
     };
 
     connectionPool.set(accountId, state);
 
     try {
-        await connect(state, appId);
-        await authorize(state, false);
+        await connectAndAuthorize(state, appId, false);
         return state;
     } catch (error) {
         cleanupConnection(accountId);
@@ -157,6 +256,7 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
         }, CONNECTION_TIMEOUT_MS);
 
         const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+        state.ws = ws;
 
         ws.on('open', () => {
             clearTimeout(timeout);
@@ -168,11 +268,24 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
 
         ws.on('error', (error) => {
             clearTimeout(timeout);
+            state.ws = null;
             reject(error);
         });
 
-        ws.on('close', () => {
+        ws.on('close', (code, reason) => {
             state.authorized = false;
+            state.ws = null;
+            state.lastActivity = Date.now();
+
+            const closeReason = typeof reason === 'string' ? reason : reason?.toString();
+            const intentional = !shouldAttemptReconnect(state) || !isActiveState(state);
+            wsLogger.info({ accountId: state.accountId, code, reason: closeReason, intentional }, 'WebSocket closed');
+
+            rejectPendingMessages(state, new Error('Connection closed'));
+
+            if (intentional) {
+                return;
+            }
             handleReconnect(state, appId);
         });
     });
@@ -191,7 +304,10 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
         const reqId = getReqId();
         const timeout = setTimeout(() => {
             state.pendingMessages.delete(reqId);
-            reject(new Error('Authorization timeout'));
+            const err = new Error('Authorization timeout');
+            state.lastAuthError = err.message;
+            rejectQueuedMessages(state, err);
+            reject(err);
         }, CONNECTION_TIMEOUT_MS);
 
         state.pendingMessages.set(reqId, {
@@ -200,9 +316,12 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
                 clearTimeout(timeout);
                 const res = response as { error?: { message: string }; authorize?: unknown };
                 if (res.error) {
+                    state.lastAuthError = res.error.message;
+                    rejectQueuedMessages(state, new Error(`Authorization failed: ${res.error.message}`));
                     reject(new Error(res.error.message));
                 } else {
                     state.authorized = true;
+                    state.lastAuthError = null;
                     notifyConnectionReady(state.accountId, isReconnect);
                     // Process queued messages
                     const now = Date.now();
@@ -341,26 +460,55 @@ function setupMessageHandler(state: WSConnectionState): void {
  * Handle reconnection with exponential backoff
  */
 async function handleReconnect(state: WSConnectionState, appId: string): Promise<void> {
-    if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        wsLogger.error({ accountId: state.accountId, attempts: state.reconnectAttempts }, 'Max reconnect attempts reached');
-        cleanupConnection(state.accountId);
+    if (state.reconnecting) {
+        return state.reconnectPromise ?? Promise.resolve();
+    }
+    if (!isActiveState(state) || !shouldAttemptReconnect(state)) {
         return;
     }
 
-    state.reconnectAttempts++;
-    metrics.counter('ws.reconnect_attempts');
-    notifyReconnect(state.accountId);
-    const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1);
+    const loop = (async () => {
+        while (isActiveState(state) && shouldAttemptReconnect(state)) {
+            if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                wsLogger.error({ accountId: state.accountId, attempts: state.reconnectAttempts }, 'Max reconnect attempts reached');
+                cleanupConnection(state.accountId);
+                return;
+            }
 
-    wsLogger.info({ accountId: state.accountId, delay, attempt: state.reconnectAttempts }, 'Reconnecting WebSocket');
+            state.reconnectAttempts += 1;
+            metrics.counter('ws.reconnect_attempts');
+            notifyReconnect(state.accountId);
 
-    await new Promise(resolve => setTimeout(resolve, delay));
+            const baseDelay = RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1);
+            const jitter = RECONNECT_JITTER_MS > 0 ? Math.floor(Math.random() * RECONNECT_JITTER_MS) : 0;
+            const delay = baseDelay + jitter;
 
+            wsLogger.info({ accountId: state.accountId, delay, attempt: state.reconnectAttempts }, 'Reconnecting WebSocket');
+
+            await sleep(delay);
+
+            if (!isActiveState(state) || !shouldAttemptReconnect(state)) {
+                return;
+            }
+
+            try {
+                await connectAndAuthorize(state, appId, true);
+                return;
+            } catch (error) {
+                wsLogger.error({ accountId: state.accountId, error }, 'Reconnect failed');
+            }
+        }
+    })();
+
+    state.reconnecting = true;
+    state.reconnectPromise = loop;
     try {
-        await connect(state, appId);
-        await authorize(state, true);
-    } catch (error) {
-        wsLogger.error({ accountId: state.accountId, error }, 'Reconnect failed');
+        await loop;
+    } finally {
+        state.reconnecting = false;
+        if (state.reconnectPromise === loop) {
+            state.reconnectPromise = null;
+        }
     }
 }
 
@@ -376,6 +524,12 @@ export async function sendMessage<T = unknown>(
 
     if (!state) {
         throw new Error(`No connection for account ${accountId}`);
+    }
+    if (state.lastAuthError && !state.authorized) {
+        throw new Error(`Authorization failed: ${state.lastAuthError}`);
+    }
+    if (state.closed === true || state.shouldReconnect === false) {
+        throw new Error('Connection closed');
     }
 
     const reqId = getReqId();
@@ -470,20 +624,19 @@ export function cleanupConnection(accountId: string): void {
     const state = connectionPool.get(accountId);
 
     if (state) {
-        // Reject all pending messages
-        for (const pending of state.pendingMessages.values()) {
-            pending.reject(new Error('Connection closed'));
-        }
-        state.pendingMessages.clear();
-        for (const queued of state.messageQueue) {
-            queued.reject(new Error('Connection closed'));
-        }
-        state.messageQueue = [];
-        metrics.gauge('ws.outbound_queue_depth', 0);
+        state.shouldReconnect = false;
+        state.closed = true;
+        state.reconnecting = false;
+        state.connecting = null;
+        state.reconnectPromise = null;
+
+        // Reject all pending/queued messages
+        rejectPendingMessages(state, new Error('Connection closed'));
+        rejectQueuedMessages(state, new Error('Connection closed'));
 
         if (state.ws) {
             state.ws.removeAllListeners();
-            if (state.ws.readyState === WebSocket.OPEN) {
+            if (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING) {
                 state.ws.close();
             }
         }
