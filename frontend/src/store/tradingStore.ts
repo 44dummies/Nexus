@@ -407,6 +407,33 @@ export const useTradingStore = create<TradingState>()(
         }),
         {
             name: 'derivnexus-store',
+            // Security: Exclude sensitive/ephemeral data from localStorage
+            partialize: (state) => ({
+                // Persist only non-sensitive configuration
+                selectedBotId: state.selectedBotId,
+                selectedSymbol: state.selectedSymbol,
+                botConfigs: state.botConfigs,
+                entryProfileId: state.entryProfileId,
+                entryMode: state.entryMode,
+                entryTimeoutMs: state.entryTimeoutMs,
+                entryPollingMs: state.entryPollingMs,
+                entrySlippagePct: state.entrySlippagePct,
+                entryAggressiveness: state.entryAggressiveness,
+                entryMinEdgePct: state.entryMinEdgePct,
+                baseStake: state.baseStake,
+                maxStake: state.maxStake,
+                stopLoss: state.stopLoss,
+                takeProfit: state.takeProfit,
+                cooldownMs: state.cooldownMs,
+                baseRiskPct: state.baseRiskPct,
+                dailyLossLimitPct: state.dailyLossLimitPct,
+                drawdownLimitPct: state.drawdownLimitPct,
+                maxConsecutiveLosses: state.maxConsecutiveLosses,
+                lossCooldownMs: state.lossCooldownMs,
+                // Excluded from persistence (sensitive/ephemeral):
+                // accounts, userEmail, balance, currency, isAuthorized, isConnected,
+                // tickHistory, botRunning, tradeResults, botLogs, equity, etc.
+            }),
         }
     )
 );

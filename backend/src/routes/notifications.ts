@@ -67,8 +67,9 @@ router.post('/', async (req, res) => {
     }
 
     const now = new Date().toISOString();
+    const MAX_BATCH_SIZE = 100; // SEC: API-04 - Prevent DoS via huge batch
     const ids = Array.isArray(req.body?.ids)
-        ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string')
+        ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string').slice(0, MAX_BATCH_SIZE)
         : [];
     const markAll = req.body?.all === true;
 

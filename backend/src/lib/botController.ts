@@ -89,6 +89,42 @@ const symbolActors = new Map<string, SymbolActor>();
 const botEvents = new EventEmitter();
 botEvents.setMaxListeners(200);
 
+/**
+ * Reconcile bot runs on server startup (SEC: BOT-01)
+ * Marks any "running" backend bots as stopped since they died with the process
+ */
+export async function reconcileBotRunsOnStartup(): Promise<void> {
+    if (!supabaseAdmin) {
+        botLogger.warn('Supabase not configured - skipping bot run reconciliation');
+        return;
+    }
+    
+    try {
+        const now = new Date().toISOString();
+        const { data, error } = await supabaseAdmin
+            .from('bot_runs')
+            .update({
+                run_status: 'stopped',
+                stopped_at: now,
+            })
+            .eq('backend_mode', true)
+            .eq('run_status', 'running')
+            .select('id');
+        
+        if (error) {
+            botLogger.error({ error }, 'Failed to reconcile stale bot runs');
+            return;
+        }
+        
+        const count = data?.length ?? 0;
+        if (count > 0) {
+            botLogger.info({ count, ids: data?.map(d => d.id) }, 'Reconciled stale backend bot runs from previous process');
+        }
+    } catch (err) {
+        botLogger.error({ error: err }, 'Error during bot run reconciliation');
+    }
+}
+
 export function subscribeToBotEvents(botRunId: string, callback: (event: any) => void): () => void {
     const handler = (payload: any) => {
         if (payload.botRunId === botRunId) {

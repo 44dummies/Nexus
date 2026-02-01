@@ -20,15 +20,15 @@ export function DashboardStats({ lastTick, prevTick, botRunning, netPnL, totalTr
                 <div className="flex items-center justify-between mb-2">
                     <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">R_100</span>
                     {tickDirection === 'up' ? (
-                        <TrendingUp className="w-4 h-4 text-emerald-400" />
+                        <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     ) : tickDirection === 'down' ? (
-                        <TrendingDown className="w-4 h-4 text-red-400" />
+                        <TrendingDown className="w-4 h-4 text-red-600 dark:text-red-400" />
                     ) : (
                         <Activity className="w-4 h-4 text-muted-foreground" />
                     )}
                 </div>
-                <div className={`text-2xl font-mono font-bold ${tickDirection === 'up' ? 'text-emerald-400' :
-                    tickDirection === 'down' ? 'text-red-400' : 'text-foreground'
+                <div className={`text-2xl font-mono font-bold ${tickDirection === 'up' ? 'text-emerald-600 dark:text-emerald-400' :
+                    tickDirection === 'down' ? 'text-red-600 dark:text-red-400' : 'text-foreground'
                     }`}>
                     {lastTick?.toFixed(2) || '-.--'}
                 </div>
@@ -39,7 +39,7 @@ export function DashboardStats({ lastTick, prevTick, botRunning, netPnL, totalTr
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Bot Status</p>
                 <div className="flex items-center gap-2">
                     <div className={`w-3 h-3 rounded-full ${botRunning ? 'bg-emerald-400 animate-pulse' : 'bg-gray-500'}`} />
-                    <span className={`text-lg font-semibold ${botRunning ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                    <span className={`text-lg font-semibold ${botRunning ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                         {botRunning ? 'Running' : 'Stopped'}
                     </span>
                 </div>
@@ -48,7 +48,7 @@ export function DashboardStats({ lastTick, prevTick, botRunning, netPnL, totalTr
             {/* Daily P&L */}
             <div className="glass-panel rounded-xl p-4">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Today&apos;s P&amp;L</p>
-                <div className={`text-2xl font-mono font-bold ${netPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                <div className={`text-2xl font-mono font-bold ${netPnL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                     {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)}
                 </div>
             </div>

@@ -17,6 +17,7 @@ import { startTradeBackfillJob } from './lib/tradeBackfill';
 import metricsRouter from './routes/metrics';
 import { initMetrics } from './lib/metrics';
 import { initRiskManager } from './lib/riskManager';
+import { reconcileBotRunsOnStartup } from './lib/botController';
 
 const app = express();
 initMetrics();

@@ -27,8 +27,8 @@ const typeLabels: Record<string, string> = {
 };
 
 const typeClasses: Record<string, string> = {
-    order_status: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
-    trade_result: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
+    order_status: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30',
+    trade_result: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
 };
 
 export default function NotificationsPage() {
@@ -156,8 +156,10 @@ export default function NotificationsPage() {
 
             <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="relative w-full max-w-md">
+                    <label htmlFor="notifications-search" className="sr-only">Search notifications</label>
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
+                        id="notifications-search"
                         placeholder="Search notifications..."
                         className="pl-10 bg-muted/50"
                         value={query}
@@ -233,7 +235,7 @@ export default function NotificationsPage() {
                                         <span>{formatTime(createdAt)}</span>
                                         <span>{formatDate(createdAt)}</span>
                                         {profit !== null && (
-                                            <span className={profit >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                                            <span className={profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
                                                 {profit >= 0 ? '+' : ''}{profit.toFixed(2)}
                                             </span>
                                         )}

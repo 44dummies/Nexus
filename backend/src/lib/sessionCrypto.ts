@@ -2,10 +2,27 @@ import crypto from 'crypto';
 
 const SESSION_ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_KEY;
 
+// Fail early in production if encryption key is missing (SEC: AUTH-06)
+if (!SESSION_ENCRYPTION_KEY && process.env.NODE_ENV === 'production') {
+    console.error('CRITICAL: SESSION_ENCRYPTION_KEY is required in production');
+    console.error('Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"');
+    process.exit(1);
+}
+
 function getKey() {
-    if (!SESSION_ENCRYPTION_KEY) return null;
+    if (!SESSION_ENCRYPTION_KEY) {
+        if (process.env.NODE_ENV === 'production') {
+            throw new Error('SESSION_ENCRYPTION_KEY required in production');
+        }
+        return null;
+    }
     const key = Buffer.from(SESSION_ENCRYPTION_KEY, 'base64');
-    if (key.length !== 32) return null;
+    if (key.length !== 32) {
+        if (process.env.NODE_ENV === 'production') {
+            throw new Error('SESSION_ENCRYPTION_KEY must be 32 bytes (256 bits)');
+        }
+        return null;
+    }
     return key;
 }
 

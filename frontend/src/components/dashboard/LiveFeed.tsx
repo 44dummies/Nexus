@@ -4,9 +4,10 @@ import React from 'react';
 import { useTradingStore } from '@/store/tradingStore';
 import { useBotStream } from '@/hooks/useBotStream';
 import { TrendingUp, TrendingDown, Activity, Trash2 } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 
 function LiveFeed() {
+    const shouldReduceMotion = useReducedMotion();
     const {
         tickHistory,
         lastTick,
@@ -35,9 +36,9 @@ function LiveFeed() {
     const getLogColor = (type: string) => {
         switch (type) {
             case 'signal': return 'text-accent';
-            case 'trade': return 'text-emerald-500';
-            case 'result': return 'text-amber-500';
-            case 'error': return 'text-red-500';
+            case 'trade': return 'text-emerald-600 dark:text-emerald-500';
+            case 'result': return 'text-amber-600 dark:text-amber-500';
+            case 'error': return 'text-red-600 dark:text-red-500';
             default: return 'text-muted-foreground';
         }
     };
@@ -58,16 +59,18 @@ function LiveFeed() {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                 <div className="flex items-center gap-3">
                     <h3 className="text-sm font-mono text-muted-foreground uppercase tracking-widest">Live Feed</h3>
-                    <span className={`px-2 py-0.5 rounded text-xs uppercase ${botRunning ? 'bg-emerald-500/20 text-emerald-500' : 'bg-muted text-muted-foreground'}`}>
+                    <span className={`px-2 py-0.5 rounded text-xs uppercase ${botRunning ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
                         {botRunning ? '● ACTIVE' : '○ IDLE'}
                     </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
-                    <div className={`text-base sm:text-lg font-mono font-bold ${netPnL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    <div className={`text-base sm:text-lg font-mono font-bold ${netPnL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                         {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)} USD
                     </div>
                     <button
                         onClick={clearLogs}
+                        type="button"
+                        aria-label="Clear activity logs"
                         className="p-2 hover:bg-muted/40 rounded-lg transition-colors"
                         title="Clear logs"
                     >
@@ -80,16 +83,17 @@ function LiveFeed() {
             <div className="flex items-center gap-6 mb-4 pb-4 border-b border-border">
                 <motion.div
                     key={lastTick}
-                    initial={{ scale: 1.05 }}
+                    initial={shouldReduceMotion ? false : { scale: 1.05 }}
                     animate={{ scale: 1 }}
-                    className={`text-3xl font-mono font-bold ${direction === 'up' ? 'text-emerald-400' :
-                        direction === 'down' ? 'text-red-500' : 'text-foreground'
+                    transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }}
+                    className={`text-3xl font-mono font-bold ${direction === 'up' ? 'text-emerald-600 dark:text-emerald-400' :
+                        direction === 'down' ? 'text-red-600 dark:text-red-400' : 'text-foreground'
                         }`}
                 >
                     {lastTick.toFixed(2)}
                 </motion.div>
-                <div className={`flex items-center gap-1 px-2 py-1 rounded text-sm ${direction === 'up' ? 'bg-emerald-500/20 text-emerald-500' :
-                    direction === 'down' ? 'bg-red-500/20 text-red-500' :
+                <div className={`flex items-center gap-1 px-2 py-1 rounded text-sm ${direction === 'up' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' :
+                    direction === 'down' ? 'bg-red-500/20 text-red-600 dark:text-red-400' :
                         'bg-muted text-muted-foreground'
                     }`}>
                     {direction === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
@@ -117,11 +121,11 @@ function LiveFeed() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b border-border">
                 <div>
                     <div className="text-xs text-muted-foreground mb-1">Today Profit</div>
-                    <div className="font-mono text-emerald-500">+{totalProfitToday.toFixed(2)}</div>
+                    <div className="font-mono text-emerald-600 dark:text-emerald-400">+{totalProfitToday.toFixed(2)}</div>
                 </div>
                 <div>
                     <div className="text-xs text-muted-foreground mb-1">Today Loss</div>
-                    <div className="font-mono text-red-500">-{totalLossToday.toFixed(2)}</div>
+                    <div className="font-mono text-red-600 dark:text-red-400">-{totalLossToday.toFixed(2)}</div>
                 </div>
                 <div>
                     <div className="text-xs text-muted-foreground mb-1">Ticks</div>
@@ -158,7 +162,7 @@ function LiveFeed() {
                                         #{trade.contractId ?? '—'}
                                     </span>
                                 </div>
-                                <span className={`${trade.profit >= 0 ? 'text-emerald-400' : 'text-red-400'} text-sm`}>
+                                <span className={`${trade.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'} text-sm`}>
                                     {trade.profit >= 0 ? '+' : ''}{trade.profit.toFixed(2)}
                                 </span>
                             </div>

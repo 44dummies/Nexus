@@ -1,7 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
 interface GlassCardProps {
@@ -10,11 +10,12 @@ interface GlassCardProps {
 }
 
 export function GlassCard({ children, className }: GlassCardProps) {
+    const shouldReduceMotion = useReducedMotion();
     return (
         <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{
+            transition={shouldReduceMotion ? { duration: 0 } : {
                 duration: 0.8,
                 ease: [0.16, 1, 0.3, 1]
             }}

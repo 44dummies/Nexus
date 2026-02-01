@@ -23,6 +23,56 @@ const DEFAULT_BATCH_SIZE = Number(process.env.BACKFILL_BATCH_SIZE) || 200;
 
 let isRunning = false;
 
+// Distributed lock using Supabase settings table (SEC: TRADE-08)
+const LOCK_KEY = 'backfill_lock';
+const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function acquireDistributedLock(supabase: any): Promise<boolean> {
+    const now = Date.now();
+    const lockValue = { holder: process.pid, acquiredAt: now, expiresAt: now + LOCK_TTL_MS };
+    
+    // Try to get existing lock
+    const { data: existing } = await supabase
+        .from('settings')
+        .select('value')
+        .eq('account_id', '__system__')
+        .eq('key', LOCK_KEY)
+        .maybeSingle();
+    
+    const existingLock = existing?.value as { expiresAt?: number } | null;
+    
+    // If lock exists and not expired, can't acquire
+    if (existingLock?.expiresAt && existingLock.expiresAt > now) {
+        logger.debug({ existingLock }, 'Backfill lock held by another process');
+        return false;
+    }
+    
+    // Try to upsert the lock
+    const { error } = await supabase
+        .from('settings')
+        .upsert({
+            account_id: '__system__',
+            key: LOCK_KEY,
+            value: lockValue,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'account_id,key' });
+    
+    if (error) {
+        logger.warn({ error }, 'Failed to acquire backfill lock');
+        return false;
+    }
+    
+    return true;
+}
+
+async function releaseDistributedLock(supabase: any): Promise<void> {
+    await supabase
+        .from('settings')
+        .delete()
+        .eq('account_id', '__system__')
+        .eq('key', LOCK_KEY);
+}
+
 const toNumber = (value: unknown) => {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string') {

@@ -12,9 +12,9 @@ interface BotCardProps {
 }
 
 const riskClasses: Record<BotProfile['risk'], string> = {
-    Low: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-    Medium: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-    High: 'bg-red-500/10 text-red-400 border-red-500/30',
+    Low: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
+    Medium: 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30',
+    High: 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/30',
 };
 
 const profileNameById = EXECUTION_PROFILES.reduce<Record<string, string>>((acc, profile) => {

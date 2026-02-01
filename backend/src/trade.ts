@@ -33,6 +33,30 @@ type ContractFinalizationState = {
 
 const contractFinalizations = new Map<string, ContractFinalizationState>();
 
+// Mutex locks for settlement to prevent race conditions (SEC: TRADE-01)
+const settlementLocks = new Map<string, Promise<void>>();
+
+async function withSettlementLock<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
+    // Wait for any existing lock
+    while (settlementLocks.has(key)) {
+        await settlementLocks.get(key);
+    }
+    
+    // Create our lock
+    let releaseLock: () => void;
+    const lock = new Promise<void>(resolve => {
+        releaseLock = resolve;
+    });
+    settlementLocks.set(key, lock);
+    
+    try {
+        return await fn();
+    } finally {
+        settlementLocks.delete(key);
+        releaseLock!();
+    }
+}
+
 function pruneContractFinalizations(now: number): void {
     for (const [contractKey, state] of contractFinalizations) {
         if (now - state.timestamp > SETTLED_CONTRACT_TTL_MS) {

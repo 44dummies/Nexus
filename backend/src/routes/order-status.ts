@@ -29,7 +29,12 @@ router.get('/', async (req, res) => {
         .limit(limit);
 
     if (contractId) {
-        query = query.eq('contract_id', Number(contractId));
+        const parsedContractId = Number(contractId);
+        // SEC: API-05 - Validate contractId is a valid positive integer
+        if (!Number.isFinite(parsedContractId) || parsedContractId <= 0 || !Number.isInteger(parsedContractId)) {
+            return res.status(400).json({ error: 'Invalid contractId - must be a positive integer' });
+        }
+        query = query.eq('contract_id', parsedContractId);
     }
 
     const { data, error: queryError } = await query;

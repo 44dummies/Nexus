@@ -208,7 +208,7 @@ function MarketVisualizer({ lastTick = 0, prevTick = 0 }: MarketVisualizerProps)
     const tickSpeed = Math.min(Math.abs(lastTick - prevTick) / 0.5, 1); // Assumes ~0.5 max change
 
     return (
-        <div className="fixed inset-0 -z-5 pointer-events-none">
+        <div className="fixed inset-0 -z-10 pointer-events-none">
             <Canvas
                 dpr={dpr}
                 gl={{ antialias: false, alpha: true, powerPreference: 'low-power' }}

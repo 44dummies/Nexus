@@ -47,6 +47,11 @@ export function getSupabaseAdmin(): SupabaseAdminResult {
             missing,
         };
     }
+    
+    // SEC: DATA-02 - Warn in production if using anon key for admin operations
+    if (keyType === 'anon' && process.env.NODE_ENV === 'production') {
+        console.warn('[SECURITY WARNING] Using anon key for admin operations. Set SUPABASE_SERVICE_ROLE_KEY for proper permissions.');
+    }
 
     if (cachedClient && cachedUrl === url && cachedKey === key) {
         return { client: cachedClient, keyType: cachedKeyType || keyType };
@@ -60,6 +65,44 @@ export function getSupabaseAdmin(): SupabaseAdminResult {
     });
 
     return { client: cachedClient, keyType };
+}
+
+/**
+ * Get Supabase admin client with explicit service key requirement (SEC: DATA-02)
+ * Use this for operations that MUST have service-level access
+ */
+export function getSupabaseServiceAdmin(): SupabaseAdminResult {
+    const { url, serviceKey } = resolveSupabaseConfig();
+    const missing: string[] = [];
+
+    if (!url) {
+        missing.push('SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL');
+    }
+    if (!serviceKey) {
+        missing.push('SUPABASE_SERVICE_ROLE_KEY');
+    }
+
+    if (!url || !serviceKey) {
+        return {
+            client: null,
+            keyType: null,
+            error: 'Supabase service role not configured - this operation requires SUPABASE_SERVICE_ROLE_KEY',
+            missing,
+        };
+    }
+
+    if (cachedClient && cachedUrl === url && cachedKey === serviceKey && cachedKeyType === 'service') {
+        return { client: cachedClient, keyType: 'service' };
+    }
+
+    cachedUrl = url;
+    cachedKey = serviceKey;
+    cachedKeyType = 'service';
+    cachedClient = createClient(url, serviceKey, {
+        auth: { persistSession: false },
+    });
+
+    return { client: cachedClient, keyType: 'service' };
 }
 
 export function getSupabaseClient(): SupabaseAdminResult {

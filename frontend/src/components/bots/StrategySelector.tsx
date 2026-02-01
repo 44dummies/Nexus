@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Zap, ChevronDown } from 'lucide-react';
 
 interface Strategy {
@@ -24,11 +24,39 @@ interface StrategySelectorProps {
 
 export function StrategySelector({ selectedStrategy, onSelectStrategy }: StrategySelectorProps) {
     const [showStrategies, setShowStrategies] = useState(false);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const firstItemRef = useRef<HTMLButtonElement | null>(null);
 
     const currentStrategy = strategies.find(s => s.id === selectedStrategy);
 
+    useEffect(() => {
+        if (!showStrategies) return;
+        const handleClick = (event: MouseEvent) => {
+            if (!containerRef.current?.contains(event.target as Node)) {
+                setShowStrategies(false);
+            }
+        };
+        const handleKey = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setShowStrategies(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClick);
+        document.addEventListener('keydown', handleKey);
+        return () => {
+            document.removeEventListener('mousedown', handleClick);
+            document.removeEventListener('keydown', handleKey);
+        };
+    }, [showStrategies]);
+
+    useEffect(() => {
+        if (showStrategies) {
+            firstItemRef.current?.focus();
+        }
+    }, [showStrategies]);
+
     return (
-        <div className="glass-panel rounded-2xl p-6">
+        <div ref={containerRef} className="glass-panel rounded-2xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Zap className="w-5 h-5 text-accent" />
                 Trading Strategy
@@ -36,8 +64,18 @@ export function StrategySelector({ selectedStrategy, onSelectStrategy }: Strateg
 
             <div className="relative">
                 <button
+                    type="button"
                     onClick={() => setShowStrategies(!showStrategies)}
+                    aria-haspopup="menu"
+                    aria-expanded={showStrategies}
+                    aria-controls="strategy-selector-menu"
                     className="w-full flex items-center justify-between p-4 rounded-xl bg-muted/50 border border-border hover:border-accent/50 transition-all"
+                    onKeyDown={(event) => {
+                        if (event.key === 'ArrowDown') {
+                            event.preventDefault();
+                            setShowStrategies(true);
+                        }
+                    }}
                 >
                     <div className="text-left">
                         <p className="font-medium">{currentStrategy?.name}</p>
@@ -47,14 +85,21 @@ export function StrategySelector({ selectedStrategy, onSelectStrategy }: Strateg
                 </button>
 
                 {showStrategies && (
-                    <div className="absolute top-full left-0 right-0 mt-2 bg-card border border-border rounded-xl shadow-xl z-10 overflow-hidden">
+                    <div
+                        id="strategy-selector-menu"
+                        role="menu"
+                        aria-label="Select strategy"
+                        className="absolute top-full left-0 right-0 mt-2 bg-card border border-border rounded-xl shadow-xl z-10 overflow-hidden"
+                    >
                         {strategies.map((strategy) => (
                             <button
                                 key={strategy.id}
+                                ref={strategy.id === strategies[0]?.id ? firstItemRef : undefined}
                                 onClick={() => {
                                     onSelectStrategy(strategy.id);
                                     setShowStrategies(false);
                                 }}
+                                role="menuitem"
                                 className={`w-full p-4 text-left hover:bg-muted/50 transition-colors ${selectedStrategy === strategy.id ? 'bg-accent/10' : ''}`}
                             >
                                 <div className="flex justify-between items-start">
@@ -62,9 +107,9 @@ export function StrategySelector({ selectedStrategy, onSelectStrategy }: Strateg
                                         <p className="font-medium">{strategy.name}</p>
                                         <p className="text-sm text-muted-foreground">{strategy.description}</p>
                                     </div>
-                                    <span className={`text-xs px-2 py-1 rounded ${strategy.risk === 'Low' ? 'bg-emerald-500/20 text-emerald-400' :
-                                        strategy.risk === 'Medium' ? 'bg-yellow-500/20 text-yellow-400' :
-                                            'bg-red-500/20 text-red-400'
+                                    <span className={`text-xs px-2 py-1 rounded ${strategy.risk === 'Low' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' :
+                                        strategy.risk === 'Medium' ? 'bg-yellow-500/20 text-yellow-600 dark:text-yellow-400' :
+                                            'bg-red-500/20 text-red-600 dark:text-red-400'
                                         }`}>
                                         {strategy.risk}
                                     </span>

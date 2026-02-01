@@ -88,8 +88,6 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
         }
     };
 
-    const labelClassName = isCollapsed ? 'hidden' : 'hidden lg:block';
-
     // Unified CSS for responsive behavior
     // Mobile: fixed drawer, transform based on isMobileOpen
     // Desktop (lg): sticky rail, width based on isCollapsed, reset transforms
@@ -103,7 +101,7 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
     `;
 
     return (
-        <aside className={sidebarClasses}>
+        <aside id="app-sidebar" className={sidebarClasses} aria-label="Primary">
             {/* Logo */}
             <div className="p-4 flex items-center justify-between border-b border-sidebar-border">
                 <div className="flex items-center gap-3">
@@ -127,13 +125,14 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                     type="button"
                     onClick={onMobileClose}
                     className="lg:hidden h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    aria-label="Close navigation menu"
                 >
                     <ChevronLeft className="w-6 h-6" />
                 </button>
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 p-3 space-y-2 overflow-y-auto">
+            <nav className="flex-1 p-3 space-y-2 overflow-y-auto" aria-label="Primary">
                 {navItems.map((item) => {
                     const isActive = pathname === item.href;
                     const Icon = item.icon;
@@ -144,6 +143,8 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                             href={item.href}
                             onClick={handleLinkClick}
                             title={item.label}
+                            aria-label={isCollapsed ? item.label : undefined}
+                            aria-current={isActive ? 'page' : undefined}
                             className={`
                                 flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200
                                 ${isCollapsed ? 'lg:justify-center lg:px-2' : 'lg:justify-start lg:px-3'}
@@ -187,6 +188,8 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                                 <button
                                     key={t.id}
                                     onClick={() => setTheme(t.id)}
+                                    aria-label={t.label}
+                                    aria-pressed={isActive}
                                     className={`
                                         flex items-center justify-center lg:justify-start gap-2 px-3 py-2 rounded-lg transition-all
                                         ${isCollapsed ? 'lg:justify-center lg:px-2' : 'lg:justify-start lg:px-3'}
@@ -210,7 +213,8 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
             <div className="p-3 border-t border-sidebar-border">
                 <button
                     onClick={handleLogout}
-                    className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-red-500/10 hover:text-red-400 transition-all ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'}`}
+                    aria-label="Log out"
+                    className={`w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-muted-foreground hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400 transition-all ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'}`}
                 >
                     <LogOut className="w-5 h-5" />
                     <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-sm`}>Logout</span>

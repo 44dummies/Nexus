@@ -99,8 +99,10 @@ export default function HistoryPage() {
 
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="relative w-full max-w-md">
+                    <label htmlFor="history-search" className="sr-only">Search trades</label>
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
+                        id="history-search"
                         placeholder="Search trades..."
                         className="pl-10 bg-muted/50"
                         value={query}
@@ -147,12 +149,12 @@ export default function HistoryPage() {
                                             </td>
                                             <td className="px-6 py-4">
                                                 {trade.profit >= 0 ? (
-                                                    <span className="flex items-center gap-1.5 text-emerald-400">
+                                                    <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
                                                         <TrendingUp className="w-4 h-4" />
                                                         WIN
                                                     </span>
                                                 ) : (
-                                                    <span className="flex items-center gap-1.5 text-red-400">
+                                                    <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
                                                         <TrendingDown className="w-4 h-4" />
                                                         LOSS
                                                     </span>
@@ -163,7 +165,7 @@ export default function HistoryPage() {
                                                 {trade.bot_id ? ` / ${trade.bot_id}` : ''}
                                             </td>
                                             <td className="px-6 py-4 text-right font-mono">
-                                                <span className={trade.profit >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                                                <span className={trade.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
                                                     {trade.profit >= 0 ? '+' : ''}{Number(trade.profit).toFixed(2)}
                                                 </span>
                                             </td>
@@ -187,7 +189,7 @@ export default function HistoryPage() {
                                                 <div className="text-xs text-muted-foreground">{formatDate(createdAt)}</div>
                                             </div>
                                             <div className="text-right font-mono text-sm">
-                                                <span className={trade.profit >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                                                <span className={trade.profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}>
                                                     {trade.profit >= 0 ? '+' : ''}{Number(trade.profit).toFixed(2)}
                                                 </span>
                                             </div>
@@ -208,12 +210,12 @@ export default function HistoryPage() {
                                         </div>
                                         <div className="mt-3">
                                             {trade.profit >= 0 ? (
-                                                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-wider text-emerald-400">
+                                                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2 py-1 text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
                                                     <TrendingUp className="w-3 h-3" />
                                                     Win
                                                 </span>
                                             ) : (
-                                                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/15 px-2 py-1 text-[10px] uppercase tracking-wider text-red-400">
+                                                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/15 px-2 py-1 text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400">
                                                     <TrendingDown className="w-3 h-3" />
                                                     Loss
                                                 </span>

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import { useTradingStore } from '@/store/tradingStore';
 import { apiFetch } from '@/lib/api';
 
@@ -32,6 +32,7 @@ function getColorForPnL(pnl: number): string {
 
 function PerformanceHeatmap() {
     const { isAuthorized, activeAccountId } = useTradingStore();
+    const shouldReduceMotion = useReducedMotion();
     const [hoveredDay, setHoveredDay] = useState<DayData | null>(null);
     const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
     const [data, setData] = useState<DayData[]>([]);
@@ -107,6 +108,21 @@ function PerformanceHeatmap() {
         });
     }, []);
 
+    const formatDayLabel = useCallback((day: DayData) => {
+        if (!day.date) return 'No data';
+        const dateLabel = new Date(day.date).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+        });
+        const tradeLabel = `${day.trades} trade${day.trades === 1 ? '' : 's'}`;
+        const pnlLabel = day.pnl === 0
+            ? 'P&L flat'
+            : `P&L ${day.pnl >= 0 ? '+' : ''}${day.pnl.toFixed(2)}`;
+        const strategyLabel = day.strategy ? `Strategy ${day.strategy}.` : '';
+        return `${dateLabel}. ${tradeLabel}. ${pnlLabel}. ${strategyLabel}`.trim();
+    }, []);
+
     useEffect(() => {
         return () => {
             if (rafRef.current) {
@@ -155,7 +171,7 @@ function PerformanceHeatmap() {
                     <p className="text-xs text-muted-foreground mt-1">Last 90 days</p>
                 </div>
                 <div className="text-right">
-                    <div className={`text-2xl font-mono ${totalPnL >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    <div className={`text-2xl font-mono ${totalPnL >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-600 dark:text-red-500'}`}>
                         {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}
                     </div>
                     <div className="text-xs text-muted-foreground">{totalTrades} trades</div>
@@ -166,26 +182,42 @@ function PerformanceHeatmap() {
             <div className="flex gap-1 overflow-x-auto pb-2">
                 {weeks.map((week, wi) => (
                     <div key={wi} className="flex flex-col gap-1">
-                        {week.map((day, di) => (
-                            <motion.div
-                                key={`${wi}-${di}`}
-                                className="w-3 h-3 rounded-sm cursor-pointer"
-                                style={{ backgroundColor: day.date ? getColorForPnL(day.pnl) : 'transparent' }}
-                                whileHover={{ scale: 1.5 }}
-                                onMouseEnter={(e) => {
-                                    if (day.date) {
+                        {week.map((day, di) => {
+                            if (!day.date) {
+                                return (
+                                    <span
+                                        key={`${wi}-${di}`}
+                                        className="w-3 h-3 rounded-sm"
+                                        aria-hidden="true"
+                                    />
+                                );
+                            }
+
+                            return (
+                                <motion.button
+                                    key={`${wi}-${di}`}
+                                    type="button"
+                                    aria-label={formatDayLabel(day)}
+                                    className="w-3 h-3 rounded-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                                    style={{ backgroundColor: getColorForPnL(day.pnl) }}
+                                    whileHover={shouldReduceMotion ? undefined : { scale: 1.5 }}
+                                    onMouseEnter={(e) => {
                                         setHoveredDay(day);
                                         scheduleTooltipUpdate(e.clientX, e.clientY - 60);
-                                    }
-                                }}
-                                onMouseMove={(e) => {
-                                    if (day.date) {
+                                    }}
+                                    onMouseMove={(e) => {
                                         scheduleTooltipUpdate(e.clientX, e.clientY - 60);
-                                    }
-                                }}
-                                onMouseLeave={() => setHoveredDay(null)}
-                            />
-                        ))}
+                                    }}
+                                    onMouseLeave={() => setHoveredDay(null)}
+                                    onFocus={(e) => {
+                                        setHoveredDay(day);
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        scheduleTooltipUpdate(rect.left + rect.width / 2, rect.top - 8);
+                                    }}
+                                    onBlur={() => setHoveredDay(null)}
+                                />
+                            );
+                        })}
                     </div>
                 ))}
             </div>
@@ -208,9 +240,15 @@ function PerformanceHeatmap() {
                     <span>More</span>
                 </div>
                 <div className="flex gap-4">
-                    <span><span className="text-emerald-500">{winDays}</span> wins</span>
-                    <span><span className="text-red-500">{lossDays}</span> losses</span>
+                    <span><span className="text-emerald-600 dark:text-emerald-500">{winDays}</span> wins</span>
+                    <span><span className="text-red-600 dark:text-red-500">{lossDays}</span> losses</span>
                 </div>
+            </div>
+
+            <div className="mt-3 text-xs text-muted-foreground" role="status" aria-live="polite">
+                {hoveredDay
+                    ? formatDayLabel(hoveredDay)
+                    : 'Focus a day to see performance details.'}
             </div>
 
             {/* Tooltip */}
@@ -218,11 +256,12 @@ function PerformanceHeatmap() {
                 <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
+                    transition={shouldReduceMotion ? { duration: 0 } : undefined}
                     className="fixed glass-panel px-3 py-2 rounded-lg text-sm pointer-events-none z-50"
                     style={{ left: tooltipPos.x, top: tooltipPos.y }}
                 >
                     <div className="font-mono text-foreground">{hoveredDay.date}</div>
-                    <div className={`font-bold ${hoveredDay.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                    <div className={`font-bold ${hoveredDay.pnl >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-red-600 dark:text-red-500'}`}>
                         {hoveredDay.pnl >= 0 ? '+' : ''}{hoveredDay.pnl.toFixed(2)}
                     </div>
                     {hoveredDay.strategy && (

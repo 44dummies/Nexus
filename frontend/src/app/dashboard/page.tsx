@@ -207,7 +207,7 @@ function DashboardContent() {
                                     <span className="rounded-full border border-border/60 bg-muted/30 px-3 py-1">
                                         {totalTrades} trades
                                     </span>
-                                    <span className={`rounded-full border px-3 py-1 ${netPnL >= 0 ? 'border-emerald-400/40 text-emerald-300' : 'border-red-400/40 text-red-300'}`}>
+                                    <span className={`rounded-full border px-3 py-1 ${netPnL >= 0 ? 'border-emerald-400/40 text-emerald-600 dark:text-emerald-300' : 'border-red-400/40 text-red-600 dark:text-red-300'}`}>
                                         {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)} P&amp;L
                                     </span>
                                 </div>
@@ -227,21 +227,21 @@ function DashboardContent() {
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
                                     <p className="text-xs text-muted-foreground uppercase tracking-widest">Wins</p>
-                                    <p className="mt-2 text-xl font-mono text-emerald-400">{wins}</p>
+                                    <p className="mt-2 text-xl font-mono text-emerald-600 dark:text-emerald-400">{wins}</p>
                                 </div>
                                 <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
                                     <p className="text-xs text-muted-foreground uppercase tracking-widest">Losses</p>
-                                    <p className="mt-2 text-xl font-mono text-red-400">{losses}</p>
+                                    <p className="mt-2 text-xl font-mono text-red-600 dark:text-red-400">{losses}</p>
                                 </div>
                                 <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
                                     <p className="text-xs text-muted-foreground uppercase tracking-widest">Net P&amp;L</p>
-                                    <p className={`mt-2 text-xl font-mono ${netPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    <p className={`mt-2 text-xl font-mono ${netPnL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                                         {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)}
                                     </p>
                                 </div>
                                 <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
                                     <p className="text-xs text-muted-foreground uppercase tracking-widest">Bot Status</p>
-                                    <p className={`mt-2 text-lg font-mono ${botRunning ? 'text-emerald-300' : 'text-muted-foreground'}`}>
+                                    <p className={`mt-2 text-lg font-mono ${botRunning ? 'text-emerald-600 dark:text-emerald-300' : 'text-muted-foreground'}`}>
                                         {botRunning ? 'RUNNING' : 'IDLE'}
                                     </p>
                                 </div>

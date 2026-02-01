@@ -203,7 +203,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
                     {/* Mobile Menu Trigger */}
                     <div className="lg:hidden fixed top-4 left-4 z-40">
                         <button
+                            type="button"
                             onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+                            aria-label={isMobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+                            aria-controls="app-sidebar"
+                            aria-expanded={isMobileSidebarOpen}
                             className="p-2 rounded-lg bg-background/80 backdrop-blur border border-border/50 shadow-sm hover:bg-accent/10 transition-colors"
                         >
                             <svg

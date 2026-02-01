@@ -74,10 +74,21 @@ export async function middleware(request: NextRequest) {
         const response = NextResponse.next();
         response.headers.set('X-RateLimit-Limit', LIMIT.toString());
         response.headers.set('X-RateLimit-Remaining', Math.max(0, LIMIT - (count || 0)).toString());
+        // Security: Add CSP header
+        response.headers.set(
+            'Content-Security-Policy',
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://*.deriv.com wss://*.binaryws.com https://*.deriv.com; frame-ancestors 'self';"
+        );
         return response;
     }
 
-    return NextResponse.next();
+    const response = NextResponse.next();
+    // Security: Add CSP header for non-API routes too
+    response.headers.set(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://*.deriv.com wss://*.binaryws.com https://*.deriv.com; frame-ancestors 'self';"
+    );
+    return response;
 }
 
 export const config = {

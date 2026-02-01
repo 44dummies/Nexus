@@ -1,39 +1,39 @@
 'use client';
 
 import { useState } from 'react';
-import { motion, Variants } from 'framer-motion';
+import { motion, Variants, useReducedMotion } from 'framer-motion';
 import { ArrowRight, ShieldCheck, Activity } from 'lucide-react';
 import { Scene3D } from '@/components/three/Scene3D';
 import { apiFetch } from '@/lib/api';
 import { LogoMark } from '@/components/brand/LogoMark';
 import { toast } from 'sonner';
 
-// Animation Variants
-const containerVariants: Variants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1,
-      delayChildren: 0.3,
-    },
-  },
-};
-
-const itemVariants: Variants = {
-  hidden: { y: 20, opacity: 0 },
-  visible: {
-    y: 0,
-    opacity: 1,
-    transition: {
-      duration: 0.5,
-      ease: 'easeOut',
-    },
-  },
-};
-
 export default function LoginPage() {
+  const shouldReduceMotion = useReducedMotion();
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const containerVariants: Variants = {
+    hidden: { opacity: shouldReduceMotion ? 1 : 0 },
+    visible: {
+      opacity: 1,
+      transition: {
+        staggerChildren: shouldReduceMotion ? 0 : 0.1,
+        delayChildren: shouldReduceMotion ? 0 : 0.3,
+      },
+    },
+  };
+
+  const itemVariants: Variants = {
+    hidden: { y: shouldReduceMotion ? 0 : 20, opacity: shouldReduceMotion ? 1 : 0 },
+    visible: {
+      y: 0,
+      opacity: 1,
+      transition: {
+        duration: shouldReduceMotion ? 0 : 0.5,
+        ease: 'easeOut',
+      },
+    },
+  };
 
   const handleLogin = async () => {
     if (isSubmitting) return;
@@ -79,7 +79,7 @@ export default function LoginPage() {
         <motion.div variants={itemVariants} className="space-y-4">
           <motion.div
             className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-card/80 border border-border/60 backdrop-blur-md mb-6 shadow-soft-lg"
-            whileHover={{ scale: 1.05 }}
+            whileHover={shouldReduceMotion ? undefined : { scale: 1.05 }}
           >
             <LogoMark size={36} priority />
           </motion.div>
@@ -120,7 +120,7 @@ export default function LoginPage() {
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
-        transition={{ delay: 1, duration: 1 }}
+        transition={shouldReduceMotion ? { duration: 0 } : { delay: 1, duration: 1 }}
         className="absolute bottom-8 text-xs text-muted-foreground tracking-wider"
       >
         POWERED BY DERIV API

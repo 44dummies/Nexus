@@ -21,7 +21,45 @@ export interface DerivAuthorizeResponse {
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const AUTH_CACHE_TTL_MS = 30_000;
-const authCache = new Map<string, { data: DerivAuthorizeResponse['authorize']; expiresAt: number }>();
+const AUTH_CACHE_MAX_SIZE = 10_000;
+
+// LRU-style cache with max size to prevent memory exhaustion (SEC: AUTH-02)
+class LRUAuthCache {
+    private cache = new Map<string, { data: DerivAuthorizeResponse['authorize']; expiresAt: number }>();
+    private readonly maxSize: number;
+    
+    constructor(maxSize: number) {
+        this.maxSize = maxSize;
+    }
+    
+    get(key: string) {
+        const entry = this.cache.get(key);
+        if (!entry) return undefined;
+        // Move to end for LRU ordering
+        this.cache.delete(key);
+        this.cache.set(key, entry);
+        return entry;
+    }
+    
+    set(key: string, value: { data: DerivAuthorizeResponse['authorize']; expiresAt: number }) {
+        // Delete first to update LRU order
+        this.cache.delete(key);
+        
+        // Evict oldest entries if at capacity
+        while (this.cache.size >= this.maxSize) {
+            const oldestKey = this.cache.keys().next().value;
+            if (oldestKey) this.cache.delete(oldestKey);
+        }
+        
+        this.cache.set(key, value);
+    }
+    
+    get size() {
+        return this.cache.size;
+    }
+}
+
+const authCache = new LRUAuthCache(AUTH_CACHE_MAX_SIZE);
 
 function authorizeToken(token: string) {
     return new Promise<DerivAuthorizeResponse['authorize']>((resolve, reject) => {

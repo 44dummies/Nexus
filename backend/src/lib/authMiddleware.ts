@@ -86,32 +86,34 @@ export function createAuthMiddleware(
             return;
         }
 
-        for (const candidate of candidates) {
-            try {
-                const authorize = await authorizeFn(candidate.token);
-                const accountId = authorize?.loginid;
-                if (!accountId) {
-                    authLogger.warn({ requestId: req.requestId }, 'Authorization missing loginid');
-                    continue;
-                }
-
-                const accountType = resolveAccountType(authorize ?? null, candidate.hintedType);
-                const currency = resolveCurrency(authorize ?? null, candidate.currencyHint ?? null);
-
-                req.auth = {
-                    accountId,
-                    accountType,
-                    token: candidate.token,
-                    currency,
-                    email: authorize?.email ?? null,
-                };
-                return next();
-            } catch (error) {
-                authLogger.warn({ error, requestId: req.requestId }, 'Authorization failed for token');
+        // SEC: AUTH-03 - Only use the first (active) token, fail fast instead of cascade
+        // This prevents silent account switches when the active token fails
+        const candidate = candidates[0];
+        
+        try {
+            const authorize = await authorizeFn(candidate.token);
+            const accountId = authorize?.loginid;
+            if (!accountId) {
+                authLogger.warn({ requestId: req.requestId }, 'Authorization missing loginid');
+                res.status(401).json({ error: 'User not authenticated' });
+                return;
             }
-        }
 
-        res.status(401).json({ error: 'User not authenticated' });
+            const accountType = resolveAccountType(authorize ?? null, candidate.hintedType);
+            const currency = resolveCurrency(authorize ?? null, candidate.currencyHint ?? null);
+
+            req.auth = {
+                accountId,
+                accountType,
+                token: candidate.token,
+                currency,
+                email: authorize?.email ?? null,
+            };
+            return next();
+        } catch (error) {
+            authLogger.warn({ error, requestId: req.requestId }, 'Authorization failed for active token');
+            res.status(401).json({ error: 'User not authenticated' });
+        }
     };
 }
 
