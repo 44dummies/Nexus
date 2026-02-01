@@ -36,7 +36,9 @@ export interface RiskContext {
 }
 
 export function evaluateRisk(context: RiskContext): RiskEvaluation {
-    const cooldownMs = context.cooldownMs ?? 10_000; // 10 seconds - reduced from 60s for faster signal response
+    const LOW_LATENCY_MODE = process.env.NEXT_PUBLIC_LOW_LATENCY_MODE === 'true';
+    const defaultCooldownMs = LOW_LATENCY_MODE ? 0 : 10_000; // 10 seconds - reduced from 60s for faster signal response
+    const cooldownMs = context.cooldownMs ?? defaultCooldownMs;
 
     if (context.stopLoss > 0 && context.totalLossToday >= context.stopLoss) {
         return { status: 'HALT', reason: 'STOP_LOSS' };

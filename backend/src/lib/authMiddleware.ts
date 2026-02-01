@@ -111,7 +111,13 @@ export function createAuthMiddleware(
             };
             return next();
         } catch (error) {
-            authLogger.warn({ error, requestId: req.requestId }, 'Authorization failed for active token');
+            const err = error as Error & { code?: string };
+            if (err.code === 'Timeout' || err.code === 'NetworkError') {
+                authLogger.warn({ error: err, requestId: req.requestId }, 'Authorization timed out');
+                res.status(503).json({ error: 'Authorization service unavailable', code: err.code || 'TransientError', transient: true });
+                return;
+            }
+            authLogger.warn({ error: err, requestId: req.requestId }, 'Authorization failed for active token');
             res.status(401).json({ error: 'User not authenticated' });
         }
     };

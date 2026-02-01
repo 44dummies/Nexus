@@ -4,6 +4,7 @@ import { nowMs } from './latencyTracker';
 import { recordCancel } from './riskManager';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
+const LOW_LATENCY_MODE = (process.env.LOW_LATENCY_MODE || 'false') === 'true';
 
 interface TokenBucketConfig {
     ratePerSec: number;
@@ -65,13 +66,13 @@ interface AccountThrottle {
     buyLimiter: TokenBucket;
 }
 
-const PROPOSAL_RATE = Math.max(1, Number(process.env.DERIV_PROPOSALS_PER_SEC) || 5);
-const BUY_RATE = Math.max(1, Number(process.env.DERIV_BUYS_PER_SEC) || 2);
-const PROPOSAL_BURST = Math.max(1, Number(process.env.DERIV_PROPOSAL_BURST) || 5);
-const BUY_BURST = Math.max(1, Number(process.env.DERIV_BUY_BURST) || 2);
-const THROTTLE_MAX_WAIT_MS = Math.max(0, Number(process.env.DERIV_THROTTLE_MAX_WAIT_MS) || 200);
-const REQUOTE_MAX_ATTEMPTS = Math.max(0, Number(process.env.DERIV_REQUOTE_MAX_ATTEMPTS) || 2);
-const REQUOTE_DELAY_MS = Math.max(0, Number(process.env.DERIV_REQUOTE_DELAY_MS) || 50);
+const PROPOSAL_RATE = Math.max(1, Number(process.env.DERIV_PROPOSALS_PER_SEC) || (LOW_LATENCY_MODE ? 20 : 5));
+const BUY_RATE = Math.max(1, Number(process.env.DERIV_BUYS_PER_SEC) || (LOW_LATENCY_MODE ? 10 : 2));
+const PROPOSAL_BURST = Math.max(1, Number(process.env.DERIV_PROPOSAL_BURST) || (LOW_LATENCY_MODE ? 20 : 5));
+const BUY_BURST = Math.max(1, Number(process.env.DERIV_BUY_BURST) || (LOW_LATENCY_MODE ? 10 : 2));
+const THROTTLE_MAX_WAIT_MS = Math.max(0, Number(process.env.DERIV_THROTTLE_MAX_WAIT_MS) || (LOW_LATENCY_MODE ? 0 : 200));
+const REQUOTE_MAX_ATTEMPTS = Math.max(0, Number(process.env.DERIV_REQUOTE_MAX_ATTEMPTS) || (LOW_LATENCY_MODE ? 0 : 2));
+const REQUOTE_DELAY_MS = Math.max(0, Number(process.env.DERIV_REQUOTE_DELAY_MS) || (LOW_LATENCY_MODE ? 0 : 50));
 
 const throttles = new Map<string, AccountThrottle>();
 

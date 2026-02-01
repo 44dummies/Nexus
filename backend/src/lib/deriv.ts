@@ -20,6 +20,8 @@ export interface DerivAuthorizeResponse {
 }
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
+const WS_URL = (process.env.DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3').replace(/\/$/, '');
+const AUTH_TIMEOUT_MS = Math.max(1000, Number(process.env.DERIV_AUTH_TIMEOUT_MS) || 8000);
 const AUTH_CACHE_TTL_MS = 30_000;
 const AUTH_CACHE_MAX_SIZE = 10_000;
 
@@ -63,13 +65,13 @@ const authCache = new LRUAuthCache(AUTH_CACHE_MAX_SIZE);
 
 function authorizeToken(token: string) {
     return new Promise<DerivAuthorizeResponse['authorize']>((resolve, reject) => {
-        const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
+        const ws = new WebSocket(`${WS_URL}?app_id=${APP_ID}`);
         const timeout = setTimeout(() => {
             ws.close();
             const err = new Error('Authorization timed out');
             (err as any).code = 'Timeout';
             reject(err);
-        }, 8000);
+        }, AUTH_TIMEOUT_MS);
 
         ws.on('open', () => {
             ws.send(JSON.stringify({ authorize: token, req_id: 1 }));

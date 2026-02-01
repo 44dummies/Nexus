@@ -29,11 +29,14 @@ export interface BotConfig {
     recoveryMaxSteps?: number;
 }
 
+const LOW_LATENCY_MODE = process.env.NEXT_PUBLIC_LOW_LATENCY_MODE === 'true';
+const fastCooldown = (ms: number) => (LOW_LATENCY_MODE ? 0 : ms);
+
 export const DEFAULT_BOT_CONFIGS: Record<string, BotConfig> = {
     rsi: {
         duration: 5,
         durationUnit: 't',
-        cooldownMs: 3_000, // 3s for fast volatility trading
+        cooldownMs: fastCooldown(3_000), // 3s for fast volatility trading
         rsiPeriod: 14,
         rsiLower: 32, // Widened from 28 for more signals
         rsiUpper: 68, // Widened from 72 for more signals
@@ -41,7 +44,7 @@ export const DEFAULT_BOT_CONFIGS: Record<string, BotConfig> = {
     'trend-rider': {
         duration: 5,
         durationUnit: 't',
-        cooldownMs: 4_000, // 4s cooldown
+        cooldownMs: fastCooldown(4_000), // 4s cooldown
         emaFast: 9,
         emaSlow: 21, // Reduced from 26 for faster trend detection
         trendStrengthMultiplier: 0.4, // Reduced from 0.6 for more signals
@@ -52,7 +55,7 @@ export const DEFAULT_BOT_CONFIGS: Record<string, BotConfig> = {
     'breakout-atr': {
         duration: 4,
         durationUnit: 't',
-        cooldownMs: 3_000, // 3s cooldown
+        cooldownMs: fastCooldown(3_000), // 3s cooldown
         atrFast: 10, // Reduced from 14 for faster detection
         atrSlow: 30, // Reduced from 42
         breakoutLookback: 15, // Reduced from 20
@@ -62,7 +65,7 @@ export const DEFAULT_BOT_CONFIGS: Record<string, BotConfig> = {
     'capital-guard': {
         duration: 6,
         durationUnit: 't',
-        cooldownMs: 5_000, // Reduced from 12s
+        cooldownMs: fastCooldown(5_000), // Reduced from 12s
         atrFast: 10, // Faster detection
         atrSlow: 40, // Reduced from 55
         smaPeriod: 20, // Reduced from 30
@@ -75,7 +78,7 @@ export const DEFAULT_BOT_CONFIGS: Record<string, BotConfig> = {
     'recovery-lite': {
         duration: 5,
         durationUnit: 't',
-        cooldownMs: 4_000, // Reduced from 12s
+        cooldownMs: fastCooldown(4_000), // Reduced from 12s
         rsiPeriod: 14,
         recoveryRsiLower: 32, // Widened from 30
         recoveryRsiUpper: 68, // Widened from 70

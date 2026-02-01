@@ -16,6 +16,8 @@ interface AppLayoutProps {
 const RAW_APP_ID = (process.env.NEXT_PUBLIC_DERIV_APP_ID || '').trim();
 const APP_ID = Number.isFinite(Number(RAW_APP_ID)) && RAW_APP_ID ? RAW_APP_ID : '1089';
 const DEFAULT_SYMBOL = 'R_100';
+const RAW_WS_URL = (process.env.NEXT_PUBLIC_DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3').trim();
+const WS_URL = RAW_WS_URL.replace(/\/$/, '');
 
 export default function AppLayout({ children }: AppLayoutProps) {
     const pathname = usePathname();
@@ -43,6 +45,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const reconnectAttemptsRef = useRef(0);
     const sessionRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const sessionRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Sliding session: Refresh cookie every 5 minutes to keep session alive while app is open
     // Only run on authenticated routes (not on login page)
@@ -90,7 +93,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
         if (wsRef.current) wsRef.current.close();
 
         isConnectingRef.current = true;
-        const ws = new WebSocket(`wss://ws.binaryws.com/websockets/v3?app_id=${APP_ID}`);
+        const ws = new WebSocket(`${WS_URL}?app_id=${APP_ID}`);
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -164,9 +167,30 @@ export default function AppLayout({ children }: AppLayoutProps) {
                     return;
                 }
 
+                if (res.status >= 500) {
+                    console.error('Session init transient error with status:', res.status);
+                    if (isMounted && !sessionRetryRef.current) {
+                        sessionRetryRef.current = setTimeout(() => {
+                            sessionRetryRef.current = null;
+                            initSession();
+                        }, 5000);
+                    }
+                    return;
+                }
+
                 const data = await res.json();
 
                 if (!isMounted) return;
+
+                if (data?.transient) {
+                    if (!sessionRetryRef.current) {
+                        sessionRetryRef.current = setTimeout(() => {
+                            sessionRetryRef.current = null;
+                            initSession();
+                        }, 5000);
+                    }
+                    return;
+                }
 
                 if (!data.authenticated) {
                     router.push('/');
@@ -191,9 +215,11 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 connectWebSocket();
             } catch (err) {
                 console.error('Session init failed:', err);
-                // On network error, redirect to login
-                if (isMounted) {
-                    router.push('/');
+                if (isMounted && !sessionRetryRef.current) {
+                    sessionRetryRef.current = setTimeout(() => {
+                        sessionRetryRef.current = null;
+                        initSession();
+                    }, 5000);
                 }
             }
         };
@@ -205,6 +231,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
             if (reconnectTimerRef.current) {
                 clearTimeout(reconnectTimerRef.current);
                 reconnectTimerRef.current = null;
+            }
+            if (sessionRetryRef.current) {
+                clearTimeout(sessionRetryRef.current);
+                sessionRetryRef.current = null;
             }
             if (wsRef.current) {
                 wsRef.current.close();

@@ -304,14 +304,7 @@ router.get('/session', async (req, res) => {
         // The user might be valid, just the upstream is flaky.
         if (code === 'Timeout' || code === 'NetworkError') {
             console.warn('Auth session check timed out or failed network check', { code, error: err.message });
-            // Return 401 so the frontend knows we couldn't verify, but keep cookies.
-            // Or return 503 if we want to signal service unavailable. 
-            // Stick to 401 with a special flag if needed, or just 401. 
-            // Frontend likely redirects on 401. 
-            // If we return 401, the frontend might redirect to login. 
-            // If we want to prevent redirect, we might need a different status or the frontend needs to handle it.
-            // However, the goal is "don't clear cookies".
-            return res.status(401).json({ authenticated: false, error: err.message, code: code || 'TransientError' });
+            return res.status(503).json({ authenticated: false, error: err.message, code: code || 'TransientError', transient: true });
         }
 
         // Default behavior for unknown errors: assume auth failed but maybe be conservative?

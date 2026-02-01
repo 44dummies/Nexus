@@ -107,6 +107,8 @@ interface TradingState {
 const MAX_TICK_HISTORY = 100;
 const MAX_LOGS = 50;
 const MAX_TRADE_RESULTS = 1000;
+const LOW_LATENCY_MODE = process.env.NEXT_PUBLIC_LOW_LATENCY_MODE === 'true';
+const DEFAULT_COOLDOWN_MS = LOW_LATENCY_MODE ? 0 : 10000;
 
 export const useTradingStore = create<TradingState>()(
     persist(
@@ -138,7 +140,7 @@ export const useTradingStore = create<TradingState>()(
             maxStake: 2,
             stopLoss: 50,
             takeProfit: 50,
-            cooldownMs: 10000,
+            cooldownMs: DEFAULT_COOLDOWN_MS,
             baseRiskPct: 0.35,
             dailyLossLimitPct: 2,
             drawdownLimitPct: 6,
@@ -382,7 +384,7 @@ export const useTradingStore = create<TradingState>()(
                 maxStake: 2,
                 stopLoss: 50,
                 takeProfit: 50,
-                cooldownMs: 10000,
+                cooldownMs: DEFAULT_COOLDOWN_MS,
                 baseRiskPct: 0.35,
                 dailyLossLimitPct: 2,
                 drawdownLimitPct: 6,
