@@ -22,6 +22,12 @@ const WS_RECONNECT_BASE_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_BASE_MS
 const WS_RECONNECT_MAX_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_MAX_MS || 30000);
 const WS_RECONNECT_JITTER_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_JITTER_MS || 500);
 
+type WsResponse = {
+    msg_type?: string;
+    error?: { message?: string; code?: string } | string;
+    tick?: { quote?: number; epoch?: number };
+};
+
 export default function AppLayout({ children }: AppLayoutProps) {
     const pathname = usePathname();
     const router = useRouter();
@@ -31,12 +37,6 @@ export default function AppLayout({ children }: AppLayoutProps) {
         setUser,
         setConnectionStatus,
         setActiveAccount,
-        entryMode,
-        entryTimeoutMs,
-        entryPollingMs,
-        entrySlippagePct,
-        entryAggressiveness,
-        entryMinEdgePct,
         maxStake,
         cooldownMs,
         isAuthorized,
@@ -49,6 +49,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const reconnectAttemptsRef = useRef(0);
     const sessionRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const sessionRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const connectWebSocketRef = useRef<() => void>(() => {});
 
     // Sliding session: Refresh cookie every 5 minutes to keep session alive while app is open
     // Only run on authenticated routes (not on login page)
@@ -65,7 +66,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 if (!res.ok && res.status !== 401) {
                     console.error('Session refresh failed with status:', res.status);
                 }
-            } catch (err) {
+            } catch {
                 // Silently ignore network errors for session refresh
             }
         };
@@ -127,7 +128,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
                 const delay = Math.min(baseDelay + jitter, WS_RECONNECT_MAX_MS);
                 reconnectAttemptsRef.current = Math.min(attempt + 1, 10);
                 reconnectTimerRef.current = setTimeout(() => {
-                    connectWebSocket();
+                    connectWebSocketRef.current();
                 }, delay);
             }
         };
@@ -139,9 +140,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
         };
 
         ws.onmessage = (msg) => {
-            let response: any;
+            let response: WsResponse;
             try {
-                response = JSON.parse(msg.data);
+                response = JSON.parse(msg.data) as WsResponse;
             } catch (error) {
                 console.error('WebSocket message parse error', error);
                 return;
@@ -159,6 +160,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
             }
         };
     }, [addTick, setConnectionStatus, pathname]);
+
+    useEffect(() => {
+        connectWebSocketRef.current = connectWebSocket;
+    }, [connectWebSocket]);
 
     useEffect(() => {
         if (pathname === '/') {

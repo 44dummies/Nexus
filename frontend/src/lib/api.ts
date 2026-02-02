@@ -95,8 +95,9 @@ export async function apiFetch(
             }
 
             return res;
-        } catch (error: any) {
-            const isAbort = error?.name === 'AbortError';
+        } catch (error: unknown) {
+            const err = error as { name?: string };
+            const isAbort = err?.name === 'AbortError';
             const canRetry = attempt < maxRetries && isIdempotent(init.method);
             if (!canRetry) {
                 throw error;

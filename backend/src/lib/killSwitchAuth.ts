@@ -4,18 +4,10 @@ import { record as recordObstacle } from './obstacleLog';
 
 // Timing-safe string comparison to prevent timing attacks (SEC: AUTH-07)
 function timingSafeEqual(a: string, b: string): boolean {
-    const bufA = Buffer.from(a);
-    const bufB = Buffer.from(b);
-    if (bufA.length !== bufB.length) {
-        // Compare against a dummy of same length to maintain constant time
-        const dummyLen = Math.max(bufB.length, 1);
-        const dummy = crypto.randomBytes(dummyLen);
-        const target = Buffer.alloc(dummyLen);
-        bufB.copy(target, 0, 0, Math.min(bufB.length, dummyLen));
-        crypto.timingSafeEqual(dummy, target);
-        return false;
-    }
-    return crypto.timingSafeEqual(bufA, bufB);
+    // Hash both sides to ensure constant-length buffers and avoid length leaks.
+    const aHash = crypto.createHash('sha256').update(a).digest();
+    const bHash = crypto.createHash('sha256').update(b).digest();
+    return crypto.timingSafeEqual(aHash, bHash);
 }
 
 export function verifyKillSwitchConfig(): { configured: boolean; reason?: string } {
