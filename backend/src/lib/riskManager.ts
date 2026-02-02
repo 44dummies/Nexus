@@ -1,10 +1,12 @@
 import { metrics } from './metrics';
-import { getSupabaseAdmin } from './supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin, withSupabaseRetry } from './supabaseAdmin';
 import { riskLogger } from './logger';
-import { clearPendingSettlement, registerPendingSettlement } from './settlementSubscriptions';
+import { clearPendingSettlement, recordSettlementUpdate, registerPendingSettlement } from './settlementSubscriptions';
 import { decryptToken } from './sessionCrypto';
 import { getOrCreateConnection, registerStreamingListener, sendMessage, sendMessageAsync, registerReconnectListener } from './wsManager';
 import { getRiskCache, initializeRiskCache, recordTradeSettled, setOpenTradeState } from './riskCache';
+import { record as recordObstacle } from './obstacleLog';
+import { setComponentStatus } from './healthStatus';
 
 interface RollingCounterConfig {
     windowMs: number;
@@ -78,6 +80,7 @@ const LATENCY_BLOWOUT_P99_MS = Math.max(1, Number(process.env.LATENCY_BLOWOUT_P9
 const LATENCY_BLOWOUT_WINDOW_MS = Math.max(1000, Number(process.env.LATENCY_BLOWOUT_WINDOW_MS) || 10000);
 const LATENCY_BLOWOUT_BREACHES = Math.max(1, Number(process.env.LATENCY_BLOWOUT_BREACHES) || 3);
 const RECONCILE_PORTFOLIO_TIMEOUT_MS = Math.max(1000, Number(process.env.RECONCILE_PORTFOLIO_TIMEOUT_MS) || 10000);
+const KILL_SWITCH_FAIL_CLOSED = (process.env.KILL_SWITCH_FAIL_CLOSED || (process.env.NODE_ENV === 'production' ? 'true' : 'false')) === 'true';
 
 const reconciledOpenContracts = new Map<string, Map<number, number>>();
 const reconciliationListeners = new Set<string>();
@@ -95,16 +98,17 @@ function getCounter(map: Map<string, RollingCounter>, key: string, windowMs: num
 
 async function recordRiskEvent(accountId: string | null, eventType: string, detail?: string, metadata?: Record<string, unknown>) {
     try {
-        const { client: supabaseAdmin } = getSupabaseAdmin();
-        if (!supabaseAdmin || !accountId) return;
-        await supabaseAdmin.from('risk_events').insert({
+        await withSupabaseRetry('risk_events.insert', async (client) => await client.from('risk_events').insert({
             account_id: accountId,
             event_type: eventType,
             detail,
             metadata,
-        });
+        }));
+        metrics.counter('risk.event_persisted');
     } catch (error) {
-        riskLogger.warn({ error }, 'Risk event persist failed');
+        const info = classifySupabaseError(error);
+        metrics.counter('risk.event_persist_error');
+        riskLogger.error({ error: info.message, code: info.code, category: info.category }, 'Risk event persist failed');
     }
 }
 
@@ -123,10 +127,8 @@ function getKillSwitchSettingsAccountId(accountId: string | null): string {
 
 async function persistKillSwitchState(accountId: string | null, state: KillSwitchState): Promise<void> {
     try {
-        const { client: supabaseAdmin } = getSupabaseAdmin();
-        if (!supabaseAdmin) return;
         const now = new Date().toISOString();
-        await supabaseAdmin.from('settings').upsert({
+        await withSupabaseRetry('settings.upsert.kill_switch', async (client) => await client.from('settings').upsert({
             account_id: getKillSwitchSettingsAccountId(accountId),
             key: KILL_SWITCH_SETTINGS_KEY,
             value: {
@@ -137,16 +139,24 @@ async function persistKillSwitchState(accountId: string | null, state: KillSwitc
                 clearedAt: state.active ? null : Date.now(),
             },
             updated_at: now,
-        }, { onConflict: 'account_id,key' });
+        }, { onConflict: 'account_id,key' }));
+        metrics.counter('risk.kill_switch_persisted');
     } catch (error) {
-        riskLogger.warn({ error }, 'Kill switch persist failed');
+        const info = classifySupabaseError(error);
+        metrics.counter('risk.kill_switch_persist_error');
+        riskLogger.error({ error: info.message, code: info.code, category: info.category }, 'Kill switch persist failed');
     }
 }
 
 async function restoreKillSwitchState(): Promise<void> {
     const { client: supabaseAdmin } = getSupabaseAdmin();
     if (!supabaseAdmin) {
-        riskLogger.warn('Kill switch restore skipped: Supabase not configured');
+        const detail = 'Kill switch restore skipped: Supabase not configured';
+        riskLogger.warn(detail);
+        recordObstacle('risk', 'Kill switch restore', detail, 'high', ['backend/src/lib/riskManager.ts']);
+        if (KILL_SWITCH_FAIL_CLOSED) {
+            triggerKillSwitch(null, 'KILL_SWITCH_STATE_UNKNOWN', false);
+        }
         return;
     }
 
@@ -157,6 +167,10 @@ async function restoreKillSwitchState(): Promise<void> {
 
     if (error) {
         riskLogger.error({ error }, 'Kill switch restore failed');
+        recordObstacle('risk', 'Kill switch restore', 'Supabase query failed', 'high', ['backend/src/lib/riskManager.ts']);
+        if (KILL_SWITCH_FAIL_CLOSED) {
+            triggerKillSwitch(null, 'KILL_SWITCH_STATE_UNKNOWN', false);
+        }
         return;
     }
 
@@ -208,8 +222,11 @@ function ensureReconciliationListener(accountId: string): void {
             is_sold?: boolean;
             profit?: number;
         };
+        const contractId = typeof contract?.contract_id === 'number' ? contract.contract_id : null;
+        if (contractId) {
+            recordSettlementUpdate(accountId, contractId);
+        }
         if (!contract?.is_sold) return;
-        const contractId = typeof contract.contract_id === 'number' ? contract.contract_id : null;
         if (!contractId) return;
         const stake = reconciledOpenContracts.get(accountId)?.get(contractId);
         if (stake === undefined) return;
@@ -336,6 +353,10 @@ function notifyKillSwitch(accountId: string | null, state: KillSwitchState): voi
 }
 
 export function triggerKillSwitch(accountId: string | null, reason: string, manual: boolean = false): void {
+    const existing = accountId ? killSwitchByAccount.get(accountId) : globalKillSwitch;
+    if (existing?.active && existing.reason === reason) {
+        return;
+    }
     const state = {
         active: true,
         reason,
@@ -347,8 +368,14 @@ export function triggerKillSwitch(accountId: string | null, reason: string, manu
     } else {
         Object.assign(globalKillSwitch, state);
     }
-    recordRiskEvent(accountId, 'kill_switch', reason, { manual }).catch(() => undefined);
-    persistKillSwitchState(accountId, state).catch(() => undefined);
+    setComponentStatus('risk', 'error', `kill switch: ${reason}`);
+    recordRiskEvent(accountId, 'kill_switch', reason, { manual }).catch((error) => {
+        riskLogger.error({ error, accountId, reason }, 'Kill switch event persist failed');
+    });
+    persistKillSwitchState(accountId, state).catch((error) => {
+        riskLogger.error({ error, accountId, reason }, 'Kill switch state persist failed');
+    });
+    metrics.counter('risk.kill_switch_triggered');
     notifyKillSwitch(accountId, state);
 }
 
@@ -361,7 +388,11 @@ export function clearKillSwitch(accountId: string | null): void {
         globalKillSwitch.triggeredAt = undefined;
         globalKillSwitch.manual = undefined;
     }
-    persistKillSwitchState(accountId, { active: false }).catch(() => undefined);
+    persistKillSwitchState(accountId, { active: false }).catch((error) => {
+        riskLogger.error({ error, accountId }, 'Kill switch clear persist failed');
+    });
+    metrics.counter('risk.kill_switch_cleared');
+    setComponentStatus('risk', 'ok');
     notifyKillSwitch(accountId, { active: false });
 }
 
@@ -410,6 +441,7 @@ export function recordCancel(accountId: string, limits?: RiskLimits): void {
     const now = Date.now();
     const count = getCounter(perAccountCancelSec, accountId, 1000).increment(now);
     if (count > maxCancels) {
+        metrics.counter('risk.cancel_spike');
         triggerKillSwitch(accountId, 'CANCEL_RATE_SPIKE', false);
     }
 }
@@ -417,6 +449,7 @@ export function recordCancel(accountId: string, limits?: RiskLimits): void {
 export function recordReject(accountId: string): void {
     const now = Date.now();
     const count = getCounter(perAccountRejectMin, accountId, 60000).increment(now);
+    metrics.counter('risk.reject');
     if (count >= REJECT_SPIKE_LIMIT) {
         triggerKillSwitch(accountId, 'REJECT_SPIKE', false);
     }
@@ -425,6 +458,7 @@ export function recordReject(accountId: string): void {
 export function recordSlippageReject(accountId: string): void {
     const now = Date.now();
     const count = getCounter(perAccountSlippageMin, accountId, 60000).increment(now);
+    metrics.counter('risk.slippage_reject');
     if (count >= SLIPPAGE_SPIKE_LIMIT) {
         triggerKillSwitch(accountId, 'SLIPPAGE_SPIKE', false);
     }
@@ -433,6 +467,7 @@ export function recordSlippageReject(accountId: string): void {
 export function recordReconnect(accountId: string): void {
     const now = Date.now();
     const count = getCounter(perAccountReconnectMin, accountId, 60000).increment(now);
+    metrics.counter('risk.reconnect');
     if (count >= RECONNECT_STORM_LIMIT) {
         triggerKillSwitch(accountId, 'RECONNECT_STORM', false);
     }
@@ -440,14 +475,17 @@ export function recordReconnect(accountId: string): void {
 
 export function recordStuckOrder(accountId: string, contractId: number): void {
     metrics.counter('risk.stuck_order');
-    recordRiskEvent(accountId, 'stuck_order', 'Settlement timeout', { contractId }).catch(() => undefined);
+    recordRiskEvent(accountId, 'stuck_order', 'Settlement timeout', { contractId }).catch((error) => {
+        riskLogger.error({ error, accountId, contractId }, 'Stuck order event persist failed');
+    });
 }
 
 export async function initRiskManager(): Promise<void> {
     await restoreKillSwitchState();
     await reconcileOpenContracts();
+    setComponentStatus('risk', 'ok');
 
-    setInterval(() => {
+    const latencyTimer = setInterval(() => {
         const snapshot = metrics.snapshot();
         const latency = snapshot.histograms[LATENCY_METRICS_KEY]?.p99;
         if (typeof latency === 'number' && latency > LATENCY_BLOWOUT_P99_MS) {
@@ -455,11 +493,16 @@ export async function initRiskManager(): Promise<void> {
         } else {
             latencyBreaches = 0;
         }
+        if (typeof latency === 'number') {
+            metrics.histogram('risk.latency_p99_ms', latency);
+        }
+        metrics.gauge('risk.latency_breaches', latencyBreaches);
         if (latencyBreaches >= LATENCY_BLOWOUT_BREACHES) {
             triggerKillSwitch(null, 'LATENCY_BLOWOUT', false);
             latencyBreaches = 0;
         }
     }, LATENCY_BLOWOUT_WINDOW_MS);
+    latencyTimer.unref();
 
     registerReconnectListener((accountId) => {
         recordReconnect(accountId);

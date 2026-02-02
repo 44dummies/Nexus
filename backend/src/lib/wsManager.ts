@@ -2,7 +2,36 @@ import WebSocket from 'ws';
 import { performance } from 'perf_hooks';
 import { wsLogger } from './logger';
 import { metrics } from './metrics';
+import { setComponentStatus } from './healthStatus';
+import { record as recordObstacle } from './obstacleLog';
 
+
+export type WsErrorCode =
+    | 'WS_TIMEOUT'
+    | 'WS_AUTH'
+    | 'WS_AUTH_TIMEOUT'
+    | 'WS_HANDSHAKE'
+    | 'WS_NETWORK'
+    | 'WS_CLOSED'
+    | 'WS_QUEUE_FULL'
+    | 'WS_BACKPRESSURE_DROP'
+    | 'WS_PARSE'
+    | 'WS_DERIV_ERROR';
+
+export class WsError extends Error {
+    code: WsErrorCode;
+    retryable: boolean;
+    context?: Record<string, unknown>;
+    cause?: Error;
+
+    constructor(code: WsErrorCode, message: string, options?: { retryable?: boolean; context?: Record<string, unknown>; cause?: Error }) {
+        super(message);
+        this.code = code;
+        this.retryable = options?.retryable ?? false;
+        this.context = options?.context;
+        this.cause = options?.cause;
+    }
+}
 
 interface QueuedMessage {
     data: string;
@@ -11,6 +40,7 @@ interface QueuedMessage {
     reqId: number;
     queuedAt: number;
     timeoutAt: number;
+    priority: number;
 }
 
 export interface WSConnectionState {
@@ -29,14 +59,27 @@ export interface WSConnectionState {
     reconnectPromise?: Promise<void> | null;
     shouldReconnect?: boolean;
     closed?: boolean;
+    reconnectWindowStart?: number;
+    reconnectWindowCount?: number;
+    circuitOpenUntil?: number | null;
+    lastConnectError?: string | null;
 }
 
 const MAX_QUEUE_DEPTH = Math.max(1, Number(process.env.WS_MAX_QUEUE_DEPTH) || 500);
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_BASE_DELAY_MS = 1000;
+const QUEUE_POLICY = (process.env.WS_QUEUE_POLICY || 'reject-new') as 'reject-new' | 'drop-oldest' | 'priority';
+const DEFAULT_REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.WS_REQUEST_TIMEOUT_MS) || 30000);
+const MAX_RECONNECT_ATTEMPTS = Math.max(1, Number(process.env.WS_MAX_RECONNECT_ATTEMPTS) || 5);
+const RECONNECT_BASE_DELAY_MS = Math.max(250, Number(process.env.WS_RECONNECT_BASE_DELAY_MS) || 1000);
+const RECONNECT_MAX_DELAY_MS = Math.max(RECONNECT_BASE_DELAY_MS, Number(process.env.WS_RECONNECT_MAX_DELAY_MS) || 30000);
 const RECONNECT_JITTER_MS = Math.max(0, Number(process.env.WS_RECONNECT_JITTER_MS) || 250);
-const CONNECTION_TIMEOUT_MS = 10000;
-const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const RECONNECT_WINDOW_MS = Math.max(1000, Number(process.env.WS_RECONNECT_WINDOW_MS) || 60000);
+const RECONNECT_STORM_LIMIT = Math.max(1, Number(process.env.WS_RECONNECT_STORM_LIMIT) || 8);
+const RECONNECT_CIRCUIT_COOLDOWN_MS = Math.max(1000, Number(process.env.WS_RECONNECT_COOLDOWN_MS) || 15000);
+const CONNECTION_TIMEOUT_MS = Math.max(1000, Number(process.env.WS_CONNECTION_TIMEOUT_MS) || 10000);
+const IDLE_TIMEOUT_MS = Math.max(60000, Number(process.env.WS_IDLE_TIMEOUT_MS) || 5 * 60 * 1000); // 5 minutes
+const PARSE_SAMPLE_BYTES = Math.max(128, Number(process.env.WS_PARSE_SAMPLE_BYTES) || 512);
+const AUTH_RETRY_ATTEMPTS = Math.max(0, Number(process.env.WS_AUTH_RETRY_ATTEMPTS) || 2);
+const AUTH_RETRY_DELAY_MS = Math.max(100, Number(process.env.WS_AUTH_RETRY_DELAY_MS) || 500);
 
 function removeQueuedMessage(state: WSConnectionState, reqId: number): QueuedMessage | null {
     const idx = state.messageQueue.findIndex((msg) => msg.reqId === reqId);
@@ -55,6 +98,92 @@ let globalReqId = 1000;
 const getReqId = () => globalReqId++;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function samplePayload(data: WebSocket.Data): string {
+    try {
+        const raw = typeof data === 'string' ? data : data.toString();
+        if (raw.length <= PARSE_SAMPLE_BYTES) return raw;
+        return `${raw.slice(0, PARSE_SAMPLE_BYTES)}...`;
+    } catch {
+        return '[unavailable]';
+    }
+}
+
+function normalizeDerivError(error: unknown): { message: string; code?: string; retryable: boolean; isAuth: boolean } {
+    const errObj = error as { message?: string; code?: string };
+    const message = typeof errObj?.message === 'string' ? errObj.message : 'Deriv error';
+    const code = typeof errObj?.code === 'string' ? errObj.code : undefined;
+    const lowerMsg = message.toLowerCase();
+
+    const isAuth = code === 'InvalidToken' || lowerMsg.includes('authorization') || lowerMsg.includes('invalid token');
+    const retryable = !isAuth && (lowerMsg.includes('timeout') || lowerMsg.includes('network') || lowerMsg.includes('rate') || lowerMsg.includes('busy'));
+
+    return { message, code, retryable, isAuth };
+}
+
+function enqueueMessage(state: WSConnectionState, queuedMsg: QueuedMessage): void {
+    if (state.messageQueue.length >= MAX_QUEUE_DEPTH) {
+        if (QUEUE_POLICY === 'drop-oldest') {
+            const dropped = state.messageQueue.shift();
+            if (dropped) {
+                dropped.reject(new WsError('WS_BACKPRESSURE_DROP', 'Message dropped due to backpressure', {
+                    retryable: true,
+                    context: { policy: QUEUE_POLICY, accountId: state.accountId },
+                }));
+                metrics.counter('ws.queue_drop_oldest');
+            }
+        } else if (QUEUE_POLICY === 'priority') {
+            const lowestIdx = state.messageQueue.reduce((acc, msg, idx) => {
+                if (msg.priority < state.messageQueue[acc].priority) return idx;
+                return acc;
+            }, 0);
+            const lowest = state.messageQueue[lowestIdx];
+            if (lowest && queuedMsg.priority > lowest.priority) {
+                state.messageQueue.splice(lowestIdx, 1);
+                lowest.reject(new WsError('WS_BACKPRESSURE_DROP', 'Message dropped due to backpressure', {
+                    retryable: true,
+                    context: { policy: QUEUE_POLICY, accountId: state.accountId },
+                }));
+                metrics.counter('ws.queue_drop_priority');
+            } else {
+                metrics.counter('ws.queue_full');
+                throw new WsError('WS_QUEUE_FULL', 'Message queue full', { retryable: true });
+            }
+        } else {
+            metrics.counter('ws.queue_full');
+            throw new WsError('WS_QUEUE_FULL', 'Message queue full', { retryable: true });
+        }
+    }
+
+    if (QUEUE_POLICY === 'priority') {
+        const index = state.messageQueue.findIndex((msg) => queuedMsg.priority > msg.priority);
+        if (index === -1) {
+            state.messageQueue.push(queuedMsg);
+        } else {
+            state.messageQueue.splice(index, 0, queuedMsg);
+        }
+    } else {
+        state.messageQueue.push(queuedMsg);
+    }
+
+    metrics.gauge('ws.outbound_queue_depth', state.messageQueue.length);
+}
+
+function markReconnectWindow(state: WSConnectionState): boolean {
+    const now = Date.now();
+    if (!state.reconnectWindowStart || now - state.reconnectWindowStart > RECONNECT_WINDOW_MS) {
+        state.reconnectWindowStart = now;
+        state.reconnectWindowCount = 0;
+    }
+    state.reconnectWindowCount = (state.reconnectWindowCount ?? 0) + 1;
+    if (state.reconnectWindowCount >= RECONNECT_STORM_LIMIT) {
+        state.circuitOpenUntil = now + RECONNECT_CIRCUIT_COOLDOWN_MS;
+        metrics.counter('ws.reconnect_circuit_open');
+        recordObstacle('websocket', 'Reconnect storm', `Reconnects exceeded ${RECONNECT_STORM_LIMIT} within window`, 'medium', ['backend/src/lib/wsManager.ts']);
+        return true;
+    }
+    return false;
+}
 
 function isActiveState(state: WSConnectionState): boolean {
     return connectionPool.get(state.accountId) === state && state.closed !== true;
@@ -149,7 +278,17 @@ async function connectAndAuthorize(state: WSConnectionState, appId: string, isRe
             }
             throw new Error('Connection superseded');
         }
-        await authorize(state, isReconnect);
+        try {
+            await authorize(state, isReconnect);
+        } catch (error) {
+            const wsErr = error as WsError;
+            if (wsErr.code === 'WS_AUTH' && !wsErr.retryable) {
+                state.shouldReconnect = false;
+                metrics.counter('ws.auth_terminal');
+                wsLogger.error({ accountId: state.accountId, error: wsErr.message }, 'Authorization failed - disabling reconnect');
+            }
+            throw error;
+        }
     })();
 
     state.connecting = attempt;
@@ -233,9 +372,14 @@ export async function getOrCreateConnection(
         reconnectPromise: null,
         shouldReconnect: true,
         closed: false,
+        reconnectWindowStart: Date.now(),
+        reconnectWindowCount: 0,
+        circuitOpenUntil: null,
+        lastConnectError: null,
     };
 
     connectionPool.set(accountId, state);
+    metrics.gauge('ws.connection_count', connectionPool.size);
 
     try {
         await connectAndAuthorize(state, appId, false);
@@ -251,25 +395,48 @@ export async function getOrCreateConnection(
  */
 function connect(state: WSConnectionState, appId: string): Promise<void> {
     return new Promise((resolve, reject) => {
+        if (state.circuitOpenUntil && Date.now() < state.circuitOpenUntil) {
+            const err = new WsError('WS_HANDSHAKE', 'Reconnect circuit open', { retryable: true, context: { until: state.circuitOpenUntil } });
+            reject(err);
+            return;
+        }
         const timeout = setTimeout(() => {
-            reject(new Error('WebSocket connection timeout'));
+            try {
+                ws.close();
+            } catch {
+                // ignore
+            }
+            const err = new WsError('WS_TIMEOUT', 'WebSocket connection timeout', { retryable: true });
+            metrics.counter('ws.connect_timeout');
+            setComponentStatus('ws', 'degraded', 'connect timeout');
+            reject(err);
         }, CONNECTION_TIMEOUT_MS);
 
         const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
         state.ws = ws;
+        let opened = false;
 
         ws.on('open', () => {
             clearTimeout(timeout);
             state.ws = ws;
             state.reconnectAttempts = 0;
             setupMessageHandler(state);
+            opened = true;
+            state.lastConnectError = null;
+            setComponentStatus('ws', 'ok');
+            metrics.counter('ws.connect_success');
             resolve();
         });
 
         ws.on('error', (error) => {
             clearTimeout(timeout);
             state.ws = null;
-            reject(error);
+            const err = error instanceof Error ? error : new Error('WebSocket error');
+            const wsErr = new WsError(opened ? 'WS_NETWORK' : 'WS_HANDSHAKE', err.message, { retryable: true, cause: err });
+            state.lastConnectError = err.message;
+            metrics.counter('ws.connect_error');
+            setComponentStatus('ws', 'degraded', err.message);
+            reject(wsErr);
         });
 
         ws.on('close', (code, reason) => {
@@ -281,7 +448,11 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
             const intentional = !shouldAttemptReconnect(state) || !isActiveState(state);
             wsLogger.info({ accountId: state.accountId, code, reason: closeReason, intentional }, 'WebSocket closed');
 
-            rejectPendingMessages(state, new Error('Connection closed'));
+            rejectPendingMessages(state, new WsError('WS_CLOSED', 'Connection closed', {
+                retryable: true,
+                context: { code, reason: closeReason },
+            }));
+            setComponentStatus('ws', 'degraded', `closed:${code}`);
 
             if (intentional) {
                 return;
@@ -294,19 +465,51 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
 /**
  * Authorize the connection with token
  */
-function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void> {
+async function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void> {
+    const maxAttempts = Math.max(1, AUTH_RETRY_ATTEMPTS + 1);
+    let attempt = 0;
+    let lastError: Error | null = null;
+
+    while (attempt < maxAttempts) {
+        attempt += 1;
+        try {
+            await authorizeOnce(state, isReconnect);
+            return;
+        } catch (error) {
+            lastError = error as Error;
+            const wsErr = error as WsError;
+            if (wsErr.code === 'WS_AUTH' && !wsErr.retryable) {
+                metrics.counter('ws.auth_fail');
+                throw wsErr;
+            }
+
+            if (attempt >= maxAttempts) {
+                metrics.counter('ws.auth_fail');
+                throw error;
+            }
+
+            metrics.counter('ws.auth_retry');
+            await sleep(AUTH_RETRY_DELAY_MS * attempt);
+        }
+    }
+
+    throw lastError ?? new WsError('WS_AUTH', 'Authorization failed', { retryable: false });
+}
+
+function authorizeOnce(state: WSConnectionState, isReconnect: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
         if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-            reject(new Error('WebSocket not open'));
+            reject(new WsError('WS_HANDSHAKE', 'WebSocket not open', { retryable: true }));
             return;
         }
 
         const reqId = getReqId();
         const timeout = setTimeout(() => {
             state.pendingMessages.delete(reqId);
-            const err = new Error('Authorization timeout');
+            const err = new WsError('WS_AUTH_TIMEOUT', 'Authorization timeout', { retryable: true });
             state.lastAuthError = err.message;
             rejectQueuedMessages(state, err);
+            metrics.counter('ws.auth_timeout');
             reject(err);
         }, CONNECTION_TIMEOUT_MS);
 
@@ -314,14 +517,22 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
             data: JSON.stringify({ authorize: state.token, req_id: reqId }),
             resolve: (response: unknown) => {
                 clearTimeout(timeout);
-                const res = response as { error?: { message: string }; authorize?: unknown };
+                const res = response as { error?: { message: string; code?: string }; authorize?: unknown };
                 if (res.error) {
-                    state.lastAuthError = res.error.message;
-                    rejectQueuedMessages(state, new Error(`Authorization failed: ${res.error.message}`));
-                    reject(new Error(res.error.message));
+                    const normalized = normalizeDerivError(res.error);
+                    const err = new WsError(
+                        normalized.isAuth ? 'WS_AUTH' : 'WS_DERIV_ERROR',
+                        `Authorization failed: ${normalized.message}`,
+                        { retryable: normalized.retryable, context: { code: normalized.code } }
+                    );
+                    state.lastAuthError = normalized.message;
+                    rejectQueuedMessages(state, err);
+                    metrics.counter('ws.auth_error');
+                    reject(err);
                 } else {
                     state.authorized = true;
                     state.lastAuthError = null;
+                    metrics.counter('ws.auth_success');
                     notifyConnectionReady(state.accountId, isReconnect);
                     // Process queued messages
                     const now = Date.now();
@@ -329,7 +540,7 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
                         const msg = state.messageQueue.shift();
                         if (msg) {
                             if (now > msg.timeoutAt) {
-                                msg.reject(new Error('Message timeout'));
+                                msg.reject(new WsError('WS_TIMEOUT', 'Message timeout', { retryable: true }));
                                 continue;
                             }
                             state.ws?.send(msg.data);
@@ -346,6 +557,7 @@ function authorize(state: WSConnectionState, isReconnect: boolean): Promise<void
             reqId,
             queuedAt: Date.now(),
             timeoutAt: Date.now() + CONNECTION_TIMEOUT_MS,
+            priority: 0,
         });
 
         state.ws.send(JSON.stringify({ authorize: state.token, req_id: reqId }));
@@ -404,7 +616,15 @@ function setupMessageHandler(state: WSConnectionState): void {
         metrics.gauge('ws.inbound_inflight', state.inboundInFlight);
         try {
             const parseStart = performance.now();
-            const message = JSON.parse(data.toString()) as Record<string, unknown>;
+            let message: Record<string, unknown>;
+            try {
+                message = JSON.parse(data.toString()) as Record<string, unknown>;
+            } catch (error) {
+                metrics.counter('ws.parse_error');
+                const sample = samplePayload(data);
+                wsLogger.error({ error, sample }, 'WS message parse error');
+                return;
+            }
             const parseEnd = performance.now();
             metrics.histogram('ws.json_parse_ms', parseEnd - parseStart);
             message.__recvPerfTs = recvPerfTs;
@@ -417,8 +637,12 @@ function setupMessageHandler(state: WSConnectionState): void {
                 state.pendingMessages.delete(reqId);
 
                 if (message.error && typeof message.error === 'object') {
-                    const errorMsg = (message.error as any).message || 'Unknown error';
-                    pending.reject(new Error(errorMsg));
+                    const derivError = normalizeDerivError(message.error);
+                    const err = new WsError('WS_DERIV_ERROR', derivError.message, {
+                        retryable: derivError.retryable,
+                        context: { code: derivError.code },
+                    });
+                    pending.reject(err);
                 } else {
                     pending.resolve(message);
                 }
@@ -445,8 +669,8 @@ function setupMessageHandler(state: WSConnectionState): void {
 
             state.lastActivity = Date.now();
         } catch (error) {
-            metrics.counter('ws.parse_error');
-            wsLogger.error({ error }, 'WS message parse error');
+            metrics.counter('ws.msg_handler_error');
+            wsLogger.error({ error }, 'WS message handler error');
         } finally {
             state.inboundInFlight = Math.max(0, state.inboundInFlight - 1);
             metrics.gauge('ws.inbound_inflight', state.inboundInFlight);
@@ -469,6 +693,12 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
 
     const loop = (async () => {
         while (isActiveState(state) && shouldAttemptReconnect(state)) {
+            if (state.circuitOpenUntil && Date.now() < state.circuitOpenUntil) {
+                const waitMs = state.circuitOpenUntil - Date.now();
+                wsLogger.warn({ accountId: state.accountId, waitMs }, 'Reconnect circuit open - delaying reconnect');
+                metrics.counter('ws.reconnect_circuit_wait');
+                await sleep(waitMs);
+            }
             if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                 wsLogger.error({ accountId: state.accountId, attempts: state.reconnectAttempts }, 'Max reconnect attempts reached');
                 cleanupConnection(state.accountId);
@@ -478,10 +708,14 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
             state.reconnectAttempts += 1;
             metrics.counter('ws.reconnect_attempts');
             notifyReconnect(state.accountId);
+            if (markReconnectWindow(state)) {
+                wsLogger.error({ accountId: state.accountId }, 'Reconnect storm detected - opening circuit');
+                continue;
+            }
 
-            const baseDelay = RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1);
+            const baseDelay = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * Math.pow(2, state.reconnectAttempts - 1));
             const jitter = RECONNECT_JITTER_MS > 0 ? Math.floor(Math.random() * RECONNECT_JITTER_MS) : 0;
-            const delay = baseDelay + jitter;
+            const delay = Math.min(RECONNECT_MAX_DELAY_MS, baseDelay + jitter);
 
             wsLogger.info({ accountId: state.accountId, delay, attempt: state.reconnectAttempts }, 'Reconnecting WebSocket');
 
@@ -518,18 +752,24 @@ async function handleReconnect(state: WSConnectionState, appId: string): Promise
 export async function sendMessage<T = unknown>(
     accountId: string,
     message: Record<string, unknown>,
-    timeoutMs: number = 30000
+    timeoutMsOrOptions: number | { timeoutMs?: number; priority?: number } = DEFAULT_REQUEST_TIMEOUT_MS
 ): Promise<T> {
     const state = connectionPool.get(accountId);
+    const timeoutMs = typeof timeoutMsOrOptions === 'number'
+        ? timeoutMsOrOptions
+        : timeoutMsOrOptions.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const priority = typeof timeoutMsOrOptions === 'number'
+        ? 0
+        : timeoutMsOrOptions.priority ?? 0;
 
     if (!state) {
-        throw new Error(`No connection for account ${accountId}`);
+        throw new WsError('WS_CLOSED', `No connection for account ${accountId}`, { retryable: true });
     }
     if (state.lastAuthError && !state.authorized) {
-        throw new Error(`Authorization failed: ${state.lastAuthError}`);
+        throw new WsError('WS_AUTH', `Authorization failed: ${state.lastAuthError}`, { retryable: false });
     }
     if (state.closed === true || state.shouldReconnect === false) {
-        throw new Error('Connection closed');
+        throw new WsError('WS_CLOSED', 'Connection closed', { retryable: true });
     }
 
     const reqId = getReqId();
@@ -550,7 +790,7 @@ export async function sendMessage<T = unknown>(
                 } else {
                     removeQueuedMessage(state, reqId);
                 }
-                reject(new Error('Message timeout'));
+                reject(new WsError('WS_TIMEOUT', 'Message timeout', { retryable: true }));
             });
         }, timeoutMs);
 
@@ -575,21 +815,20 @@ export async function sendMessage<T = unknown>(
             reqId,
             queuedAt: Date.now(),
             timeoutAt: Date.now() + timeoutMs,
+            priority,
         };
 
         if (state.ws?.readyState === WebSocket.OPEN && state.authorized) {
             state.ws.send(data);
             state.pendingMessages.set(reqId, queuedMsg);
         } else {
-            if (state.messageQueue.length >= MAX_QUEUE_DEPTH) {
+            try {
+                enqueueMessage(state, queuedMsg);
+            } catch (error) {
                 clearTimeout(timeout);
-                reject(new Error('Message queue full'));
+                reject(error as Error);
                 return;
             }
-
-            // Queue for later when connection is ready
-            state.messageQueue.push(queuedMsg);
-            metrics.gauge('ws.outbound_queue_depth', state.messageQueue.length);
         }
 
         state.lastActivity = Date.now();
@@ -607,6 +846,7 @@ export function sendMessageAsync(
     const state = connectionPool.get(accountId);
 
     if (!state || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        metrics.counter('ws.async_send_skipped');
         wsLogger.warn({ accountId }, 'Cannot send async message: no connection');
         return;
     }
@@ -642,6 +882,9 @@ export function cleanupConnection(accountId: string): void {
         }
 
         connectionPool.delete(accountId);
+        metrics.gauge('ws.connection_count', connectionPool.size);
+        metrics.counter('ws.connection_cleanup');
+        setComponentStatus('ws', 'degraded', 'connection cleaned');
     }
 }
 
@@ -662,6 +905,16 @@ export function getConnectionStatus(accountId: string): {
     };
 }
 
+export function cleanupAllConnections(): void {
+    for (const accountId of connectionPool.keys()) {
+        cleanupConnection(accountId);
+    }
+}
+
+export function getConnectionCount(): number {
+    return connectionPool.size;
+}
+
 /**
  * Cleanup idle connections (call periodically)
  */
@@ -672,12 +925,14 @@ export function cleanupIdleConnections(): void {
         if (now - state.lastActivity > IDLE_TIMEOUT_MS) {
             wsLogger.info({ accountId }, 'Cleaning up idle connection');
             cleanupConnection(accountId);
+            metrics.counter('ws.idle_cleanup');
         }
     }
 }
 
 // Cleanup idle connections every minute
-setInterval(cleanupIdleConnections, 60000);
+const idleCleanupTimer = setInterval(cleanupIdleConnections, 60000);
+idleCleanupTimer.unref();
 
 // Test helpers
 export function setConnectionStateForTest(accountId: string, state: WSConnectionState): void {

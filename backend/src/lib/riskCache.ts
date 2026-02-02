@@ -3,7 +3,10 @@
  * Replaces per-trade DB scans with cached values that update on settlement.
  */
 
-import { getSupabaseAdmin } from './supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin, withSupabaseRetry } from './supabaseAdmin';
+import { riskLogger } from './logger';
+import { metrics } from './metrics';
+import { record as recordObstacle } from './obstacleLog';
 
 export interface RiskCacheEntry {
     accountId: string;
@@ -57,8 +60,11 @@ const toNumber = (value: unknown, fallback = 0): number => {
 };
 
 async function persistRiskState(accountId: string, entry: RiskCacheEntry): Promise<void> {
-    const { client: supabaseAdmin } = getSupabaseAdmin();
-    if (!supabaseAdmin) return;
+    const { client: supabaseAdmin, error } = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+        recordObstacle('risk', 'Risk state persistence', error || 'Supabase not configured', 'medium', ['backend/src/lib/riskCache.ts']);
+        return;
+    }
 
     const payload: PersistedRiskState = {
         date: entry.dateKey,
@@ -76,19 +82,28 @@ async function persistRiskState(accountId: string, entry: RiskCacheEntry): Promi
         lastTradeTime: entry.lastTradeTime ?? undefined,
     };
 
-    await supabaseAdmin.from('settings').upsert({
-        account_id: accountId,
-        key: RISK_STATE_KEY,
-        value: payload,
-        updated_at: new Date().toISOString(),
-    }, { onConflict: 'account_id,key' });
+    try {
+        await withSupabaseRetry('settings.upsert.risk_state', async (client) => await client.from('settings').upsert({
+            account_id: accountId,
+            key: RISK_STATE_KEY,
+            value: payload,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: 'account_id,key' }));
+        metrics.counter('risk.cache_persisted');
+    } catch (error) {
+        const info = classifySupabaseError(error);
+        metrics.counter('risk.cache_persist_error');
+        riskLogger.error({ error: info.message, code: info.code, category: info.category }, 'Risk state persist failed');
+    }
 }
 
 function schedulePersist(accountId: string, entry: RiskCacheEntry): void {
     if (persistTimers.has(accountId)) return;
     const timer = setTimeout(() => {
         persistTimers.delete(accountId);
-        persistRiskState(accountId, entry).catch(() => undefined);
+        persistRiskState(accountId, entry).catch((error) => {
+            riskLogger.error({ error, accountId }, 'Risk state persist failed');
+        });
     }, PERSIST_DEBOUNCE_MS);
     persistTimers.set(accountId, timer);
 }

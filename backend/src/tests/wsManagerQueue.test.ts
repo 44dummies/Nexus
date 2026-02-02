@@ -43,6 +43,7 @@ test('queue enforces max depth (backpressure)', async () => {
             reqId: i + 1,
             queuedAt: Date.now(),
             timeoutAt: Date.now() + 1000,
+            priority: 0,
         });
     }
     setConnectionStateForTest(accountId, state);

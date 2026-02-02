@@ -3,7 +3,7 @@ import { ExecuteTradeParamsSchema, TradeSignalSchema, type ExecuteTradeParams } 
 import { getOrCreateConnection, sendMessage, cleanupConnection, registerStreamingListener, unregisterStreamingListener } from './lib/wsManager';
 import { recordTradeSettled, recordTradeFailedAttempt } from './lib/riskCache';
 import { tradeLogger } from './lib/logger';
-import { registerPendingSettlement, clearPendingSettlement } from './lib/settlementSubscriptions';
+import { registerPendingSettlement, clearPendingSettlement, recordSettlementUpdate } from './lib/settlementSubscriptions';
 import { persistNotification, persistOrderStatus, persistTrade } from './lib/tradePersistence';
 import { metrics } from './lib/metrics';
 import { LATENCY_METRICS, nowMs, recordLatency, type LatencyTrace } from './lib/latencyTracker';
@@ -25,10 +25,14 @@ interface DerivResponse {
 
 const SETTLED_CONTRACT_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_SETTLED_CONTRACTS = 10000;
+const SETTLEMENT_SUBSCRIBE_MAX_ATTEMPTS = Math.max(1, Number(process.env.SETTLEMENT_SUBSCRIBE_MAX_ATTEMPTS) || 3);
+const SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS = Math.max(100, Number(process.env.SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS) || 500);
+const SETTLEMENT_SUBSCRIBE_MAX_DELAY_MS = Math.max(SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS, Number(process.env.SETTLEMENT_SUBSCRIBE_MAX_DELAY_MS) || 5000);
 type ContractFinalizationState = {
     timestamp: number;
     exposureClosed: boolean;
     pnlApplied: boolean;
+    finalized: boolean;
 };
 
 const contractFinalizations = new Map<string, ContractFinalizationState>();
@@ -87,6 +91,7 @@ function getFinalizationState(accountId: string, contractId: number): ContractFi
         timestamp: Date.now(),
         exposureClosed: false,
         pnlApplied: false,
+        finalized: false,
     };
     contractFinalizations.set(key, state);
     return state;
@@ -134,6 +139,16 @@ function recordTradeFailedAttemptOnce(accountId: string, contractId: number | nu
     }
 }
 
+function markContractFinalized(accountId: string, contractId: number): void {
+    if (!Number.isFinite(contractId)) return;
+    const state = getFinalizationState(accountId, contractId);
+    state.finalized = true;
+    state.timestamp = Date.now();
+    if (contractFinalizations.size > MAX_SETTLED_CONTRACTS) {
+        pruneContractFinalizations(state.timestamp);
+    }
+}
+
 /**
  * Calculate duration in milliseconds from duration value and unit
  */
@@ -152,6 +167,57 @@ function calculateDurationMs(duration: number, durationUnit: string): number {
         default:
             return duration * 1000; // Default to seconds
     }
+}
+
+export function calculateSettlementTimeoutMs(duration: number, durationUnit: string): number {
+    const durationMs = calculateDurationMs(duration, durationUnit);
+    const bufferMs = Math.max(0, Number(process.env.SETTLEMENT_BUFFER_MS) || 30 * 1000);
+    const minTimeoutMs = Math.max(1000, Number(process.env.SETTLEMENT_MIN_TIMEOUT_MS) || 30 * 1000);
+    const maxTimeoutMs = Math.max(minTimeoutMs, Number(process.env.SETTLEMENT_MAX_TIMEOUT_MS) || 10 * 60 * 1000);
+    return Math.min(maxTimeoutMs, Math.max(minTimeoutMs, durationMs + bufferMs));
+}
+
+interface SettlementSubscribeResponse {
+    proposal_open_contract?: {
+        contract_id: number;
+        is_sold: boolean;
+        profit: number;
+        status?: string;
+        payout?: number;
+    };
+    subscription?: { id: string };
+    error?: { message: string };
+}
+
+async function subscribeSettlementWithRetry(
+    accountId: string,
+    contractId: number
+): Promise<SettlementSubscribeResponse> {
+    let attempt = 0;
+    let lastError: Error | null = null;
+    while (attempt < SETTLEMENT_SUBSCRIBE_MAX_ATTEMPTS) {
+        attempt += 1;
+        metrics.counter('settlement.subscribe_attempt');
+        try {
+            const response = await sendMessage<SettlementSubscribeResponse>(accountId, {
+                proposal_open_contract: 1,
+                contract_id: contractId,
+                subscribe: 1,
+            }, 30000);
+            metrics.counter('settlement.subscribe_ok');
+            return response;
+        } catch (error) {
+            lastError = error as Error;
+            metrics.counter('settlement.subscribe_error');
+            const retryable = (error as any)?.retryable === true;
+            if (!retryable || attempt >= SETTLEMENT_SUBSCRIBE_MAX_ATTEMPTS) {
+                break;
+            }
+            const delay = Math.min(SETTLEMENT_SUBSCRIBE_MAX_DELAY_MS, SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS * Math.pow(2, attempt - 1));
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+    }
+    throw lastError ?? new Error('Settlement subscribe failed');
 }
 
 export interface TradeResult {
@@ -291,8 +357,8 @@ export async function executeTradeServerFast(
                     accountId,
                     event: 'slippage_reject',
                     status: 'slippage_exceeded',
-                    price: typeof error.meta?.askPrice === 'number' ? error.meta.askPrice : null,
-                    payload: error.meta ?? null,
+                    price: typeof error.context?.askPrice === 'number' ? error.context.askPrice as number : null,
+                    payload: error.context ?? null,
                 }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
             }
             if (error.code === 'THROTTLE') {
@@ -305,6 +371,9 @@ export async function executeTradeServerFast(
             if (error.code === 'BUY_REJECT') {
                 metrics.counter('trade.buy_reject');
                 recordReject(accountId);
+            }
+            if (error.code === 'WS_TIMEOUT' || error.code === 'WS_NETWORK') {
+                metrics.counter('trade.ws_error');
             }
         } else if (error instanceof Error) {
             if (error.message.toLowerCase().includes('slippage')) {
@@ -329,39 +398,21 @@ async function trackSettlementAsync(
     params: ExecuteTradeParams,
     latencyTrace?: LatencyTrace
 ): Promise<void> {
-    // Calculate timeout based on trade duration + buffer
-    const durationMs = calculateDurationMs(params.duration ?? 5, params.durationUnit ?? 't');
-    const BUFFER_MS = 30 * 1000; // 30 second buffer for settlement processing
-    const MIN_TIMEOUT_MS = 30 * 1000; // Minimum 30 seconds
-    const MAX_TIMEOUT_MS = 10 * 60 * 1000; // Maximum 10 minutes
-    const SETTLEMENT_TIMEOUT_MS = Math.min(
-        MAX_TIMEOUT_MS,
-        Math.max(MIN_TIMEOUT_MS, durationMs + BUFFER_MS)
+    const SETTLEMENT_TIMEOUT_MS = calculateSettlementTimeoutMs(
+        params.duration ?? 5,
+        params.durationUnit ?? 't'
     );
 
     let subscriptionId: string | undefined;
 
     try {
         registerPendingSettlement(accountId, contractId);
-        // First, subscribe to contract updates
-        const subscribeResponse = await sendMessage<{
-            proposal_open_contract?: {
-                contract_id: number;
-                is_sold: boolean;
-                profit: number;
-                status?: string;
-                payout?: number;
-            };
-            subscription?: { id: string };
-            error?: { message: string };
-        }>(accountId, {
-            proposal_open_contract: 1,
-            contract_id: contractId,
-            subscribe: 1,
-        }, 30000);
-
-        if (subscribeResponse.error) {
-            tradeLogger.error({ error: subscribeResponse.error.message, contractId }, 'Settlement subscription failed');
+        // First, subscribe to contract updates (with retries)
+        let subscribeResponse: SettlementSubscribeResponse;
+        try {
+            subscribeResponse = await subscribeSettlementWithRetry(accountId, contractId);
+        } catch (error) {
+            tradeLogger.error({ error, contractId }, 'Settlement subscription failed');
             recordTradeFailedAttemptOnce(accountId, contractId, stake); // Decrement concurrent count only
             clearPendingSettlement(accountId, contractId);
             return;
@@ -371,6 +422,9 @@ async function trackSettlementAsync(
 
         // Check if already settled in the initial response
         const initialContract = subscribeResponse.proposal_open_contract;
+        if (initialContract?.contract_id === contractId) {
+            recordSettlementUpdate(accountId, contractId);
+        }
         if (initialContract?.is_sold) {
             const fillPerfTs = nowMs();
             if (latencyTrace) {
@@ -408,6 +462,10 @@ async function trackSettlementAsync(
                         status?: string;
                         payout?: number;
                     };
+
+                    if (contract.contract_id === contractId) {
+                        recordSettlementUpdate(accountId, contractId);
+                    }
 
                     if (contract.contract_id === contractId && contract.is_sold) {
                         settled = true;
@@ -480,56 +538,64 @@ async function handleSettlement(
     params: ExecuteTradeParams,
     contract: { contract_id: number; is_sold: boolean; profit: number; status?: string; payout?: number }
 ): Promise<void> {
-    const state = getFinalizationState(accountId, contract.contract_id);
-    if (state.pnlApplied) {
-        return;
-    }
+    await withSettlementLock(`${accountId}:${contract.contract_id}`, async () => {
+        const state = getFinalizationState(accountId, contract.contract_id);
+        if (state.pnlApplied) {
+            return;
+        }
 
-    if (!recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit)) {
-        return;
-    }
+        if (!recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit)) {
+            return;
+        }
 
-    finalizeOpenContract(accountId, contract.contract_id);
+        finalizeOpenContract(accountId, contract.contract_id);
 
-    // Persist trade to database (queued)
-    persistTrade({
-        accountId,
-        accountType,
-        botId: params.botId ?? null,
-        botRunId: params.botRunId ?? null,
-        contractId: contract.contract_id,
-        symbol: params.symbol,
-        stake,
-        duration: params.duration || 5,
-        durationUnit: params.durationUnit || 't',
-        profit: contract.profit,
-        status: contract.status || 'settled',
-        entryProfileId: params.entryProfileId ?? null,
-    }).then((tradeId) => {
-        persistOrderStatus({
+        // Persist trade to database (queued)
+        persistTrade({
             accountId,
-            tradeId: tradeId ?? null,
+            accountType,
+            botId: params.botId ?? null,
+            botRunId: params.botRunId ?? null,
             contractId: contract.contract_id,
-            event: 'contract_settled',
-            status: contract.status || 'settled',
-            payload: {
-                profit: contract.profit,
-                payout: contract.payout,
-            },
-        }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
-    }).catch((err) => tradeLogger.error({ err }, 'Trade persistence failed'));
-
-    // Send notification (queued)
-    persistNotification({
-        accountId,
-        title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
-        body: `Contract #${contract.contract_id} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
-        type: 'trade_result',
-        data: {
-            contractId: contract.contract_id,
-            profit: contract.profit,
-            status: contract.status,
             symbol: params.symbol,
-        },
-    }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
+            stake,
+            duration: params.duration || 5,
+            durationUnit: params.durationUnit || 't',
+            profit: contract.profit,
+            status: contract.status || 'settled',
+            entryProfileId: params.entryProfileId ?? null,
+        }).then((tradeId) => {
+            persistOrderStatus({
+                accountId,
+                tradeId: tradeId ?? null,
+                contractId: contract.contract_id,
+                event: 'contract_settled',
+                status: contract.status || 'settled',
+                payload: {
+                    profit: contract.profit,
+                    payout: contract.payout,
+                },
+            }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
+        }).catch((err) => tradeLogger.error({ err }, 'Trade persistence failed'));
+
+        // Send notification (queued)
+        persistNotification({
+            accountId,
+            title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
+            body: `Contract #${contract.contract_id} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
+            type: 'trade_result',
+            data: {
+                contractId: contract.contract_id,
+                profit: contract.profit,
+                status: contract.status,
+                symbol: params.symbol,
+            },
+        }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
+
+        markContractFinalized(accountId, contract.contract_id);
+    });
 }
+
+export const __test = {
+    withSettlementLock,
+};

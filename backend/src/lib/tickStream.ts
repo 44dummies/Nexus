@@ -148,7 +148,7 @@ export async function subscribeTicks(
         await startTickSubscription(accountId, symbol, subscription);
 
     } catch (error) {
-        console.error(`Failed to subscribe to ticks for ${symbol}:`, error);
+        tickLogger.error({ symbol, error }, 'Failed to subscribe to ticks');
         subscription.isActive = false;
         throw error;
     }
@@ -360,7 +360,7 @@ async function unsubscribeTickStream(
                 forget: subscription.subscriptionId,
             });
         } catch (error) {
-            console.error(`Failed to unsubscribe from ${symbol}:`, error);
+            tickLogger.error({ symbol, error }, 'Failed to unsubscribe from ticks');
         }
     }
 

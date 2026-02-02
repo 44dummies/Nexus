@@ -7,6 +7,7 @@ interface QueueItem<T> {
     task: Task<T>;
     resolve: (value: T) => void;
     reject: (error: Error) => void;
+    taskName: string;
 }
 
 // Dead-letter queue for failed persistence tasks (SEC: DATA-03)
@@ -62,7 +63,7 @@ export class AsyncTaskQueue {
             return Promise.reject(new Error(`${this.name} queue full`));
         }
         return new Promise<T>((resolve, reject) => {
-            this.queue.push({ task, resolve, reject } as QueueItem<unknown>);
+            this.queue.push({ task, resolve, reject, taskName: taskName || this.name } as QueueItem<unknown>);
             this.updateMetrics();
             this.schedule();
         });
@@ -73,7 +74,9 @@ export class AsyncTaskQueue {
         this.scheduled = true;
         setImmediate(() => {
             this.scheduled = false;
-            this.drain().catch(() => undefined);
+            this.drain().catch((error) => {
+                logger.error({ error, queue: this.name }, 'Persistence queue drain failed');
+            });
         });
     }
 
@@ -95,6 +98,9 @@ export class AsyncTaskQueue {
             const result = await item.task();
             item.resolve(result as never);
         } catch (error) {
+            const err = error as Error;
+            addToDeadLetter(item.taskName, err.message || 'Unknown error');
+            logger.error({ error: err, taskName: item.taskName }, 'Persistence task failed');
             item.reject(error as Error);
         } finally {
             this.running = Math.max(0, this.running - 1);

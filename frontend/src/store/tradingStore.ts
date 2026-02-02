@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { DEFAULT_BOT_CONFIGS, type BotConfig } from '@/lib/bot/config';
 
 interface Account {
@@ -109,6 +109,39 @@ const MAX_LOGS = 50;
 const MAX_TRADE_RESULTS = 1000;
 const LOW_LATENCY_MODE = process.env.NEXT_PUBLIC_LOW_LATENCY_MODE === 'true';
 const DEFAULT_COOLDOWN_MS = LOW_LATENCY_MODE ? 0 : 10000;
+
+const memoryStorage = new Map<string, string>();
+const safeStorage = createJSONStorage(() => {
+    if (typeof window === 'undefined') {
+        return {
+            getItem: (name: string) => memoryStorage.get(name) ?? null,
+            setItem: (name: string, value: string) => {
+                memoryStorage.set(name, value);
+            },
+            removeItem: (name: string) => {
+                memoryStorage.delete(name);
+            },
+        };
+    }
+
+    try {
+        const testKey = '__storage_test__';
+        window.localStorage.setItem(testKey, '1');
+        window.localStorage.removeItem(testKey);
+        return window.localStorage;
+    } catch (error) {
+        console.warn('localStorage unavailable, using in-memory store', error);
+        return {
+            getItem: (name: string) => memoryStorage.get(name) ?? null,
+            setItem: (name: string, value: string) => {
+                memoryStorage.set(name, value);
+            },
+            removeItem: (name: string) => {
+                memoryStorage.delete(name);
+            },
+        };
+    }
+});
 
 export const useTradingStore = create<TradingState>()(
     persist(
@@ -409,6 +442,7 @@ export const useTradingStore = create<TradingState>()(
         }),
         {
             name: 'derivnexus-store',
+            storage: safeStorage,
             // Security: Exclude sensitive/ephemeral data from localStorage
             partialize: (state) => ({
                 // Persist only non-sensitive configuration

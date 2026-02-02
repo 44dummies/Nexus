@@ -17,7 +17,12 @@ export function Scene3D() {
         const deviceMemory = 'deviceMemory' in navigator ? (navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined;
         const cpuCores = navigator.hardwareConcurrency;
         const lowPower = (deviceMemory && deviceMemory <= 4) || (cpuCores && cpuCores <= 4);
+        const testCanvas = document.createElement('canvas');
+        const gl = testCanvas.getContext('webgl2') || testCanvas.getContext('webgl');
         if (media.matches || isSmall || lowPower) {
+            setEnabled(false);
+        }
+        if (!gl) {
             setEnabled(false);
         }
         if (window.devicePixelRatio && window.devicePixelRatio > 2) {

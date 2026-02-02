@@ -346,15 +346,17 @@ export function startTradeBackfillJob() {
     const intervalMs = Number(process.env.BACKFILL_INTERVAL_MS) || 5 * 60 * 1000;
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
 
-    setTimeout(() => {
+    const initialTimer = setTimeout(() => {
         runTradeBackfill().catch((error) => {
             logger.error({ error }, 'Backfill job failed');
         });
     }, 10_000);
+    initialTimer.unref();
 
-    setInterval(() => {
+    const backfillTimer = setInterval(() => {
         runTradeBackfill().catch((error) => {
             logger.error({ error }, 'Backfill job failed');
         });
     }, intervalMs);
+    backfillTimer.unref();
 }

@@ -1,8 +1,10 @@
-import { getSupabaseAdmin } from './supabaseAdmin';
+import { classifySupabaseError, withSupabaseRetry } from './supabaseAdmin';
 import { broadcastTrade } from './tradeStream';
 import { persistenceQueue } from './persistenceQueue';
+import { metrics } from './metrics';
+import { tradeLogger } from './logger';
+import { writePersistenceFallback } from './persistenceFallback';
 
-const { client: supabaseAdmin } = getSupabaseAdmin();
 
 export async function persistTrade(payload: {
     accountId: string;
@@ -19,39 +21,48 @@ export async function persistTrade(payload: {
     status: string;
     createdAt?: string | null;
 }) {
-    if (!supabaseAdmin) return null;
-
     return persistenceQueue.enqueue(async () => {
-        const { data, error } = await supabaseAdmin.from('trades').insert({
-            account_id: payload.accountId,
-            account_type: payload.accountType ?? null,
-            bot_id: payload.botId ?? null,
-            bot_run_id: payload.botRunId ?? null,
-            entry_profile_id: payload.entryProfileId ?? null,
-            contract_id: payload.contractId,
-            symbol: payload.symbol ?? null,
-            stake: payload.stake ?? null,
-            duration: payload.duration ?? null,
-            duration_unit: payload.durationUnit ?? null,
-            profit: payload.profit,
-            status: payload.status,
-            created_at: payload.createdAt ?? undefined,
-        }).select('id, created_at').maybeSingle();
+        try {
+            const { data, error } = await withSupabaseRetry('trades.insert', async (client) => await client.from('trades').insert({
+                account_id: payload.accountId,
+                account_type: payload.accountType ?? null,
+                bot_id: payload.botId ?? null,
+                bot_run_id: payload.botRunId ?? null,
+                entry_profile_id: payload.entryProfileId ?? null,
+                contract_id: payload.contractId,
+                symbol: payload.symbol ?? null,
+                stake: payload.stake ?? null,
+                duration: payload.duration ?? null,
+                duration_unit: payload.durationUnit ?? null,
+                profit: payload.profit,
+                status: payload.status,
+                created_at: payload.createdAt ?? undefined,
+            }).select('id, created_at').maybeSingle());
 
-        if (error) {
-            throw error;
+            if (error) {
+                throw error;
+            }
+
+            broadcastTrade(payload.accountId, {
+                id: data?.id ?? null,
+                contractId: payload.contractId,
+                profit: payload.profit,
+                symbol: payload.symbol ?? null,
+                createdAt: (data as { created_at?: string | null } | null)?.created_at ?? new Date().toISOString(),
+            });
+
+            metrics.counter('persistence.trade_ok');
+            return data?.id ?? null;
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            metrics.counter('persistence.trade_error');
+            tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Trade persistence failed');
+            if (info.category === 'connectivity') {
+                await writePersistenceFallback({ type: 'trade', payload, error: info });
+            }
+            throw error as Error;
         }
-
-        broadcastTrade(payload.accountId, {
-            id: data?.id ?? null,
-            contractId: payload.contractId,
-            profit: payload.profit,
-            symbol: payload.symbol ?? null,
-            createdAt: (data as { created_at?: string | null } | null)?.created_at ?? new Date().toISOString(),
-        });
-
-        return data?.id ?? null;
-    });
+    }, 'persistTrade');
 }
 
 export async function persistNotification(payload: {
@@ -61,21 +72,30 @@ export async function persistNotification(payload: {
     type?: string | null;
     data?: Record<string, unknown> | null;
 }) {
-    if (!supabaseAdmin) return;
-
     return persistenceQueue.enqueue(async () => {
-        const { error } = await supabaseAdmin.from('notifications').insert({
-            account_id: payload.accountId,
-            title: payload.title,
-            body: payload.body,
-            type: payload.type ?? null,
-            data: payload.data ?? null,
-        });
+        try {
+            const { error } = await withSupabaseRetry('notifications.insert', async (client) => await client.from('notifications').insert({
+                account_id: payload.accountId,
+                title: payload.title,
+                body: payload.body,
+                type: payload.type ?? null,
+                data: payload.data ?? null,
+            }));
 
-        if (error) {
-            throw error;
+            if (error) {
+                throw error;
+            }
+            metrics.counter('persistence.notification_ok');
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            metrics.counter('persistence.notification_error');
+            tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Notification persistence failed');
+            if (info.category === 'connectivity') {
+                await writePersistenceFallback({ type: 'notification', payload, error: info });
+            }
+            throw error as Error;
         }
-    });
+    }, 'persistNotification');
 }
 
 export async function persistOrderStatus(payload: {
@@ -88,21 +108,30 @@ export async function persistOrderStatus(payload: {
     latencyMs?: number | null;
     payload?: Record<string, unknown> | null;
 }) {
-    if (!supabaseAdmin) return;
-
     return persistenceQueue.enqueue(async () => {
-        const { error } = await supabaseAdmin.from('order_status').insert({
-            account_id: payload.accountId,
-            trade_id: payload.tradeId ?? null,
-            contract_id: payload.contractId ?? null,
-            event: payload.event,
-            status: payload.status ?? null,
-            price: payload.price ?? null,
-            latency_ms: payload.latencyMs ?? null,
-            payload: payload.payload ?? null,
-        });
-        if (error) {
-            throw error;
+        try {
+            const { error } = await withSupabaseRetry('order_status.insert', async (client) => await client.from('order_status').insert({
+                account_id: payload.accountId,
+                trade_id: payload.tradeId ?? null,
+                contract_id: payload.contractId ?? null,
+                event: payload.event,
+                status: payload.status ?? null,
+                price: payload.price ?? null,
+                latency_ms: payload.latencyMs ?? null,
+                payload: payload.payload ?? null,
+            }));
+            if (error) {
+                throw error;
+            }
+            metrics.counter('persistence.order_status_ok');
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            metrics.counter('persistence.order_status_error');
+            tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Order status persistence failed');
+            if (info.category === 'connectivity') {
+                await writePersistenceFallback({ type: 'order_status', payload, error: info });
+            }
+            throw error as Error;
         }
-    });
+    }, 'persistOrderStatus');
 }

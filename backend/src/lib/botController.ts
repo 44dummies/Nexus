@@ -9,7 +9,7 @@ import { subscribeTicks, unsubscribeTicks, getTickWindowView, type TickData } fr
 import { calculateATR, evaluateStrategy, getRequiredTicks, type StrategyConfig, type TradeSignal } from './strategyEngine';
 import { getRiskCache, initializeRiskCache } from './riskCache';
 import { executeTradeServerFast } from '../trade';
-import { getSupabaseAdmin } from './supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin, withSupabaseRetry } from './supabaseAdmin';
 import { botLogger } from './logger';
 import { metrics } from './metrics';
 import { LATENCY_METRICS, createLatencyTrace, nowMs, recordLatency } from './latencyTracker';
@@ -19,6 +19,8 @@ import { preTradeGate } from './preTradeGate';
 import { dropRiskConfig, primeRiskConfig } from './riskConfigCache';
 import { persistenceQueue } from './persistenceQueue';
 import type { TradeRiskConfig } from './riskConfig';
+import { writePersistenceFallback } from './persistenceFallback';
+import { record as recordObstacle } from './obstacleLog';
 
 interface BotRunConfig {
     strategyId: string;
@@ -84,6 +86,9 @@ const DEFAULT_MICROBATCH_SIZE = Math.max(1, Number(process.env.BOT_MICROBATCH_SI
 const DEFAULT_MICROBATCH_INTERVAL_MS = Math.max(0, Number(process.env.BOT_MICROBATCH_INTERVAL_MS) || 0);
 const DEFAULT_STRATEGY_BUDGET_MS = Math.max(0, Number(process.env.STRATEGY_BUDGET_MS) || 1);
 const ENABLE_STRATEGY_BUDGET = (process.env.ENABLE_STRATEGY_BUDGET || 'false') === 'true';
+const BOT_ZOMBIE_CLEANUP_ENABLED = (process.env.BOT_ZOMBIE_CLEANUP_ENABLED || 'false') === 'true';
+const BOT_ZOMBIE_CLEANUP_INTERVAL_MS = Math.max(60_000, Number(process.env.BOT_ZOMBIE_CLEANUP_INTERVAL_MS) || 10 * 60 * 1000);
+const BOT_ZOMBIE_STALE_MS = Math.max(60_000, Number(process.env.BOT_ZOMBIE_STALE_MS) || 15 * 60 * 1000);
 
 const symbolActors = new Map<string, SymbolActor>();
 const botEvents = new EventEmitter();
@@ -101,7 +106,7 @@ export async function reconcileBotRunsOnStartup(): Promise<void> {
     
     try {
         const now = new Date().toISOString();
-        const { data, error } = await supabaseAdmin
+        const { data, error } = await withSupabaseRetry('bot_runs.reconcile', async (client) => await client
             .from('bot_runs')
             .update({
                 run_status: 'stopped',
@@ -109,7 +114,7 @@ export async function reconcileBotRunsOnStartup(): Promise<void> {
             })
             .eq('backend_mode', true)
             .eq('run_status', 'running')
-            .select('id');
+            .select('id'));
         
         if (error) {
             botLogger.error({ error }, 'Failed to reconcile stale bot runs');
@@ -118,10 +123,12 @@ export async function reconcileBotRunsOnStartup(): Promise<void> {
         
         const count = data?.length ?? 0;
         if (count > 0) {
-            botLogger.info({ count, ids: data?.map(d => d.id) }, 'Reconciled stale backend bot runs from previous process');
+            const ids = Array.isArray(data) ? data.map((d: { id: string }) => d.id) : [];
+            botLogger.info({ count, ids }, 'Reconciled stale backend bot runs from previous process');
         }
     } catch (err) {
-        botLogger.error({ error: err }, 'Error during bot run reconciliation');
+        const info = classifySupabaseError(err);
+        botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Error during bot run reconciliation');
     }
 }
 
@@ -280,12 +287,16 @@ registerKillSwitchListener((accountId, state) => {
     if (accountId) {
         const runs = getAccountBotRuns(accountId);
         for (const run of runs) {
-            pauseBotRun(run.id, `Kill switch: ${state.reason ?? 'unknown'}`).catch(() => undefined);
+            pauseBotRun(run.id, `Kill switch: ${state.reason ?? 'unknown'}`).catch((error) => {
+                botLogger.error({ error, botRunId: run.id }, 'Failed to pause bot run on kill switch');
+            });
         }
         return;
     }
     for (const run of activeBotRuns.values()) {
-        pauseBotRun(run.id, `Kill switch: ${state.reason ?? 'unknown'}`).catch(() => undefined);
+        pauseBotRun(run.id, `Kill switch: ${state.reason ?? 'unknown'}`).catch((error) => {
+            botLogger.error({ error, botRunId: run.id }, 'Failed to pause bot run on kill switch');
+        });
     }
 });
 
@@ -356,14 +367,22 @@ export async function startBotRun(
 
     // Update database
     if (supabaseAdmin) {
-        await supabaseAdmin
-            .from('bot_runs')
-            .update({
-                run_status: 'running',
-                backend_mode: true,
-                started_at: botRun.startedAt.toISOString(),
-            })
-            .eq('id', botRunId);
+        try {
+            const { error } = await withSupabaseRetry('bot_runs.start', async (client) => await client
+                .from('bot_runs')
+                .update({
+                    run_status: 'running',
+                    backend_mode: true,
+                    started_at: botRun.startedAt.toISOString(),
+                })
+                .eq('id', botRunId));
+            if (error) {
+                botLogger.error({ error, botRunId }, 'Bot run update failed');
+            }
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            botLogger.error({ error: info.message, code: info.code, category: info.category, botRunId }, 'Bot run update failed');
+        }
     }
 }
 
@@ -385,10 +404,32 @@ function queueBotLog(payload: {
     message: string;
     data?: Record<string, unknown>;
 }): void {
-    if (!supabaseAdmin) return;
+    if (!supabaseAdmin) {
+        writePersistenceFallback({ type: 'bot_log', payload }).catch((error) => {
+            botLogger.error({ error, botRunId: payload.bot_run_id }, 'Bot log fallback write failed');
+        });
+        return;
+    }
     persistenceQueue.enqueue(async () => {
-        await supabaseAdmin.from('bot_logs').insert(payload);
-    }).catch((error) => {
+        try {
+            const { error } = await withSupabaseRetry('bot_logs.insert', async (client) => await client.from('bot_logs').insert(payload));
+            if (error) {
+                throw error;
+            }
+            metrics.counter('bot.logs.persisted');
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            metrics.counter('bot.logs.persist_error');
+            if (info.code === '42P01') {
+                recordObstacle('database', 'bot_logs table missing', 'Create bot_logs table or disable bot log persistence', 'high', ['backend/src/lib/botController.ts']);
+            }
+            botLogger.error({ error: info.message, code: info.code, category: info.category, botRunId: payload.bot_run_id }, 'Bot log persistence failed');
+            if (info.category === 'connectivity') {
+                await writePersistenceFallback({ type: 'bot_log', payload, error: info });
+            }
+            throw error as Error;
+        }
+    }, 'persistBotLog').catch((error) => {
         botLogger.warn({ error, botRunId: payload.bot_run_id }, 'Bot log enqueue failed');
     });
 
@@ -410,7 +451,9 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
 
     const { accountId, config } = botRun;
     if (isKillSwitchActive(accountId)) {
-        pauseBotRun(botRun.id, 'Kill switch active').catch(() => undefined);
+        pauseBotRun(botRun.id, 'Kill switch active').catch((error) => {
+            botLogger.error({ error, botRunId: botRun.id }, 'Failed to pause bot run on kill switch');
+        });
         return;
     }
 
@@ -427,7 +470,9 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         const atr = calculateATR(prices, window);
         if (typeof atr === 'number' && atr > volatilityThreshold) {
             triggerKillSwitch(accountId, 'VOLATILITY_SPIKE', false);
-            pauseBotRun(botRun.id, 'Volatility spike guard').catch(() => undefined);
+            pauseBotRun(botRun.id, 'Volatility spike guard').catch((error) => {
+                botLogger.error({ error, botRunId: botRun.id }, 'Failed to pause bot run on volatility spike guard');
+            });
             return;
         }
     }
@@ -613,13 +658,21 @@ export async function pauseBotRun(botRunId: string, reason?: string): Promise<vo
     botEvents.emit('event', { type: 'status', botRunId, status: 'paused', reason });
 
     if (supabaseAdmin) {
-        await supabaseAdmin
-            .from('bot_runs')
-            .update({
-                run_status: 'paused',
-                paused_reason: reason,
-            })
-            .eq('id', botRunId);
+        try {
+            const { error } = await withSupabaseRetry('bot_runs.pause', async (client) => await client
+                .from('bot_runs')
+                .update({
+                    run_status: 'paused',
+                    paused_reason: reason,
+                })
+                .eq('id', botRunId));
+            if (error) {
+                botLogger.error({ error, botRunId }, 'Bot run pause update failed');
+            }
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            botLogger.error({ error: info.message, code: info.code, category: info.category, botRunId }, 'Bot run pause update failed');
+        }
     }
 }
 
@@ -636,13 +689,21 @@ export async function resumeBotRun(botRunId: string): Promise<void> {
     botEvents.emit('event', { type: 'status', botRunId, status: 'running' });
 
     if (supabaseAdmin) {
-        await supabaseAdmin
-            .from('bot_runs')
-            .update({
-                run_status: 'running',
-                paused_reason: null,
-            })
-            .eq('id', botRunId);
+        try {
+            const { error } = await withSupabaseRetry('bot_runs.resume', async (client) => await client
+                .from('bot_runs')
+                .update({
+                    run_status: 'running',
+                    paused_reason: null,
+                })
+                .eq('id', botRunId));
+            if (error) {
+                botLogger.error({ error, botRunId }, 'Bot run resume update failed');
+            }
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            botLogger.error({ error: info.message, code: info.code, category: info.category, botRunId }, 'Bot run resume update failed');
+        }
     }
 }
 
@@ -673,15 +734,23 @@ export async function stopBotRun(botRunId: string): Promise<void> {
     botEvents.emit('event', { type: 'status', botRunId, status: 'stopped' });
 
     if (supabaseAdmin) {
-        await supabaseAdmin
-            .from('bot_runs')
-            .update({
-                run_status: 'stopped',
-                stopped_at: new Date().toISOString(),
-                trades_executed: botRun.tradesExecuted,
-                total_profit: botRun.totalProfit,
-            })
-            .eq('id', botRunId);
+        try {
+            const { error } = await withSupabaseRetry('bot_runs.stop', async (client) => await client
+                .from('bot_runs')
+                .update({
+                    run_status: 'stopped',
+                    stopped_at: new Date().toISOString(),
+                    trades_executed: botRun.tradesExecuted,
+                    total_profit: botRun.totalProfit,
+                })
+                .eq('id', botRunId));
+            if (error) {
+                botLogger.error({ error, botRunId }, 'Bot run stop update failed');
+            }
+        } catch (error) {
+            const info = classifySupabaseError(error);
+            botLogger.error({ error: info.message, code: info.code, category: info.category, botRunId }, 'Bot run stop update failed');
+        }
     }
 }
 
@@ -747,6 +816,53 @@ export async function stopAllBotRuns(accountId: string): Promise<void> {
     const runs = getAccountBotRuns(accountId);
     for (const run of runs) {
         await stopBotRun(run.id);
+    }
+}
+
+export function startZombieCleanupJob(): void {
+    if (!BOT_ZOMBIE_CLEANUP_ENABLED) return;
+    if (!supabaseAdmin) {
+        recordObstacle('startup', 'Zombie cleanup', 'Supabase not configured for zombie cleanup', 'medium', ['backend/src/lib/botController.ts']);
+        return;
+    }
+    recordObstacle('startup', 'Zombie cleanup', 'Zombie cleanup enabled without instance scoping; ensure single backend instance', 'medium', ['backend/src/lib/botController.ts']);
+    const zombieTimer = setInterval(() => {
+        cleanupZombieRuns().catch((error) => {
+            botLogger.error({ error }, 'Zombie cleanup failed');
+        });
+    }, BOT_ZOMBIE_CLEANUP_INTERVAL_MS);
+    zombieTimer.unref();
+}
+
+async function cleanupZombieRuns(): Promise<void> {
+    if (!supabaseAdmin) return;
+    const cutoff = new Date(Date.now() - BOT_ZOMBIE_STALE_MS).toISOString();
+    try {
+        const { data, error } = await withSupabaseRetry('bot_runs.zombie_scan', async (client) => await client
+            .from('bot_runs')
+            .select('id, started_at')
+            .eq('backend_mode', true)
+            .eq('run_status', 'running')
+            .lt('started_at', cutoff));
+        if (error) {
+            botLogger.error({ error }, 'Zombie cleanup scan failed');
+            return;
+        }
+        const staleRuns = (data || []).filter((run: { id: string }) => !activeBotRuns.has(run.id));
+        if (staleRuns.length === 0) return;
+        const ids = staleRuns.map((run: { id: string }) => run.id);
+        const { error: stopError } = await withSupabaseRetry('bot_runs.zombie_stop', async (client) => await client
+            .from('bot_runs')
+            .update({ run_status: 'stopped', stopped_at: new Date().toISOString() })
+            .in('id', ids));
+        if (stopError) {
+            botLogger.error({ error: stopError, ids }, 'Zombie cleanup stop failed');
+            return;
+        }
+        botLogger.warn({ ids }, 'Zombie bot runs cleaned up');
+    } catch (error) {
+        const info = classifySupabaseError(error);
+        botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Zombie cleanup failed');
     }
 }
 

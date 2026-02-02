@@ -1,18 +1,25 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { clearKillSwitch, triggerKillSwitch } from '../lib/riskManager';
 import { requireAuth } from '../lib/authMiddleware';
 import { riskLogger } from '../lib/logger';
-import { assertKillSwitchAuthorization } from '../lib/killSwitchAuth';
+import { assertKillSwitchAuthorization, verifyKillSwitchConfig } from '../lib/killSwitchAuth';
+import { metrics } from '../lib/metrics';
 
 const router = Router();
+
+router.get('/kill-switch/config', (_req, res) => {
+    const status = verifyKillSwitchConfig();
+    return res.json({ ok: status.configured, reason: status.reason ?? null });
+});
 
 router.use(requireAuth);
 
 router.get('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('risk.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -37,12 +44,13 @@ router.get('/', async (req, res) => {
 
     const { data, error: queryError } = await query;
     if (queryError) {
-        console.error('Supabase risk events query failed', { error: queryError });
+        const info = classifySupabaseError(queryError);
+        riskLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase risk events query failed');
+        metrics.counter('risk.db_query_error');
         return res.status(500).json({
-            error: queryError.message,
-            code: queryError.code,
-            hint: queryError.hint,
-            details: queryError.details,
+            error: info.message,
+            code: info.code,
+            category: info.category,
         });
     }
 
@@ -52,6 +60,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('risk.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -72,12 +81,13 @@ router.post('/', async (req, res) => {
     });
 
     if (insertError) {
-        console.error('Supabase risk events insert failed', { error: insertError });
+        const info = classifySupabaseError(insertError);
+        riskLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase risk events insert failed');
+        metrics.counter('risk.db_insert_error');
         return res.status(500).json({
-            error: insertError.message,
-            code: insertError.code,
-            hint: insertError.hint,
-            details: insertError.details,
+            error: info.message,
+            code: info.code,
+            category: info.category,
         });
     }
 

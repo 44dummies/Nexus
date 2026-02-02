@@ -16,6 +16,14 @@ type TokenCandidate = {
     currencyHint?: string | null;
 };
 
+function validateTokenFormat(token: string): { ok: boolean; reason?: string } {
+    const trimmed = token.trim();
+    if (!trimmed) return { ok: false, reason: 'Token missing' };
+    if (trimmed.length < 8) return { ok: false, reason: 'Token too short' };
+    if (/\s/.test(trimmed)) return { ok: false, reason: 'Token contains whitespace' };
+    return { ok: true };
+}
+
 function buildTokenCandidates(req: Request): TokenCandidate[] {
     const realToken = req.cookies?.deriv_token as string | undefined;
     const demoToken = req.cookies?.deriv_demo_token as string | undefined;
@@ -89,6 +97,12 @@ export function createAuthMiddleware(
         // SEC: AUTH-03 - Only use the first (active) token, fail fast instead of cascade
         // This prevents silent account switches when the active token fails
         const candidate = candidates[0];
+        const validation = validateTokenFormat(candidate.token);
+        if (!validation.ok) {
+            authLogger.warn({ requestId: req.requestId, reason: validation.reason }, 'Invalid auth token format');
+            res.status(401).json({ error: 'User not authenticated', code: 'InvalidTokenFormat' });
+            return;
+        }
         
         try {
             const authorize = await authorizeFn(candidate.token);

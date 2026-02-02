@@ -1,4 +1,15 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { setComponentStatus } from './healthStatus';
+import { recordObstacle } from './obstacleLog';
+
+export type SupabaseErrorCategory = 'permission' | 'connectivity' | 'query' | 'unknown';
+
+export interface SupabaseErrorInfo {
+    category: SupabaseErrorCategory;
+    code?: string;
+    status?: number;
+    message: string;
+}
 
 export type SupabaseKeyType = 'service' | 'anon';
 
@@ -40,6 +51,7 @@ export function getSupabaseAdmin(): SupabaseAdminResult {
     }
 
     if (!url || !key || !keyType) {
+        setComponentStatus('db', 'error', 'Supabase not configured');
         return {
             client: null,
             keyType: null,
@@ -54,6 +66,7 @@ export function getSupabaseAdmin(): SupabaseAdminResult {
     }
 
     if (cachedClient && cachedUrl === url && cachedKey === key) {
+        setComponentStatus('db', 'ok');
         return { client: cachedClient, keyType: cachedKeyType || keyType };
     }
 
@@ -64,6 +77,7 @@ export function getSupabaseAdmin(): SupabaseAdminResult {
         auth: { persistSession: false },
     });
 
+    setComponentStatus('db', 'ok');
     return { client: cachedClient, keyType };
 }
 
@@ -83,6 +97,7 @@ export function getSupabaseServiceAdmin(): SupabaseAdminResult {
     }
 
     if (!url || !serviceKey) {
+        setComponentStatus('db', 'error', 'Supabase service role not configured');
         return {
             client: null,
             keyType: null,
@@ -92,6 +107,7 @@ export function getSupabaseServiceAdmin(): SupabaseAdminResult {
     }
 
     if (cachedClient && cachedUrl === url && cachedKey === serviceKey && cachedKeyType === 'service') {
+        setComponentStatus('db', 'ok');
         return { client: cachedClient, keyType: 'service' };
     }
 
@@ -102,6 +118,7 @@ export function getSupabaseServiceAdmin(): SupabaseAdminResult {
         auth: { persistSession: false },
     });
 
+    setComponentStatus('db', 'ok');
     return { client: cachedClient, keyType: 'service' };
 }
 
@@ -117,6 +134,7 @@ export function getSupabaseClient(): SupabaseAdminResult {
     }
 
     if (!url || !anonKey) {
+        setComponentStatus('db', 'error', 'Supabase anon client not configured');
         return {
             client: null,
             keyType: null,
@@ -126,6 +144,7 @@ export function getSupabaseClient(): SupabaseAdminResult {
     }
 
     if (cachedAnonClient && cachedAnonUrl === url && cachedAnonKey === anonKey) {
+        setComponentStatus('db', 'ok');
         return { client: cachedAnonClient, keyType: 'anon' };
     }
 
@@ -135,5 +154,83 @@ export function getSupabaseClient(): SupabaseAdminResult {
         auth: { persistSession: false },
     });
 
+    setComponentStatus('db', 'ok');
     return { client: cachedAnonClient, keyType: 'anon' };
+}
+
+export function classifySupabaseError(error: any): SupabaseErrorInfo {
+    const message = typeof error?.message === 'string' ? error.message : 'Supabase error';
+    const code = typeof error?.code === 'string' ? error.code : undefined;
+    const status = typeof error?.status === 'number' ? error.status : undefined;
+
+    if (status === 401 || status === 403 || message.toLowerCase().includes('permission')) {
+        return { category: 'permission', code, status, message };
+    }
+
+    if (message.toLowerCase().includes('network') || message.toLowerCase().includes('timeout')) {
+        return { category: 'connectivity', code, status, message };
+    }
+
+    if (code && ['42501', '28P01', 'PGRST301'].includes(code)) {
+        return { category: 'permission', code, status, message };
+    }
+
+    if (code && ['PGRST000', 'PGRST116'].includes(code)) {
+        return { category: 'query', code, status, message };
+    }
+
+    return { category: 'unknown', code, status, message };
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export async function withSupabaseRetry<T = any>(
+    taskName: string,
+    operation: (client: SupabaseClient) => Promise<T>,
+    options?: { attempts?: number; baseDelayMs?: number; maxDelayMs?: number }
+): Promise<T> {
+    const { client, error, missing } = getSupabaseAdmin();
+    if (!client) {
+        const detail = error || 'Supabase not configured';
+        recordObstacle('database', taskName, detail, 'high', ['backend/src/lib/supabaseAdmin.ts']);
+        throw new Error(detail + (missing?.length ? ` Missing: ${missing.join(', ')}` : ''));
+    }
+
+    const attempts = Math.max(1, (options?.attempts ?? Number(process.env.SUPABASE_RETRY_ATTEMPTS)) || 3);
+    const baseDelayMs = Math.max(100, (options?.baseDelayMs ?? Number(process.env.SUPABASE_RETRY_BASE_MS)) || 200);
+    const maxDelayMs = Math.max(baseDelayMs, (options?.maxDelayMs ?? Number(process.env.SUPABASE_RETRY_MAX_MS)) || 2000);
+
+    let attempt = 0;
+    while (attempt < attempts) {
+        attempt += 1;
+        try {
+            return await operation(client);
+        } catch (err) {
+            const info = classifySupabaseError(err);
+            if (info.category !== 'connectivity' || attempt >= attempts) {
+                throw err;
+            }
+            const delay = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt - 1));
+            await sleep(delay);
+        }
+    }
+
+    throw new Error('Supabase retry attempts exhausted');
+}
+
+// Test helpers
+export function setSupabaseClientForTest(client: SupabaseClient, url: string, key: string, keyType: SupabaseKeyType = 'service'): void {
+    cachedClient = client;
+    cachedUrl = url;
+    cachedKey = key;
+    cachedKeyType = keyType;
+}
+
+export function clearSupabaseClientForTest(): void {
+    cachedClient = null;
+    cachedUrl = null;
+    cachedKey = null;
+    cachedKeyType = null;
 }

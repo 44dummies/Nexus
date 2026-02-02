@@ -26,6 +26,7 @@ export function subscribeTradeStream(accountId: string, res: Response) {
             // ignore write errors on stale connections
         }
     }, HEARTBEAT_MS);
+    heartbeat.unref();
 
     return () => {
         clearInterval(heartbeat);

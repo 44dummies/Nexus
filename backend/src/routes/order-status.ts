@@ -1,7 +1,9 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { requireAuth } from '../lib/authMiddleware';
+import { tradeLogger } from '../lib/logger';
+import { metrics } from '../lib/metrics';
 
 const router = Router();
 
@@ -10,6 +12,7 @@ router.use(requireAuth);
 router.get('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('order_status.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -39,12 +42,13 @@ router.get('/', async (req, res) => {
 
     const { data, error: queryError } = await query;
     if (queryError) {
-        console.error('Supabase order status query failed', { error: queryError });
+        const info = classifySupabaseError(queryError);
+        tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase order status query failed');
+        metrics.counter('order_status.db_query_error');
         return res.status(500).json({
-            error: queryError.message,
-            code: queryError.code,
-            hint: queryError.hint,
-            details: queryError.details,
+            error: info.message,
+            code: info.code,
+            category: info.category,
         });
     }
 

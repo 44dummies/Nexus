@@ -1,4 +1,5 @@
 import { metrics } from './metrics';
+import { tickLogger } from './logger';
 import { OrderBook } from './orderBook';
 import { RingBuffer } from './ringBuffer';
 import { getOrCreateConnection, registerConnectionReadyListener, registerStreamingListener, sendMessage } from './wsManager';
@@ -214,8 +215,9 @@ export async function ensureMarketData(accountId: string, token: string, symbol:
             if (!isReconnect) return;
             for (const entry of marketData.values()) {
                 if (entry.accountId !== accountId || entry.mode !== 'order_book') continue;
-                subscribeOrderBook(accountId, token, entry.symbol).catch(() => {
+                subscribeOrderBook(accountId, token, entry.symbol).catch((error) => {
                     metrics.counter('marketdata.orderbook_resubscribe_error');
+                    tickLogger.error({ error, accountId, symbol: entry.symbol }, 'Order book resubscribe failed');
                 });
             }
         });

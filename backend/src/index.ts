@@ -15,12 +15,20 @@ import logger from './lib/logger';
 import { defaultRateLimit } from './lib/rateLimit';
 import { startTradeBackfillJob } from './lib/tradeBackfill';
 import metricsRouter from './routes/metrics';
-import { initMetrics } from './lib/metrics';
+import { initMetrics, metrics } from './lib/metrics';
 import { initRiskManager } from './lib/riskManager';
-import { reconcileBotRunsOnStartup } from './lib/botController';
+import { reconcileBotRunsOnStartup, startZombieCleanupJob } from './lib/botController';
+import { initObstacleLog } from './lib/obstacleLog';
+import { getHealthSnapshot, setComponentStatus } from './lib/healthStatus';
+import { initResourceMonitor } from './lib/resourceMonitor';
+import { printConfigDoctorReport, runConfigDoctor, waitForSupabaseReady } from './lib/configDoctor';
+import { initRecoveryManager } from './lib/recoveryManager';
 
 const app = express();
 initMetrics();
+initObstacleLog();
+initResourceMonitor();
+initRecoveryManager();
 
 app.set('trust proxy', 1);
 app.use(helmet());
@@ -88,6 +96,25 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 app.use(cookieParser());
 
+let inFlight = 0;
+app.use((req, res, next) => {
+    const start = Date.now();
+    inFlight += 1;
+    setComponentStatus('http', 'ok');
+    res.on('finish', () => {
+        inFlight = Math.max(0, inFlight - 1);
+        const duration = Date.now() - start;
+        metrics.histogram('http.request_ms', duration);
+        metrics.gauge('http.in_flight', inFlight);
+        metrics.counter(`http.status.${res.statusCode}`);
+    });
+    res.on('close', () => {
+        inFlight = Math.max(0, inFlight - 1);
+        metrics.gauge('http.in_flight', inFlight);
+    });
+    next();
+});
+
 // Correlation/request ID middleware
 app.use((req, res, next) => {
     const headerId = req.get('x-request-id') || req.get('x-correlation-id');
@@ -154,7 +181,7 @@ app.use((req, res, next) => {
 });
 
 app.get('/health', (_req, res) => {
-    res.json({ ok: true });
+    res.json(getHealthSnapshot());
 });
 
 app.use('/api/auth', authRouter);
@@ -165,13 +192,50 @@ app.use('/api/bot-runs', botRunsRouter);
 app.use('/api/order-status', orderStatusRouter);
 app.use('/metrics', metricsRouter);
 
-const port = Number(process.env.PORT) || 4000;
+const rawPort = Number(process.env.PORT);
+const SAFE_PORT = Number(process.env.SAFE_PORT) || 8080;
+const ALLOW_PRIVILEGED_PORT = (process.env.ALLOW_PRIVILEGED_PORT || 'false') === 'true';
+const port = Number.isFinite(rawPort) && rawPort > 0 ? rawPort : 4000;
+
+function resolvePort(): number {
+    if (port < 1024 && !ALLOW_PRIVILEGED_PORT) {
+        logger.warn({ port, safePort: SAFE_PORT }, 'Privileged port configured; falling back to safe port');
+        return SAFE_PORT;
+    }
+    return port;
+}
 
 async function startServer() {
+    const config = runConfigDoctor();
+    printConfigDoctorReport(config.issues);
+    const hasErrors = config.issues.some((issue) => issue.severity === 'error');
+    const failFast = (process.env.CONFIG_DOCTOR_FAIL_FAST || (process.env.NODE_ENV === 'production' ? 'true' : 'false')) === 'true';
+    if (hasErrors && failFast) {
+        logger.error('Config doctor detected fatal issues. Exiting.');
+        process.exit(1);
+    }
+
+    await waitForSupabaseReady();
     await initRiskManager();
-    app.listen(port, () => {
-        logger.info({ port, origins: allowedOrigins }, 'DerivNexus backend started');
+    await reconcileBotRunsOnStartup();
+    startZombieCleanupJob();
+    const bindPort = resolvePort();
+    const server = app.listen(bindPort, () => {
+        if (bindPort !== port) {
+            logger.warn({ configuredPort: port, bindPort }, 'Using safe port due to privileged port restriction');
+        }
+        logger.info({ port: bindPort, origins: allowedOrigins }, 'DerivNexus backend started');
         startTradeBackfillJob();
+    });
+    server.on('error', (error: NodeJS.ErrnoException) => {
+        if (error.code === 'EACCES') {
+            logger.error({ port: bindPort }, 'Permission denied binding port. Use a port >=1024 or set ALLOW_PRIVILEGED_PORT=true with proper privileges.');
+        } else if (error.code === 'EADDRINUSE') {
+            logger.error({ port: bindPort }, 'Port already in use. Set PORT to a free port.');
+        } else {
+            logger.error({ error }, 'Server failed to bind');
+        }
+        process.exit(1);
     });
 }
 

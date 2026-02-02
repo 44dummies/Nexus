@@ -3,6 +3,8 @@ import { isKillSwitchActive, preTradeCheck } from './riskManager';
 import { RISK_DEFAULTS, toNumber, type TradeRiskConfig } from './riskConfig';
 import { getRiskConfigCached } from './riskConfigCache';
 import { nowMs, recordLatency, LATENCY_METRICS, type LatencyTrace, markTrace } from './latencyTracker';
+import { riskLogger } from './logger';
+import { metrics } from './metrics';
 
 export interface PreTradeGateContext {
     accountId: string;
@@ -11,22 +13,31 @@ export interface PreTradeGateContext {
     riskOverrides?: Partial<TradeRiskConfig>;
 }
 
+export interface PreTradeGateResult {
+    allowed: boolean;
+    reasons: string[];
+    stake: number;
+    risk: TradeRiskConfig;
+}
+
 const LOW_LATENCY_MODE = (process.env.LOW_LATENCY_MODE || 'false') === 'true';
 const DEFAULT_TRADE_COOLDOWN_MS = Math.max(0, Number(process.env.DEFAULT_TRADE_COOLDOWN_MS) || (LOW_LATENCY_MODE ? 0 : 3000));
 const DEFAULT_LOSS_COOLDOWN_MS = Math.max(0, Number(process.env.DEFAULT_LOSS_COOLDOWN_MS) || 60000);
 
-export function preTradeGate(
+export function evaluatePreTradeGate(
     ctx: PreTradeGateContext,
     latency?: LatencyTrace
-): { stake: number; risk: TradeRiskConfig } {
+): PreTradeGateResult {
     const gateStart = latency ? markTrace(latency, 'gateStartTs', nowMs()) : nowMs();
+    const reasons: string[] = [];
+
     if (isKillSwitchActive(ctx.accountId)) {
-        throw new Error('Kill switch active');
+        reasons.push('KILL_SWITCH_ACTIVE');
     }
 
     const cacheEntry = getRiskCache(ctx.accountId);
     if (!cacheEntry) {
-        throw new Error('Risk state unavailable');
+        reasons.push('RISK_CACHE_UNAVAILABLE');
     }
 
     const storedConfig = getRiskConfigCached(ctx.botRunId);
@@ -71,20 +82,19 @@ export function preTradeGate(
     });
 
     if (riskStatus.status === 'HALT') {
-        throw new Error(riskStatus.reason === 'DAILY_LOSS'
-            ? 'Daily loss limit reached'
+        reasons.push(riskStatus.reason === 'DAILY_LOSS'
+            ? 'DAILY_LOSS_LIMIT'
             : riskStatus.reason === 'DRAWDOWN'
-                ? 'Drawdown limit reached'
-                : 'Risk halt');
+                ? 'DRAWDOWN_LIMIT'
+                : 'RISK_HALT');
     }
 
     if (riskStatus.status === 'MAX_CONCURRENT') {
-        throw new Error('Maximum concurrent trades reached');
+        reasons.push('MAX_CONCURRENT_TRADES');
     }
 
     if (riskStatus.status === 'COOLDOWN') {
-        const waitMs = riskStatus.cooldownMs ?? 1000;
-        throw new Error(`Cooldown active - wait ${Math.ceil(waitMs / 1000)}s`);
+        reasons.push(riskStatus.reason === 'LOSS_STREAK' ? 'LOSS_COOLDOWN' : 'TRADE_COOLDOWN');
     }
 
     let stake = ctx.stake;
@@ -102,17 +112,55 @@ export function preTradeGate(
     });
 
     if (!preTrade.allowed) {
-        throw new Error(`Risk limit: ${preTrade.reason}`);
+        reasons.push(`RISK_LIMIT_${preTrade.reason ?? 'UNKNOWN'}`);
     }
 
-    const openResult = recordTradeOpened(ctx.accountId, stake, risk.maxConcurrentTrades);
-    if (!openResult.allowed) {
-        throw new Error(openResult.reason ?? 'Risk check failed');
+    if (reasons.length === 0) {
+        const openResult = recordTradeOpened(ctx.accountId, stake, risk.maxConcurrentTrades);
+        if (!openResult.allowed) {
+            reasons.push(openResult.reason ?? 'RISK_OPEN_TRADE_REJECT');
+        }
     }
 
     if (latency) {
         markTrace(latency, 'gateEndTs', nowMs());
         recordLatency(LATENCY_METRICS.gateDuration, gateStart, latency.gateEndTs);
     }
-    return { stake, risk };
+
+    if (reasons.length > 0) {
+        metrics.counter('risk.pre_trade_reject');
+        for (const reason of reasons) {
+            metrics.counter(`risk.pre_trade_reject.${reason.toLowerCase()}`);
+        }
+        riskLogger.warn({
+            accountId: ctx.accountId,
+            botRunId: ctx.botRunId ?? null,
+            stake,
+            reasons,
+        }, 'Risk decision trace: pre-trade rejected');
+    }
+
+    return { allowed: reasons.length === 0, reasons, stake, risk };
+}
+
+function formatRejectionMessage(reasons: string[]): string {
+    if (reasons.length === 0) return 'Risk gate rejected';
+    if (reasons.includes('KILL_SWITCH_ACTIVE')) return 'Kill switch active';
+    if (reasons.includes('DAILY_LOSS_LIMIT')) return 'Daily loss limit reached';
+    if (reasons.includes('DRAWDOWN_LIMIT')) return 'Drawdown limit reached';
+    if (reasons.includes('MAX_CONCURRENT_TRADES')) return 'Maximum concurrent trades reached';
+    if (reasons.includes('LOSS_COOLDOWN')) return 'Loss streak cooldown active';
+    if (reasons.includes('TRADE_COOLDOWN')) return 'Trade cooldown active';
+    return `Risk limit: ${reasons[0]}`;
+}
+
+export function preTradeGate(
+    ctx: PreTradeGateContext,
+    latency?: LatencyTrace
+): { stake: number; risk: TradeRiskConfig } {
+    const result = evaluatePreTradeGate(ctx, latency);
+    if (!result.allowed) {
+        throw new Error(formatRejectionMessage(result.reasons));
+    }
+    return { stake: result.stake, risk: result.risk };
 }

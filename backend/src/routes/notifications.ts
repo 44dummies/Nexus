@@ -1,7 +1,9 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { requireAuth } from '../lib/authMiddleware';
+import { tradeLogger } from '../lib/logger';
+import { metrics } from '../lib/metrics';
 
 const router = Router();
 
@@ -10,6 +12,7 @@ router.use(requireAuth);
 router.get('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('notifications.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -38,12 +41,13 @@ router.get('/', async (req, res) => {
 
     const { data, error: queryError } = await query;
     if (queryError) {
-        console.error('Supabase notifications query failed', { error: queryError });
+        const info = classifySupabaseError(queryError);
+        tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase notifications query failed');
+        metrics.counter('notifications.db_query_error');
         return res.status(500).json({
-            error: queryError.message,
-            code: queryError.code,
-            hint: queryError.hint,
-            details: queryError.details,
+            error: info.message,
+            code: info.code,
+            category: info.category,
         });
     }
 
@@ -53,6 +57,7 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('notifications.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -88,12 +93,13 @@ router.post('/', async (req, res) => {
 
     const { data, error: updateError } = await query.select('id, read_at');
     if (updateError) {
-        console.error('Supabase notifications update failed', { error: updateError });
+        const info = classifySupabaseError(updateError);
+        tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase notifications update failed');
+        metrics.counter('notifications.db_update_error');
         return res.status(500).json({
-            error: updateError.message,
-            code: updateError.code,
-            hint: updateError.hint,
-            details: updateError.details,
+            error: info.message,
+            code: info.code,
+            category: info.category,
         });
     }
 

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import {
     startBotRun,
     stopBotRun,
@@ -21,6 +21,9 @@ import {
     StatusBackendSchema
 } from '../lib/validation';
 import { requireAuth } from '../lib/authMiddleware';
+import { botLogger } from '../lib/logger';
+import { metrics } from '../lib/metrics';
+import { shouldAcceptWork } from '../lib/resourceMonitor';
 
 const router = Router();
 router.use(requireAuth);
@@ -41,6 +44,7 @@ export function enforceRunOwnership(activeAccount: string, runId: string): { sta
 router.post('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('bot.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -52,6 +56,11 @@ router.post('/', async (req, res) => {
     const action = typeof req.body?.action === 'string' ? req.body.action : '';
 
     if (action === 'start') {
+        const resourceCheck = shouldAcceptWork();
+        if (!resourceCheck.ok) {
+            metrics.counter('bot.start_rejected_resource_circuit');
+            return res.status(503).json({ error: 'System under load', code: 'RESOURCE_CIRCUIT_OPEN', detail: resourceCheck.reason });
+        }
         const validation = StartBotSchema.safeParse(req.body);
         if (!validation.success) {
             return res.status(400).json({ error: 'Invalid payload', details: validation.error.format() });
@@ -66,12 +75,13 @@ router.post('/', async (req, res) => {
             .eq('run_status', 'running');
 
         if (stopError) {
-            console.error('Supabase bot run stop failed', { error: stopError });
+            const info = classifySupabaseError(stopError);
+            botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase bot run stop failed');
+            metrics.counter('bot.db_update_error');
             return res.status(500).json({
-                error: stopError.message,
-                code: stopError.code,
-                hint: stopError.hint,
-                details: stopError.details,
+                error: info.message,
+                code: info.code,
+                category: info.category,
             });
         }
 
@@ -88,12 +98,13 @@ router.post('/', async (req, res) => {
             .single();
 
         if (insertError) {
-            console.error('Supabase bot run start failed', { error: insertError });
+            const info = classifySupabaseError(insertError);
+            botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase bot run start failed');
+            metrics.counter('bot.db_insert_error');
             return res.status(500).json({
-                error: insertError.message,
-                code: insertError.code,
-                hint: insertError.hint,
-                details: insertError.details,
+                error: info.message,
+                code: info.code,
+                category: info.category,
             });
         }
 
@@ -114,12 +125,13 @@ router.post('/', async (req, res) => {
                 .eq('account_id', activeAccount);
 
             if (stopError) {
-                console.error('Supabase bot run stop by id failed', { error: stopError });
+                const info = classifySupabaseError(stopError);
+                botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase bot run stop by id failed');
+                metrics.counter('bot.db_update_error');
                 return res.status(500).json({
-                    error: stopError.message,
-                    code: stopError.code,
-                    hint: stopError.hint,
-                    details: stopError.details,
+                    error: info.message,
+                    code: info.code,
+                    category: info.category,
                 });
             }
             return res.json({ success: true });
@@ -132,12 +144,13 @@ router.post('/', async (req, res) => {
             .eq('run_status', 'running');
 
         if (stopError) {
-            console.error('Supabase bot run stop failed', { error: stopError });
+            const info = classifySupabaseError(stopError);
+            botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase bot run stop failed');
+            metrics.counter('bot.db_update_error');
             return res.status(500).json({
-                error: stopError.message,
-                code: stopError.code,
-                hint: stopError.hint,
-                details: stopError.details,
+                error: info.message,
+                code: info.code,
+                category: info.category,
             });
         }
 
@@ -147,6 +160,11 @@ router.post('/', async (req, res) => {
     // ==================== BACKEND MODE ACTIONS ====================
 
     if (action === 'start-backend') {
+        const resourceCheck = shouldAcceptWork();
+        if (!resourceCheck.ok) {
+            metrics.counter('bot.start_rejected_resource_circuit');
+            return res.status(503).json({ error: 'System under load', code: 'RESOURCE_CIRCUIT_OPEN', detail: resourceCheck.reason });
+        }
         const validation = StartBackendSchema.safeParse(req.body);
         if (!validation.success) {
             return res.status(400).json({ error: 'Invalid configuration', details: validation.error.format() });
@@ -189,10 +207,11 @@ router.post('/', async (req, res) => {
                 .eq('id', zombieRunId);
 
             if (stopError) {
-                console.error('Failed to stop zombie bot run', stopError);
+                const info = classifySupabaseError(stopError);
+                botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Failed to stop zombie bot run');
                 return res.status(500).json({
                     error: 'Failed to clean up stale bot run. Please try again.',
-                    details: stopError
+                    details: info.message
                 });
             }
 
@@ -225,8 +244,10 @@ router.post('/', async (req, res) => {
             .single();
 
         if (insertError) {
-            console.error('Supabase bot run start failed', { error: insertError });
-            return res.status(500).json({ error: insertError.message });
+            const info = classifySupabaseError(insertError);
+            botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase bot run start failed');
+            metrics.counter('bot.db_insert_error');
+            return res.status(500).json({ error: info.message, code: info.code, category: info.category });
         }
 
         const runId = data?.id;
@@ -294,7 +315,8 @@ router.post('/', async (req, res) => {
             .eq('run_status', 'running');
 
         if (staleStopError) {
-            console.error('Supabase stale bot run stop failed', { error: staleStopError });
+            const info = classifySupabaseError(staleStopError);
+            botLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase stale bot run stop failed');
             // Non-blocking but logged
         }
 
@@ -407,6 +429,7 @@ router.get('/:id/stream', (req, res) => {
     const keepAlive = setInterval(() => {
         res.write(': keepalive\n\n');
     }, 30000);
+    keepAlive.unref();
 
     req.on('close', () => {
         clearInterval(keepAlive);

@@ -13,7 +13,7 @@ interface RateLimitEntry {
 const rateLimitStore = new Map<string, RateLimitEntry>();
 
 // Clean up old entries every 5 minutes
-setInterval(() => {
+const rateLimitCleanup = setInterval(() => {
     const now = Date.now();
     for (const [key, entry] of rateLimitStore.entries()) {
         if (now - entry.windowStart > 60000) {
@@ -21,6 +21,7 @@ setInterval(() => {
         }
     }
 }, 5 * 60 * 1000);
+rateLimitCleanup.unref();
 
 interface RateLimitOptions {
     windowMs?: number;      // Window duration in ms (default: 60000 = 1 minute)

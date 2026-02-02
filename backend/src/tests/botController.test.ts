@@ -201,7 +201,8 @@ test('Trade statistics are tracked correctly', () => {
     recordTrade(0.8);   // Win
     
     assert.equal(run.tradesExecuted, 3);
-    assert.equal(run.totalProfit, 0.3); // 0.5 - 1.0 + 0.8
+    // Use tolerance for floating point comparison (0.5 - 1.0 + 0.8 = 0.3)
+    assert.ok(Math.abs(run.totalProfit - 0.3) < 0.0001, `Expected ~0.3 but got ${run.totalProfit}`);
     assert.notEqual(run.lastTradeAt, null);
 });
 

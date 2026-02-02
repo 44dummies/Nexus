@@ -1,10 +1,14 @@
 import { Router } from 'express';
-import { getSupabaseAdmin } from '../lib/supabaseAdmin';
+import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { subscribeTradeStream } from '../lib/tradeStream';
 import { executeTradeServerFast } from '../trade';
 import { requireAuth } from '../lib/authMiddleware';
 import { tradeRateLimit } from '../lib/rateLimit';
+import { tradeLogger } from '../lib/logger';
+import { metrics } from '../lib/metrics';
+import { shouldAcceptWork } from '../lib/resourceMonitor';
+import { ExecutionError } from '../lib/executionEngine';
 
 const router = Router();
 
@@ -18,6 +22,7 @@ router.use(tradeRateLimit as any);
 router.get('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
+        metrics.counter('trade.db_unavailable');
         return res.status(503).json({ error: configError || 'Supabase not configured', missing });
     }
 
@@ -36,12 +41,13 @@ router.get('/', async (req, res) => {
         .limit(limit);
 
     if (queryError) {
-        console.error('Supabase trades query failed', { error: queryError });
+        const info = classifySupabaseError(queryError);
+        tradeLogger.error({ error: info.message, code: info.code, category: info.category }, 'Supabase trades query failed');
+        metrics.counter('trade.db_query_error');
         return res.status(500).json({
-            error: queryError.message,
-            code: queryError.code,
-            hint: queryError.hint,
-            details: queryError.details,
+            error: info.message,
+            code: info.code,
+            category: info.category,
         });
     }
 
@@ -80,6 +86,12 @@ router.post('/execute', async (req, res) => {
         return res.status(401).json({ error: 'User not authenticated' });
     }
 
+    const resourceCheck = shouldAcceptWork();
+    if (!resourceCheck.ok) {
+        metrics.counter('trade.rejected_resource_circuit');
+        return res.status(503).json({ error: 'System under load', code: 'RESOURCE_CIRCUIT_OPEN', detail: resourceCheck.reason });
+    }
+
     try {
         const result = await executeTradeServerFast(signal as 'CALL' | 'PUT', params, {
             token: auth.token,
@@ -90,6 +102,9 @@ router.post('/execute', async (req, res) => {
         return res.json(result);
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Trade execution failed';
+        if (error instanceof ExecutionError) {
+            return res.status(400).json({ error: message, code: error.code, retryable: error.retryable, context: error.context ?? null });
+        }
         return res.status(400).json({ error: message });
     }
 });

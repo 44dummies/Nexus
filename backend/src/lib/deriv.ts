@@ -1,4 +1,7 @@
 import WebSocket from 'ws';
+import { metrics } from './metrics';
+import { authLogger } from './logger';
+import { setComponentStatus } from './healthStatus';
 
 export interface DerivAuthorizeResponse {
     msg_type: 'authorize';
@@ -70,6 +73,9 @@ function authorizeToken(token: string) {
             ws.close();
             const err = new Error('Authorization timed out');
             (err as any).code = 'Timeout';
+            metrics.counter('auth.timeout');
+            setComponentStatus('auth', 'degraded', 'timeout');
+            authLogger.warn({ error: err.message }, 'Deriv authorize timeout');
             reject(err);
         }, AUTH_TIMEOUT_MS);
 
@@ -90,6 +96,9 @@ function authorizeToken(token: string) {
                 ws.close();
                 const err = new Error(response.error.message);
                 (err as any).code = response.error.code;
+                metrics.counter('auth.error');
+                setComponentStatus('auth', 'degraded', response.error.code);
+                authLogger.warn({ code: response.error.code, message: response.error.message }, 'Deriv authorize error');
                 reject(err);
                 return;
             }
@@ -98,6 +107,8 @@ function authorizeToken(token: string) {
             if (response.msg_type === 'authorize') {
                 clearTimeout(timeout);
                 ws.close();
+                metrics.counter('auth.success');
+                setComponentStatus('auth', 'ok');
                 resolve(response.authorize);
             }
         });
@@ -106,6 +117,9 @@ function authorizeToken(token: string) {
             clearTimeout(timeout);
             ws.close();
             (err as any).code = 'NetworkError';
+            metrics.counter('auth.network_error');
+            setComponentStatus('auth', 'degraded', 'network');
+            authLogger.error({ error: err }, 'Deriv authorize network error');
             reject(err);
         });
     });

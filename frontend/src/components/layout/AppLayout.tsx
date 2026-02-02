@@ -18,6 +18,9 @@ const APP_ID = Number.isFinite(Number(RAW_APP_ID)) && RAW_APP_ID ? RAW_APP_ID : 
 const DEFAULT_SYMBOL = 'R_100';
 const RAW_WS_URL = (process.env.NEXT_PUBLIC_DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3').trim();
 const WS_URL = RAW_WS_URL.replace(/\/$/, '');
+const WS_RECONNECT_BASE_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_BASE_MS || 1500);
+const WS_RECONNECT_MAX_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_MAX_MS || 30000);
+const WS_RECONNECT_JITTER_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_JITTER_MS || 500);
 
 export default function AppLayout({ children }: AppLayoutProps) {
     const pathname = usePathname();
@@ -119,7 +122,9 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
             if (pathname !== '/') {
                 const attempt = reconnectAttemptsRef.current;
-                const delay = Math.min(3000 * Math.pow(2, attempt), 30000);
+                const baseDelay = Math.min(WS_RECONNECT_BASE_MS * Math.pow(2, attempt), WS_RECONNECT_MAX_MS);
+                const jitter = Math.floor(Math.random() * WS_RECONNECT_JITTER_MS);
+                const delay = Math.min(baseDelay + jitter, WS_RECONNECT_MAX_MS);
                 reconnectAttemptsRef.current = Math.min(attempt + 1, 10);
                 reconnectTimerRef.current = setTimeout(() => {
                     connectWebSocket();
@@ -127,13 +132,20 @@ export default function AppLayout({ children }: AppLayoutProps) {
             }
         };
 
-        ws.onerror = () => {
+        ws.onerror = (event) => {
             setConnectionStatus(false);
             isConnectingRef.current = false;
+            console.error('WebSocket error', event);
         };
 
         ws.onmessage = (msg) => {
-            const response = JSON.parse(msg.data);
+            let response: any;
+            try {
+                response = JSON.parse(msg.data);
+            } catch (error) {
+                console.error('WebSocket message parse error', error);
+                return;
+            }
             if (response.error) {
                 console.error('WS Error:', response.error);
                 return;

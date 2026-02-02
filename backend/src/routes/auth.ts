@@ -7,6 +7,7 @@ import { buildCookieOptions, buildStateCookieOptions, buildClearCookieOptions } 
 import { encryptToken } from '../lib/sessionCrypto';
 import { authRateLimit } from '../lib/rateLimit';
 import { warmRiskCache } from '../lib/riskCache';
+import { authLogger } from '../lib/logger';
 
 const router = Router();
 
@@ -220,7 +221,7 @@ router.get('/callback', authRateLimit as any, async (req, res) => {
         const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '') || 'http://localhost:3000';
         return res.redirect(`${frontendUrl}/dashboard`);
     } catch (error) {
-        console.error('Auth Error:', error);
+        authLogger.error({ error }, 'Auth callback failed');
         return res.status(500).json({ error: 'Internal Server Error' });
     }
 });
@@ -270,8 +271,12 @@ router.get('/session', async (req, res) => {
         if (typeof balance === 'number' && Number.isFinite(balance)) {
             const accountIdForSnapshot = derivedActiveAccount || authorize?.loginid || null;
             if (accountIdForSnapshot) {
-                persistRiskSnapshots(accountIdForSnapshot, balance).catch(() => undefined);
-                warmRiskCache(accountIdForSnapshot, balance).catch(() => undefined);
+                persistRiskSnapshots(accountIdForSnapshot, balance).catch((error) => {
+                    authLogger.error({ error, accountId: accountIdForSnapshot }, 'Persist risk snapshots failed');
+                });
+                warmRiskCache(accountIdForSnapshot, balance).catch((error) => {
+                    authLogger.error({ error, accountId: accountIdForSnapshot }, 'Warm risk cache failed');
+                });
             }
         }
 
