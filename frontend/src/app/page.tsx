@@ -1,12 +1,17 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { motion, Variants, useReducedMotion } from 'framer-motion';
 import { ArrowRight, ShieldCheck, Activity } from 'lucide-react';
-import LiquidEther from '@/components/backgrounds/LiquidEther';
 import { apiFetch } from '@/lib/api';
 import { LogoMark } from '@/components/brand/LogoMark';
 import { toast } from 'sonner';
+
+const LiquidEther = dynamic(
+  () => import('@/components/backgrounds/LiquidEther'),
+  { ssr: false }
+);
 
 export default function LoginPage() {
   const shouldReduceMotion = useReducedMotion();
@@ -64,9 +69,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen flex flex-col items-center justify-center px-6 py-10 overflow-hidden">
+    <div className="relative min-h-screen flex flex-col items-center justify-center px-6 py-10">
       {/* Liquid Ether Background */}
-      <div className="fixed inset-0 -z-10 bg-[#0a0a0f]">
+      <div className="absolute inset-0 z-0 bg-[#0a0a0f]" style={{ width: '100%', height: '100%' }}>
         <LiquidEther
           colors={['#5227FF', '#FF9FFC', '#B19EEF']}
           mouseForce={20}
@@ -83,6 +88,7 @@ export default function LoginPage() {
           takeoverDuration={0.25}
           autoResumeDelay={3000}
           autoRampDuration={0.6}
+          className="pointer-events-auto"
         />
       </div>
 
