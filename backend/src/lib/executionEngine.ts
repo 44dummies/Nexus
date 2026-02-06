@@ -226,6 +226,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
         buyTimeoutMs = 10000,
         requoteMaxAttempts = REQUOTE_MAX_ATTEMPTS,
         requoteDelayMs = REQUOTE_DELAY_MS,
+        correlationId,
     } = request;
 
     await wsDeps.getOrCreateConnection(token, accountId, APP_ID);
