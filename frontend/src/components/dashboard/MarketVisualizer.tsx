@@ -90,7 +90,8 @@ function MarketParticles({ tickDirection, tickSpeed, palette }: MarketParticlesP
         return new THREE.Color(palette.neutral);
     }, [tickDirection, palette]);
 
-    useFrame((state, delta) => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    useFrame((_state, _delta) => {
         if (!meshRef.current) return;
 
         const positionAttribute = geometry.getAttribute('position');
@@ -162,7 +163,7 @@ function MarketVisualizer({ lastTick = 0, prevTick = 0 }: MarketVisualizerProps)
         const cpuCores = navigator.hardwareConcurrency;
         const lowPower = (deviceMemory && deviceMemory <= 4) || (cpuCores && cpuCores <= 4);
         if (media.matches || isSmall || lowPower) {
-            setEnabled(false);
+            setEnabled(false); // eslint-disable-line react-hooks/set-state-in-effect -- mount-only device detection
         }
         if (window.devicePixelRatio && window.devicePixelRatio > 2) {
             setDpr([1, 1.25]);
@@ -189,6 +190,7 @@ function MarketVisualizer({ lastTick = 0, prevTick = 0 }: MarketVisualizerProps)
             const value = styles.getPropertyValue(name).trim();
             return value || fallback;
         };
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing CSS vars to state on theme change
         setPalette({
             up: readVar('--chart-2', DEFAULT_PALETTE.up),
             down: readVar('--chart-4', DEFAULT_PALETTE.down),

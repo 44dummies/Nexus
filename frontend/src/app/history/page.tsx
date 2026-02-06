@@ -46,7 +46,7 @@ export default function HistoryPage() {
                 const data = await res.json();
                 if (!mounted) return;
                 setTrades(Array.isArray(data.trades) ? data.trades : []);
-            } catch (err) {
+            } catch {
                 if (!mounted) return;
                 setTrades([]);
             } finally {

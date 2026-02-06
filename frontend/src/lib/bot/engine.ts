@@ -186,12 +186,12 @@ export class BotEngine {
                     }),
                 });
                 this.addLog('info', 'Backend bot stopped');
-            } catch (error) {
+            } catch {
                 this.addLog('error', 'Failed to stop backend bot cleanly');
             }
             this.backendRunId = null;
             useTradingStore.getState().setActiveRunId(null);
-        }
+        }   
     }
 
     async pause() {
@@ -207,7 +207,7 @@ export class BotEngine {
                     runId: this.backendRunId,
                 }),
             });
-        } catch (error) {
+        } catch {
             this.addLog('error', 'Failed to pause backend bot');
         }
     }
@@ -225,7 +225,7 @@ export class BotEngine {
                     runId: this.backendRunId,
                 }),
             });
-        } catch (error) {
+        } catch {
             this.addLog('error', 'Failed to resume backend bot');
         }
     }
@@ -233,7 +233,8 @@ export class BotEngine {
     /**
      * Process tick (only for UI updates now)
      */
-    onTick(price: number, epoch: number) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    onTick(price: number, _epoch?: number) {
         // Keep a small buffer for UI graph if needed, or just logging
         this.tickBuffer.push(price);
         if (this.tickBuffer.length > this.bufferSize) {

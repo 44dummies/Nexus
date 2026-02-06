@@ -14,8 +14,7 @@ export default function AccountSwitcher() {
 
     const activeAccount = accounts.find(a => a.id === activeAccountId);
 
-    if (accounts.length <= 1) return null;
-
+    // All hooks MUST be called before any conditional return (React rules of hooks)
     useEffect(() => {
         if (!isOpen) return;
         const handleClick = (event: MouseEvent) => {
@@ -41,6 +40,10 @@ export default function AccountSwitcher() {
             firstItemRef.current?.focus();
         }
     }, [isOpen]);
+
+    // Early return AFTER all hooks — fixes React error #310
+    // "Rendered more hooks than during the previous render"
+    if (accounts.length <= 1) return null;
 
     return (
         <div ref={containerRef} className="relative z-[999] isolate">

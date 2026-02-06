@@ -13,9 +13,8 @@ interface ExecuteTradeParams {
     currency?: string;
 }
 
-// Client-side cooldown guard to prevent rapid-fire trades
-const MIN_TRADE_INTERVAL_MS = 3000; // Minimum 3 seconds between trades
-let tradeInFlight = false; // Mutex to prevent concurrent trade attempts
+// Client-side cooldown is now handled by the backend execution engine.
+// Keeping the type declarations below for local trade execution path.
 
 interface ProposalResponse {
     msg_type: 'proposal';

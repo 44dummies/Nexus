@@ -129,6 +129,7 @@ function BotsContent() {
         return () => {
             isMounted = false;
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncBackendStatus is stable store action
     }, [isAuthorized, activeAccountId]);
 
     const handleStartBot = async () => {

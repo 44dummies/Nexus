@@ -52,7 +52,7 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
 
     // Prevent hydration mismatch
     useEffect(() => {
-        setMounted(true); // eslint-disable-line react-hooks/set-state-in-effect
+        setMounted(true);
         const saved = window.localStorage.getItem('sidebar-collapsed');
         if (saved !== null) {
             setIsCollapsed(saved === 'true');

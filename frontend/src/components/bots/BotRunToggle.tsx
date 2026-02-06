@@ -172,6 +172,7 @@ export function BotRunToggle({ size = 'sm', className = '' }: BotRunToggleProps)
         return () => {
             isMounted = false;
         };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- store actions are stable references
     }, [isAuthorized, activeAccountId]);
 
     const canStart = Boolean(selectedSymbol && selectedBotConfig);
