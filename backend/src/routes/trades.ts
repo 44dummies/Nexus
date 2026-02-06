@@ -36,7 +36,7 @@ router.get('/', async (req, res) => {
 
     const { data, error: queryError } = await supabaseClient
         .from('trades')
-        .select('id, contract_id, symbol, stake, duration, duration_unit, profit, buy_price, payout, direction, status, bot_id, bot_run_id, created_at')
+        .select('*')
         .eq('account_id', activeAccount)
         .order('created_at', { ascending: false })
         .limit(limit);
