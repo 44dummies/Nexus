@@ -262,7 +262,6 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
                 }>(accountId, {
                     proposal_open_contract: 1,
                     contract_id: contractId,
-                    subscribe: 0,
                 }, 10000);
 
                 if (response.error || !response.proposal_open_contract) {
@@ -359,7 +358,7 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
             } catch (error) {
                 const errMsg = error instanceof Error ? error.message : String(error);
                 const isConnectionError = errMsg.includes('No connection') || errMsg.includes('Connection closed') || errMsg.includes('timeout') || errMsg.includes('WebSocket');
-                const isContractGone = errMsg.includes('ContractNotFound') || errMsg.includes('InvalidContractId') || errMsg.includes('not found');
+                const isContractGone = errMsg.includes('ContractNotFound') || errMsg.includes('InvalidContractId') || errMsg.includes('not found') || errMsg.includes('InputValidation');
 
                 if (isContractGone) {
                     // Contract no longer exists on Deriv — permanent, don't retry
