@@ -63,12 +63,13 @@ export interface WSConnectionState {
     reconnectWindowCount?: number;
     circuitOpenUntil?: number | null;
     lastConnectError?: string | null;
+    pingTimer?: ReturnType<typeof setInterval> | null;
 }
 
 const MAX_QUEUE_DEPTH = Math.max(1, Number(process.env.WS_MAX_QUEUE_DEPTH) || 500);
 const QUEUE_POLICY = (process.env.WS_QUEUE_POLICY || 'reject-new') as 'reject-new' | 'drop-oldest' | 'priority';
 const DEFAULT_REQUEST_TIMEOUT_MS = Math.max(1000, Number(process.env.WS_REQUEST_TIMEOUT_MS) || 30000);
-const MAX_RECONNECT_ATTEMPTS = Math.max(1, Number(process.env.WS_MAX_RECONNECT_ATTEMPTS) || 5);
+const MAX_RECONNECT_ATTEMPTS = Math.max(1, Number(process.env.WS_MAX_RECONNECT_ATTEMPTS) || 25);
 const RECONNECT_BASE_DELAY_MS = Math.max(250, Number(process.env.WS_RECONNECT_BASE_DELAY_MS) || 1000);
 const RECONNECT_MAX_DELAY_MS = Math.max(RECONNECT_BASE_DELAY_MS, Number(process.env.WS_RECONNECT_MAX_DELAY_MS) || 30000);
 const RECONNECT_JITTER_MS = Math.max(0, Number(process.env.WS_RECONNECT_JITTER_MS) || 250);
@@ -76,7 +77,8 @@ const RECONNECT_WINDOW_MS = Math.max(1000, Number(process.env.WS_RECONNECT_WINDO
 const RECONNECT_STORM_LIMIT = Math.max(1, Number(process.env.WS_RECONNECT_STORM_LIMIT) || 8);
 const RECONNECT_CIRCUIT_COOLDOWN_MS = Math.max(1000, Number(process.env.WS_RECONNECT_COOLDOWN_MS) || 15000);
 const CONNECTION_TIMEOUT_MS = Math.max(1000, Number(process.env.WS_CONNECTION_TIMEOUT_MS) || 10000);
-const IDLE_TIMEOUT_MS = Math.max(60000, Number(process.env.WS_IDLE_TIMEOUT_MS) || 5 * 60 * 1000); // 5 minutes
+const IDLE_TIMEOUT_MS = Math.max(60000, Number(process.env.WS_IDLE_TIMEOUT_MS) || 30 * 60 * 1000); // 30 minutes
+const PING_INTERVAL_MS = Math.max(10000, Number(process.env.WS_PING_INTERVAL_MS) || 30000); // 30 seconds
 const PARSE_SAMPLE_BYTES = Math.max(128, Number(process.env.WS_PARSE_SAMPLE_BYTES) || 512);
 const AUTH_RETRY_ATTEMPTS = Math.max(0, Number(process.env.WS_AUTH_RETRY_ATTEMPTS) || 2);
 const AUTH_RETRY_DELAY_MS = Math.max(100, Number(process.env.WS_AUTH_RETRY_DELAY_MS) || 500);
@@ -391,6 +393,38 @@ export async function getOrCreateConnection(
 }
 
 /**
+ * Start a ping keepalive to prevent idle disconnection by Deriv
+ */
+function startPingKeepAlive(state: WSConnectionState): void {
+    stopPingKeepAlive(state);
+    state.pingTimer = setInterval(() => {
+        if (state.ws?.readyState === WebSocket.OPEN) {
+            try {
+                state.ws.send(JSON.stringify({ ping: 1 }));
+                state.lastActivity = Date.now();
+                metrics.counter('ws.ping_sent');
+            } catch {
+                // If sending fails, the close handler will trigger reconnect
+                metrics.counter('ws.ping_send_error');
+            }
+        } else {
+            stopPingKeepAlive(state);
+        }
+    }, PING_INTERVAL_MS);
+    // Don't block process exit
+    if (state.pingTimer && typeof state.pingTimer === 'object' && 'unref' in state.pingTimer) {
+        state.pingTimer.unref();
+    }
+}
+
+function stopPingKeepAlive(state: WSConnectionState): void {
+    if (state.pingTimer) {
+        clearInterval(state.pingTimer);
+        state.pingTimer = null;
+    }
+}
+
+/**
  * Establish WebSocket connection
  */
 function connect(state: WSConnectionState, appId: string): Promise<void> {
@@ -421,6 +455,7 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
             state.ws = ws;
             state.reconnectAttempts = 0;
             setupMessageHandler(state);
+            startPingKeepAlive(state);
             opened = true;
             state.lastConnectError = null;
             setComponentStatus('ws', 'ok');
@@ -443,6 +478,7 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
             state.authorized = false;
             state.ws = null;
             state.lastActivity = Date.now();
+            stopPingKeepAlive(state);
 
             const closeReason = typeof reason === 'string' ? reason : reason?.toString();
             const intentional = !shouldAttemptReconnect(state) || !isActiveState(state);
@@ -869,6 +905,7 @@ export function cleanupConnection(accountId: string): void {
         state.reconnecting = false;
         state.connecting = null;
         state.reconnectPromise = null;
+        stopPingKeepAlive(state);
 
         // Reject all pending/queued messages
         rejectPendingMessages(state, new Error('Connection closed'));

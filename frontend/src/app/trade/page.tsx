@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
@@ -11,7 +10,6 @@ import { usePnLStream } from '@/hooks/usePnLStream';
 const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisualizer'), { ssr: false });
 const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr: false });
 const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHeader').then(mod => mod.DashboardHeader), { ssr: false });
-const AdvancedChart = dynamic(() => import('@/components/trade/AdvancedChart'), { ssr: false });
 const MarketSelector = dynamic(() => import('@/components/trade/MarketSelector'), { ssr: false });
 const SmartLayerPanel = dynamic(() => import('@/components/trade/SmartLayerPanel'), { ssr: false });
 const PnLPanel = dynamic(() => import('@/components/trade/PnLPanel'), { ssr: false });
@@ -25,8 +23,6 @@ function TradeContent() {
         balance,
         isConnected,
     } = useTradingStore();
-
-    const [isChartMaximized, setIsChartMaximized] = useState(false);
 
     // Subscribe to real-time PnL stream
     usePnLStream();
@@ -58,20 +54,9 @@ function TradeContent() {
                     <PnLPanel />
                 </div>
 
-                <div className={`grid gap-6 mt-4 ${isChartMaximized ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-3'}`}>
-                    <div className={isChartMaximized ? '' : 'lg:col-span-2'}>
-                        <div className="glass-panel rounded-2xl p-6 min-h-[360px] sm:min-h-[420px]">
-                            <AdvancedChart
-                                isMaximized={isChartMaximized}
-                                onToggleMaximize={() => setIsChartMaximized((prev) => !prev)}
-                            />
-                        </div>
-                    </div>
-                    {!isChartMaximized && (
-                        <div>
-                            <LiveFeed />
-                        </div>
-                    )}
+                {/* Live Feed - full width */}
+                <div className="mt-4">
+                    <LiveFeed />
                 </div>
             </div>
         </div>

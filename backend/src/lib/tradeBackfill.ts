@@ -87,6 +87,26 @@ const getDateKey = (isoString: string | null | undefined) => {
     return new Date(isoString).toISOString().slice(0, 10);
 };
 
+// Track contracts that permanently fail to avoid re-checking every cycle
+const permanentlyFailedContracts = new Set<string>();
+const PERMANENT_FAIL_LIMIT = 5000; // cap the set size
+
+function markPermanentFailure(accountId: string, contractId: number): void {
+    const key = `${accountId}:${contractId}`;
+    if (permanentlyFailedContracts.size >= PERMANENT_FAIL_LIMIT) {
+        // Evict oldest entries (clear half the set)
+        const entries = Array.from(permanentlyFailedContracts);
+        for (let i = 0; i < entries.length / 2; i++) {
+            permanentlyFailedContracts.delete(entries[i]);
+        }
+    }
+    permanentlyFailedContracts.add(key);
+}
+
+function isPermanentlyFailed(accountId: string, contractId: number): boolean {
+    return permanentlyFailedContracts.has(`${accountId}:${contractId}`);
+}
+
 export async function runTradeBackfill(options: BackfillOptions = {}) {
     if (isRunning) return;
     isRunning = true;
@@ -221,6 +241,9 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
             const session = sessionMap.get(accountId);
             if (!session?.token) continue;
 
+            // Skip contracts that have permanently failed in previous cycles
+            if (isPermanentlyFailed(accountId, contractId)) continue;
+
             try {
                 await getOrCreateConnection(session.token, accountId);
                 const response = await sendMessage<{
@@ -334,7 +357,21 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
                 }
 
             } catch (error) {
-                logger.error({ accountId, contractId, error }, 'Backfill settlement error');
+                const errMsg = error instanceof Error ? error.message : String(error);
+                const isConnectionError = errMsg.includes('No connection') || errMsg.includes('Connection closed') || errMsg.includes('timeout') || errMsg.includes('WebSocket');
+                const isContractGone = errMsg.includes('ContractNotFound') || errMsg.includes('InvalidContractId') || errMsg.includes('not found');
+
+                if (isContractGone) {
+                    // Contract no longer exists on Deriv — permanent, don't retry
+                    markPermanentFailure(accountId, contractId);
+                    logger.debug({ accountId, contractId }, 'Backfill: contract not found, skipping permanently');
+                } else if (isConnectionError) {
+                    // Transient WS issue — warn once, will retry next cycle
+                    logger.warn({ accountId, contractId }, 'Backfill: connection unavailable, will retry');
+                } else {
+                    // Unexpected error — log at error level
+                    logger.error({ accountId, contractId, error: errMsg }, 'Backfill settlement error');
+                }
             }
         }
     } finally {

@@ -423,6 +423,7 @@ export function evaluateCachedRisk(
         cooldownMs?: number;
         lossCooldownMs?: number;
         maxConcurrentTrades?: number;
+        stopLoss?: number;
     }
 ): {
     status: 'OK' | 'COOLDOWN' | 'HALT' | 'REDUCE_STAKE' | 'MAX_CONCURRENT';
@@ -478,6 +479,14 @@ export function evaluateCachedRisk(
             reason: 'TRADE_COOLDOWN',
             cooldownMs: params.cooldownMs - (now - entry.lastTradeTime),
         };
+    }
+
+    // Check absolute stop-loss (net session loss in dollars)
+    if (params.stopLoss && params.stopLoss > 0) {
+        const netLoss = entry.totalLossToday - entry.totalProfitToday;
+        if (netLoss >= params.stopLoss) {
+            return { status: 'HALT', reason: 'STOP_LOSS' };
+        }
     }
 
     // Check daily loss limit

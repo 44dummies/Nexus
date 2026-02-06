@@ -179,7 +179,7 @@ async function subscribeOrderBook(accountId: string, token: string, symbol: stri
         }
     } catch (error) {
         metrics.counter('marketdata.orderbook_error');
-        tickLogger.warn({ accountId, symbol, error }, 'Order book subscription failed, falling back to synthetic');
+        tickLogger.debug({ accountId, symbol, error }, 'Order book subscription unavailable, using synthetic fallback');
         state.mode = 'synthetic';
     }
 }

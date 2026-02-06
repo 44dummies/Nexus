@@ -2,10 +2,9 @@
 import React from 'react';
 
 import { useTradingStore } from '@/store/tradingStore';
-import { useBotStream } from '@/hooks/useBotStream';
 import { getMarketDisplayName } from '@/components/trade/MarketSelector';
-import { TrendingUp, TrendingDown, Activity, Trash2 } from 'lucide-react';
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import { TrendingUp, TrendingDown } from 'lucide-react';
+import { motion, useReducedMotion } from 'framer-motion';
 
 function LiveFeed() {
     const shouldReduceMotion = useReducedMotion();
@@ -13,17 +12,12 @@ function LiveFeed() {
         tickHistory,
         lastTick,
         prevTick,
-        botLogs,
         totalProfitToday,
         totalLossToday,
         botRunning,
-        clearLogs,
         tradeResults,
-        activeRunId,
         selectedSymbol,
     } = useTradingStore();
-
-    useBotStream(activeRunId);
 
     const symbolName = getMarketDisplayName(selectedSymbol);
 
@@ -37,26 +31,6 @@ function LiveFeed() {
     const maxTick = Math.max(...chartData);
     const range = maxTick - minTick || 1;
 
-    const getLogColor = (type: string) => {
-        switch (type) {
-            case 'signal': return 'text-accent';
-            case 'trade': return 'text-emerald-600 dark:text-emerald-500';
-            case 'result': return 'text-amber-600 dark:text-amber-500';
-            case 'error': return 'text-red-600 dark:text-red-500';
-            default: return 'text-muted-foreground';
-        }
-    };
-
-    const getLogIcon = (type: string) => {
-        switch (type) {
-            case 'signal': return '⚡';
-            case 'trade': return '📈';
-            case 'result': return '💰';
-            case 'error': return '❌';
-            default: return '•';
-        }
-    };
-
     return (
         <div className="glass-panel rounded-2xl p-6 h-full flex flex-col">
             {/* Header Row */}
@@ -67,19 +41,8 @@ function LiveFeed() {
                         {botRunning ? '● ACTIVE' : '○ IDLE'}
                     </span>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                    <div className={`text-base sm:text-lg font-mono font-bold ${netPnL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)} USD
-                    </div>
-                    <button
-                        onClick={clearLogs}
-                        type="button"
-                        aria-label="Clear activity logs"
-                        className="p-2 hover:bg-muted/40 rounded-lg transition-colors"
-                        title="Clear logs"
-                    >
-                        <Trash2 className="w-4 h-4 text-muted-foreground" />
-                    </button>
+                <div className={`text-base sm:text-lg font-mono font-bold ${netPnL >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                    {netPnL >= 0 ? '+' : ''}{netPnL.toFixed(2)} USD
                 </div>
             </div>
 
@@ -142,12 +105,12 @@ function LiveFeed() {
             </div>
 
             {/* Trade Results */}
-            <div className="mb-4 pb-4 border-b border-border">
+            <div className="flex-1 overflow-hidden">
                 <div className="flex items-center justify-between text-xs uppercase tracking-widest text-muted-foreground">
                     <span>Trade P&amp;L Stream</span>
                     <span>{tradeResults.length} entries</span>
                 </div>
-                <div className="mt-3 h-[170px] overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-thumb-border/60">
+                <div className="mt-3 h-[280px] overflow-y-auto space-y-2 pr-2 scrollbar-thin scrollbar-thumb-border/60">
                     {tradeResults.length === 0 ? (
                         <div className="text-muted-foreground text-center py-6 font-mono text-xs">
                             Trades will appear here as they settle.
@@ -172,41 +135,6 @@ function LiveFeed() {
                             </div>
                         ))
                     )}
-                </div>
-            </div>
-
-            {/* Bot Logs */}
-            <div className="flex-1 overflow-hidden">
-                <div className="text-xs text-muted-foreground uppercase tracking-widest mb-2 flex items-center gap-2">
-                    <Activity className="w-3 h-3" />
-                    Bot Activity Log
-                </div>
-                <div className="h-[200px] overflow-y-auto space-y-1 pr-2 scrollbar-thin scrollbar-thumb-border/60">
-                    <AnimatePresence>
-                        {botLogs.length === 0 ? (
-                            <div className="text-muted-foreground text-center py-8 font-mono text-xs">
-                                Start the bot to see activity...
-                            </div>
-                        ) : (
-                            botLogs.map((log) => (
-                                <motion.div
-                                    key={log.id}
-                                    initial={{ opacity: 0, x: 20 }}
-                                    animate={{ opacity: 1, x: 0 }}
-                                    exit={{ opacity: 0 }}
-                                    className="flex items-start gap-2 text-xs font-mono"
-                                >
-                                    <span className="text-muted-foreground shrink-0">
-                                        {new Date(log.timestamp).toLocaleTimeString()}
-                                    </span>
-                                    <span>{getLogIcon(log.type)}</span>
-                                    <span className={getLogColor(log.type)}>
-                                        {log.message}
-                                    </span>
-                                </motion.div>
-                            ))
-                        )}
-                    </AnimatePresence>
                 </div>
             </div>
         </div>

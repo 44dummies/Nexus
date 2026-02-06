@@ -79,6 +79,7 @@ export function evaluatePreTradeGate(
         cooldownMs,
         lossCooldownMs,
         maxConcurrentTrades: risk.maxConcurrentTrades,
+        stopLoss: risk.stopLoss,
     });
 
     if (riskStatus.status === 'HALT') {
@@ -86,7 +87,9 @@ export function evaluatePreTradeGate(
             ? 'DAILY_LOSS_LIMIT'
             : riskStatus.reason === 'DRAWDOWN'
                 ? 'DRAWDOWN_LIMIT'
-                : 'RISK_HALT');
+                : riskStatus.reason === 'STOP_LOSS'
+                    ? 'STOP_LOSS_REACHED'
+                    : 'RISK_HALT');
     }
 
     if (riskStatus.status === 'MAX_CONCURRENT') {
@@ -146,6 +149,7 @@ export function evaluatePreTradeGate(
 function formatRejectionMessage(reasons: string[]): string {
     if (reasons.length === 0) return 'Risk gate rejected';
     if (reasons.includes('KILL_SWITCH_ACTIVE')) return 'Kill switch active';
+    if (reasons.includes('STOP_LOSS_REACHED')) return 'Stop-loss reached — session halted';
     if (reasons.includes('DAILY_LOSS_LIMIT')) return 'Daily loss limit reached';
     if (reasons.includes('DRAWDOWN_LIMIT')) return 'Drawdown limit reached';
     if (reasons.includes('MAX_CONCURRENT_TRADES')) return 'Maximum concurrent trades reached';

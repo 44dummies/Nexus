@@ -660,7 +660,7 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         gateResult = gate;
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Risk gate rejected';
-        if (message.toLowerCase().includes('daily loss') || message.toLowerCase().includes('drawdown') || message.toLowerCase().includes('risk halt')) {
+        if (message.toLowerCase().includes('daily loss') || message.toLowerCase().includes('drawdown') || message.toLowerCase().includes('risk halt') || message.toLowerCase().includes('stop-loss')) {
             botLogger.warn({ botRunId: botRun.id, reason: message }, 'Bot risk halt');
             pauseBotRun(botRun.id, `Risk limit: ${message}`);
         }
