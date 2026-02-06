@@ -73,7 +73,8 @@ export type AutoStrategyId =
     | 'S1_TREND_FOLLOW'
     | 'S2_MEAN_REVERSION'
     | 'S3_BREAKOUT_GUARD'
-    | 'S0_SAFE_MODE';
+    | 'S0_SAFE_MODE'
+    | 'S4_ADAPTER';
 
 /** Maps auto strategy IDs to backend strategy engine IDs */
 export const AUTO_STRATEGY_MAP: Record<AutoStrategyId, string> = {
@@ -81,6 +82,7 @@ export const AUTO_STRATEGY_MAP: Record<AutoStrategyId, string> = {
     S2_MEAN_REVERSION: 'rsi',
     S3_BREAKOUT_GUARD: 'breakout-atr',
     S0_SAFE_MODE: 'capital-guard',
+    S4_ADAPTER: 'adapter',
 };
 
 /** Reverse lookup */
@@ -89,6 +91,7 @@ export const STRATEGY_TO_AUTO: Record<string, AutoStrategyId> = {
     'rsi': 'S2_MEAN_REVERSION',
     'breakout-atr': 'S3_BREAKOUT_GUARD',
     'capital-guard': 'S0_SAFE_MODE',
+    'adapter': 'S4_ADAPTER',
 };
 
 // ==================== RISK GATE STATE ====================

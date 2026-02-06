@@ -200,6 +200,12 @@ export const DEFAULT_STRATEGY_CONFIGS: Record<string, StrategyConfig> = {
         enableImbalance: true,
         enableMomentum: true,
     },
+    'adapter': {
+        // Adapter uses its own internal config; this is a stub for the registry
+        rsiPeriod: 14,
+        emaFast: 9,
+        emaSlow: 21,
+    },
 };
 
 // ==================== STRATEGY IMPLEMENTATIONS ====================
@@ -406,6 +412,10 @@ export function evaluateStrategy(
             return evaluateRecoveryLiteStrategy(ctx, mergedConfig);
         case 'microstructure':
             return evaluateMicrostructureStrategy(ctx, mergedConfig, microContext);
+        case 'adapter':
+            // Adapter is evaluated externally by SmartLayer adapterStrategy module.
+            // If called here directly (non-SmartLayer path), fall back to capital-guard.
+            return evaluateCapitalGuardStrategy(ctx, mergedConfig);
         default:
             // Unknown strategy falls back to RSI - this masks misconfiguration
             return evaluateRsiStrategy(ctx, mergedConfig);
@@ -439,6 +449,8 @@ export function getRequiredTicks(strategyId: string, config?: StrategyConfig): n
             return Math.max(5, (mergedConfig.rsiPeriod ?? 14) + 1);
         case 'microstructure':
             return Math.max(5, (mergedConfig.imbalanceLevels ?? 10) + 1);
+        case 'adapter':
+            return Math.max(32, (mergedConfig.emaSlow ?? 21) + 2, 30);
         default:
             return 15;
     }
@@ -455,6 +467,7 @@ export function getStrategyName(strategyId: string): string {
         'capital-guard': 'Capital Guard',
         'recovery-lite': 'Recovery Lite',
         'microstructure': 'Microstructure',
+        'adapter': 'Adapter (Auto)',
     };
     return names[strategyId] || 'Unknown Strategy';
 }

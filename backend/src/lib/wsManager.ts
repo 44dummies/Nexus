@@ -684,11 +684,11 @@ function setupMessageHandler(state: WSConnectionState): void {
                 }
             }
 
-            // Dispatch streaming messages (tick, proposal_open_contract, etc.)
+            // Dispatch streaming messages (tick, proposal_open_contract, ohlc, order_book, etc.)
             // These are subscription updates that don't have matching req_id
             const fanoutStart = performance.now();
             const msgType = message.msg_type;
-            if (msgType === 'tick' || msgType === 'proposal_open_contract' || msgType === 'ohlc' || msgType === 'order_book') {
+            if (msgType === 'tick' || msgType === 'proposal_open_contract' || msgType === 'ohlc' || msgType === 'order_book' || msgType === 'candles') {
                 const listeners = streamingListeners.get(state.accountId);
                 if (listeners) {
                     for (const listener of listeners) {

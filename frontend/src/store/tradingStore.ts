@@ -164,6 +164,8 @@ interface TradingState {
         lossCount?: number;
         avgWin?: number;
         avgLoss?: number;
+        totalProfit?: number;
+        totalLoss?: number;
         balanceDrift?: number | null;
         lastKnownBalance?: number | null;
         lastUpdated?: number;
@@ -177,6 +179,7 @@ interface TradingState {
             lastMarkPrice: number;
             unrealizedPnL: number;
             openedAt: number;
+            botRunId?: string | null;
         }>;
     }) => void;
     logout: () => void;
@@ -530,6 +533,10 @@ export const useTradingStore = create<TradingState>()(
                 pnlLastKnownBalance: data.lastKnownBalance ?? null,
                 pnlLastUpdated: data.lastUpdated ?? Date.now(),
                 pnlPositions: data.positions ?? [],
+                // Sync totalProfitToday/totalLossToday from backend pnlTracker
+                // This unifies PnL so LiveFeed and PnLPanel show the same numbers
+                ...(typeof data.totalProfit === 'number' ? { totalProfitToday: data.totalProfit } : {}),
+                ...(typeof data.totalLoss === 'number' ? { totalLossToday: data.totalLoss } : {}),
             }),
 
             logout: () => set({

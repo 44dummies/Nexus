@@ -3,6 +3,7 @@ import { metrics } from './metrics';
 import { nowMs } from './latencyTracker';
 import { recordCancel } from './riskManager';
 import { setComponentStatus } from './healthStatus';
+import { orderIntentStore } from './orderIntentStore';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const LOW_LATENCY_MODE = (process.env.LOW_LATENCY_MODE || 'false') === 'true';
@@ -137,7 +138,9 @@ async function throttleOrWait(limiter: TokenBucket, metricPrefix: string): Promi
     const start = nowMs();
     const deadline = start + THROTTLE_MAX_WAIT_MS;
 
+    let waitAttempt = 0;
     while (true) {
+        waitAttempt++;
         const now = nowMs();
         const nextAt = limiter.nextAvailableAt(1, now);
         if (!Number.isFinite(nextAt) || nextAt > deadline) {
@@ -145,10 +148,13 @@ async function throttleOrWait(limiter: TokenBucket, metricPrefix: string): Promi
             metrics.counter(`${metricPrefix}.throttle_reject`);
             throw new ExecutionError('THROTTLE', 'Throttle limit reached', {
                 retryable: true,
-                context: { retryAfterMs, maxWaitMs: THROTTLE_MAX_WAIT_MS },
+                context: { retryAfterMs, maxWaitMs: THROTTLE_MAX_WAIT_MS, waitAttempt },
             });
         }
-        const delay = Math.max(1, Math.min(nextAt - now, deadline - now));
+        // Exponential backoff with jitter for throttle waits
+        const baseDelay = Math.max(1, Math.min(nextAt - now, deadline - now));
+        const jitter = Math.floor(Math.random() * Math.min(50, baseDelay * 0.2));
+        const delay = Math.min(baseDelay + jitter, deadline - now);
         await sleep(delay);
         if (limiter.tryConsume()) {
             metrics.histogram(`${metricPrefix}.throttle_wait_ms`, nowMs() - start);
@@ -158,7 +164,7 @@ async function throttleOrWait(limiter: TokenBucket, metricPrefix: string): Promi
             metrics.counter(`${metricPrefix}.throttle_reject`);
             throw new ExecutionError('THROTTLE', 'Throttle limit reached', {
                 retryable: true,
-                context: { maxWaitMs: THROTTLE_MAX_WAIT_MS },
+                context: { maxWaitMs: THROTTLE_MAX_WAIT_MS, waitAttempt },
             });
         }
     }
@@ -180,6 +186,8 @@ export interface ExecutionRequest {
     buyTimeoutMs?: number;
     requoteMaxAttempts?: number;
     requoteDelayMs?: number;
+    /** Correlation ID for idempotency. If provided, duplicate requests are rejected. */
+    correlationId?: string;
 }
 
 export interface ExecutionResult {
@@ -222,6 +230,40 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
 
     await wsDeps.getOrCreateConnection(token, accountId, APP_ID);
     const throttle = getThrottle(accountId);
+
+    // --- Idempotency check ---
+    if (correlationId) {
+        const existing = orderIntentStore.check(accountId, symbol, correlationId);
+        if (existing) {
+            if (existing.status === 'FULFILLED' && existing.contractId) {
+                metrics.counter('execution.idempotent_hit');
+                return {
+                    proposal: { id: 'cached', ask_price: existing.buyPrice ?? 0 },
+                    buy: { contract_id: existing.contractId, buy_price: existing.buyPrice ?? 0 },
+                    proposalSentTs: nowMs(),
+                    proposalAckTs: nowMs(),
+                    buySentTs: nowMs(),
+                    buyAckTs: nowMs(),
+                    attempts: 0,
+                };
+            }
+            if (existing.status === 'PENDING') {
+                metrics.counter('execution.idempotent_pending');
+                throw new ExecutionError('THROTTLE', 'Duplicate order intent still pending', {
+                    retryable: false,
+                    context: { correlationId },
+                });
+            }
+            // FAILED — allow retry by re-registering below
+        }
+        if (!orderIntentStore.register(accountId, symbol, correlationId)) {
+            metrics.counter('execution.idempotent_duplicate');
+            throw new ExecutionError('THROTTLE', 'Duplicate order intent', {
+                retryable: false,
+                context: { correlationId },
+            });
+        }
+    }
 
     let attempt = 0;
     while (attempt <= requoteMaxAttempts) {
@@ -347,6 +389,12 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
 
         metrics.histogram('execution.requote_attempts', attempt);
         setComponentStatus('execution', 'ok');
+
+        // Mark intent fulfilled for idempotency
+        if (correlationId) {
+            orderIntentStore.fulfill(accountId, symbol, correlationId, buyResponse.buy.contract_id, buyResponse.buy.buy_price);
+        }
+
         return {
             proposal,
             buy: buyResponse.buy,
@@ -360,5 +408,8 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
 
     metrics.counter('execution.requote_exhausted');
     setComponentStatus('execution', 'degraded', 'requote exhausted');
+    if (correlationId) {
+        orderIntentStore.fail(accountId, symbol, correlationId, 'Requote attempts exhausted');
+    }
     throw new ExecutionError('REQUOTE_EXHAUSTED', 'Requote attempts exhausted', { retryable: true });
 }

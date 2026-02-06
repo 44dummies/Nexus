@@ -315,24 +315,34 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
     const isLoginRoute = pathname === '/';
 
+    // Lock body scroll when mobile sidebar is open
+    useEffect(() => {
+        if (isMobileSidebarOpen) {
+            document.body.style.overflow = 'hidden';
+        } else {
+            document.body.style.overflow = '';
+        }
+        return () => { document.body.style.overflow = ''; };
+    }, [isMobileSidebarOpen]);
+
     return (
-        <div className={`${isLoginRoute ? '' : 'flex bg-background'} min-h-screen relative`}>
+        <div className={`${isLoginRoute ? '' : 'flex bg-background'} min-h-[100dvh] relative`}>
             {!isLoginRoute && (
                 <>
-                    {/* Mobile Menu Trigger */}
-                    <div className="lg:hidden fixed top-4 left-4 z-40">
+                    {/* Mobile Menu Trigger — 44px touch target */}
+                    <div className="lg:hidden fixed top-3 left-3 z-40">
                         <button
                             type="button"
                             onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
                             aria-label={isMobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
                             aria-controls="app-sidebar"
                             aria-expanded={isMobileSidebarOpen}
-                            className="p-2 rounded-lg bg-background/80 backdrop-blur border border-border/50 shadow-sm hover:bg-accent/10 transition-colors"
+                            className="flex items-center justify-center w-11 h-11 rounded-xl bg-background/80 backdrop-blur border border-border/50 shadow-sm hover:bg-accent/10 transition-colors"
                         >
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
-                                width="24"
-                                height="24"
+                                width="22"
+                                height="22"
                                 viewBox="0 0 24 24"
                                 fill="none"
                                 stroke="currentColor"
@@ -361,7 +371,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
                     )}
                 </>
             )}
-            <main className={`${isLoginRoute ? '' : 'flex-1 overflow-auto'} relative w-full`}>
+            <main className={`${isLoginRoute ? '' : 'flex-1 overflow-auto min-h-0'} relative w-full`}>
                 {children}
             </main>
         </div>

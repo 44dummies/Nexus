@@ -15,7 +15,6 @@ import {
     Moon,
     Monitor,
     ChevronLeft,
-    ChevronRight,
     LogOut,
     Wifi,
     WifiOff,
@@ -24,6 +23,9 @@ import {
 import { useTradingStore } from '@/store/tradingStore';
 import { apiFetch } from '@/lib/api';
 import { LogoMark } from '@/components/brand/LogoMark';
+import dynamic from 'next/dynamic';
+
+const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
 
 const navItems = [
     { href: '/dashboard', icon: LayoutDashboard, label: 'Overview' },
@@ -94,12 +96,9 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
         }
     };
 
-    // Unified CSS for responsive behavior
-    // Mobile: fixed drawer, transform based on isMobileOpen
-    // Desktop (lg): sticky rail, width based on isCollapsed, reset transforms
     const sidebarClasses = `
         flex flex-col h-screen bg-sidebar border-r border-sidebar-border
-        fixed inset-y-0 left-0 z-50 w-72 shadow-xl
+        fixed inset-y-0 left-0 z-50 w-[85vw] max-w-72 shadow-xl
         transition-all duration-300 ease-in-out
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0 lg:static lg:sticky lg:top-0 lg:z-auto lg:shadow-none
@@ -108,29 +107,29 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
 
     return (
         <aside id="app-sidebar" className={sidebarClasses} aria-label="Primary">
-            {/* Logo */}
+            {/* Logo — click toggles collapse on desktop */}
             <div className="p-4 flex items-center justify-between border-b border-sidebar-border">
-                <div className="flex items-center gap-3">
-                    <LogoMark size={40} className="shadow-soft-lg" />
-                    <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-lg font-bold text-foreground`}>
-                        DerivNexus
-                    </span>
-                </div>
-                {/* Desktop Collapse Toggle */}
                 <button
                     type="button"
                     onClick={toggleCollapse}
-                    className="hidden lg:inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    className="hidden lg:flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
                     aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                     title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 >
-                    {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+                    <LogoMark size={40} className="shadow-soft-lg" />
+                    <span className={`${isCollapsed ? 'hidden' : 'block'} text-lg font-bold text-foreground`}>
+                        DerivNexus
+                    </span>
                 </button>
-                {/* Mobile Close Button */}
+                {/* Mobile: non-interactive logo + close button */}
+                <div className="lg:hidden flex items-center gap-3">
+                    <LogoMark size={40} className="shadow-soft-lg" />
+                    <span className="text-lg font-bold text-foreground">DerivNexus</span>
+                </div>
                 <button
                     type="button"
                     onClick={onMobileClose}
-                    className="lg:hidden h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    className="lg:hidden h-11 w-11 flex items-center justify-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
                     aria-label="Close navigation menu"
                 >
                     <ChevronLeft className="w-6 h-6" />
@@ -138,7 +137,7 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 p-3 space-y-2 overflow-y-auto" aria-label="Primary">
+            <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto min-h-0" aria-label="Primary">
                 {navItems.map((item) => {
                     const isActive = pathname === item.href;
                     const Icon = item.icon;
@@ -152,7 +151,7 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                             aria-label={isCollapsed ? item.label : undefined}
                             aria-current={isActive ? 'page' : undefined}
                             className={`
-                                flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200
+                                flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200
                                 ${isCollapsed ? 'lg:justify-center lg:px-2' : 'lg:justify-start lg:px-3'}
                                 ${isActive
                                     ? 'bg-accent/10 text-accent border border-accent/30'
@@ -169,9 +168,8 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                 })}
             </nav>
 
-            {/* Connection + Bot Status */}
-            <div className="px-3 py-4 border-t border-sidebar-border space-y-3">
-                {/* Connection Health */}
+            {/* Status Indicators */}
+            <div className="px-3 py-3 border-t border-sidebar-border space-y-2">
                 <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
                     {isConnected ? (
                         <Wifi className="w-3.5 h-3.5 text-emerald-500" />
@@ -183,45 +181,18 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                     </span>
                 </div>
 
-                {/* Bot Status */}
                 <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
                     <div className={`w-2.5 h-2.5 rounded-full ${botRunning ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-gray-500'}`} />
                     <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs text-muted-foreground uppercase tracking-wider`}>
                         {botRunning ? 'Bot Active' : 'Bot Offline'}
                     </span>
                 </div>
-
-                {/* Account Mode Badge */}
-                {activeAccountType && (
-                    <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
-                        <Circle
-                            className={`w-2.5 h-2.5 fill-current ${activeAccountType === 'real' ? 'text-emerald-500' : 'text-amber-500'}`}
-                        />
-                        <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'}`}>
-                            <span className={`text-[10px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded ${
-                                activeAccountType === 'real'
-                                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-                                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                            }`}>
-                                {activeAccountType}
-                            </span>
-                            {activeAccountId && (
-                                <span className="text-[10px] text-muted-foreground ml-1.5 font-mono">
-                                    {activeAccountId}
-                                </span>
-                            )}
-                        </span>
-                    </div>
-                )}
             </div>
 
             {/* Theme Switcher */}
             {mounted && (
-                <div className="px-3 py-4 border-t border-sidebar-border">
-                    <p className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs text-muted-foreground uppercase tracking-wider mb-2 px-3`}>
-                        Theme
-                    </p>
-                    <div className={`flex lg:flex-col gap-1 ${isCollapsed ? 'lg:items-center' : ''}`}>
+                <div className="px-3 py-3 border-t border-sidebar-border">
+                    <div className={`flex flex-col sm:flex-row lg:flex-col gap-1 ${isCollapsed ? 'lg:items-center' : ''}`}>
                         {themes.map((t) => {
                             const Icon = t.icon;
                             const isActive = theme === t.id;
@@ -251,8 +222,24 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                 </div>
             )}
 
-            {/* Logout */}
-            <div className="p-3 border-t border-sidebar-border">
+            {/* Footer: Account Switcher + Logout */}
+            <div className="p-3 border-t border-sidebar-border space-y-2">
+                {/* Account Switcher — integrated into sidebar footer */}
+                {!isCollapsed && (
+                    <div className="mb-1">
+                        <AccountSwitcher />
+                    </div>
+                )}
+                {/* Collapsed: show account type badge */}
+                {isCollapsed && activeAccountType && (
+                    <div className="flex justify-center">
+                        <Circle
+                            className={`w-3 h-3 fill-current ${activeAccountType === 'real' ? 'text-emerald-500' : 'text-amber-500'}`}
+                            title={`${activeAccountType} — ${activeAccountId}`}
+                        />
+                    </div>
+                )}
+
                 <button
                     onClick={handleLogout}
                     aria-label="Log out"

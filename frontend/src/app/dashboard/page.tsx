@@ -167,7 +167,7 @@ function DashboardContent() {
 
     return (
         <div className="relative min-h-screen">
-            <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 py-8">
+            <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 pt-16 lg:pt-8 pb-8">
                 <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
                     <div>
                         <p className="text-xs text-muted-foreground uppercase tracking-[0.45em]">Overview</p>
@@ -195,7 +195,7 @@ function DashboardContent() {
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr,1fr]">
                     <div className="space-y-6">
-                        <section className="glass-panel rounded-2xl p-6">
+                        <section className="glass-panel rounded-2xl p-4 sm:p-6">
                             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h3 className="text-lg font-semibold">Performance Overview</h3>
@@ -219,12 +219,12 @@ function DashboardContent() {
 
                     <div className="space-y-6">
                         <NotificationsPanel />
-                        <section className="glass-panel rounded-2xl p-6 space-y-4">
+                        <section className="glass-panel rounded-2xl p-4 sm:p-6 space-y-4">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-lg font-semibold">Quick Insights</h3>
                                 <span className="text-xs uppercase tracking-widest text-muted-foreground">Today</span>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-3">
                                 <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
                                     <p className="text-xs text-muted-foreground uppercase tracking-widest">Wins</p>
                                     <p className="mt-2 text-xl font-mono text-emerald-600 dark:text-emerald-400">{wins}</p>

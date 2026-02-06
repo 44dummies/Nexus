@@ -39,6 +39,19 @@ import {
     resetAutoMode,
     resetAllAutoMode,
 } from './strategyRouter';
+import {
+    evaluateAdapter,
+    extractAdapterFeatures,
+    getAdapterRequiredTicks,
+    resetAdapterState,
+    resetAllAdapterState,
+    type AdapterDecision,
+    type AdapterFeatures,
+    type AdapterRegime,
+    type AdapterSubStrategy,
+    type AdapterConfig,
+    DEFAULT_ADAPTER_CONFIG,
+} from './adapterStrategy';
 
 // Re-export everything for convenience
 export type {
@@ -54,6 +67,12 @@ export type {
     ExecutionCycleOutput,
     BotTelemetry,
     RiskGateState,
+    // Adapter types
+    AdapterDecision,
+    AdapterFeatures,
+    AdapterRegime,
+    AdapterSubStrategy,
+    AdapterConfig,
 };
 
 export {
@@ -69,6 +88,13 @@ export {
     disableAutoMode,
     DEFAULT_PARAM_BOUNDS,
     AUTO_STRATEGY_MAP,
+    // Adapter strategy exports
+    evaluateAdapter,
+    extractAdapterFeatures,
+    getAdapterRequiredTicks,
+    resetAdapterState,
+    resetAllAdapterState,
+    DEFAULT_ADAPTER_CONFIG,
 };
 
 // ==================== TELEMETRY STORE ====================
@@ -237,5 +263,6 @@ export class SmartLayer {
         telemetryStore.clear();
         resetAllRegimeState();
         resetAllAutoMode();
+        resetAllAdapterState();
     }
 }

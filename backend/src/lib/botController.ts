@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { subscribeTicks, unsubscribeTicks, getTickWindowView, type TickData } from './tickStream';
+import { ingestTick } from './candleBuilder';
 import { calculateATR, evaluateStrategy, getRequiredTicks, type StrategyConfig, type TradeSignal } from './strategyEngine';
 import { getRiskCache, initializeRiskCache } from './riskCache';
 import { executeTradeServerFast } from '../trade';
@@ -164,6 +165,9 @@ class SymbolActor {
     private batchIntervalMs = DEFAULT_MICROBATCH_INTERVAL_MS;
     private disposed = false;
     private tickListener: (tick: TickData) => void;
+    private static readonly MAX_PENDING_TICKS = 50;
+    private static readonly STALE_TICK_MS = 5000;
+    private staleDropCount = 0;
 
     constructor(accountId: string, token: string, symbol: string) {
         this.accountId = accountId;
@@ -214,9 +218,38 @@ class SymbolActor {
     private enqueueTick(tick: TickData): void {
         if (this.disposed) return;
 
+        // --- Stale tick filter ---
+        const tickAge = Date.now() - (tick.receivedAtMs ?? Date.now());
+        if (tickAge > SymbolActor.STALE_TICK_MS) {
+            this.staleDropCount++;
+            metrics.counter('tick.stale_drop');
+            if (this.staleDropCount % 10 === 1) {
+                botLogger.warn({
+                    accountId: this.accountId,
+                    symbol: this.symbol,
+                    tickAge,
+                    staleDrops: this.staleDropCount,
+                }, 'Stale tick dropped');
+            }
+            return;
+        }
+
         if (this.batchSize <= 1 && this.batchIntervalMs === 0) {
             this.processTick(tick);
             return;
+        }
+
+        // --- Queue pressure bound ---
+        if (this.pendingTicks.length >= SymbolActor.MAX_PENDING_TICKS) {
+            // Drop oldest ticks to make room
+            const dropped = this.pendingTicks.splice(0, this.pendingTicks.length - SymbolActor.MAX_PENDING_TICKS + 1);
+            metrics.counter('tick.queue_overflow_drop', dropped.length);
+            botLogger.warn({
+                accountId: this.accountId,
+                symbol: this.symbol,
+                dropped: dropped.length,
+                queueDepth: this.pendingTicks.length,
+            }, 'Tick queue overflow — dropped oldest');
         }
 
         this.pendingTicks.push(tick);
@@ -251,6 +284,9 @@ class SymbolActor {
     private processTick(tick: TickData): void {
         if (this.disposed) return;
         if (this.runIds.size === 0) return;
+
+        // Feed tick into candle builder for server-side OHLC aggregation
+        ingestTick(this.accountId, tick);
 
         for (const runId of this.runIds) {
             const run = activeBotRuns.get(runId);

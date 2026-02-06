@@ -372,6 +372,10 @@ function broadcastPnL(accountId: string, state: PnLState): void {
 }
 
 function serializePnL(state: PnLState): Record<string, unknown> {
+    // Compute total profit/loss for frontend unification
+    const totalProfit = state.winCount > 0 ? round(state.avgWin * state.winCount) : 0;
+    const totalLoss = state.lossCount > 0 ? round(state.avgLoss * state.lossCount) : 0;
+
     return {
         realizedPnL: round(state.realizedPnL),
         unrealizedPnL: round(state.unrealizedPnL),
@@ -382,6 +386,8 @@ function serializePnL(state: PnLState): Record<string, unknown> {
         lossCount: state.lossCount,
         avgWin: round(state.avgWin),
         avgLoss: round(state.avgLoss),
+        totalProfit,
+        totalLoss,
         balanceDrift: state.balanceDrift !== null ? round(state.balanceDrift) : null,
         lastKnownBalance: state.lastKnownBalance !== null ? round(state.lastKnownBalance) : null,
         lastUpdated: state.lastUpdated,
@@ -395,6 +401,7 @@ function serializePnL(state: PnLState): Record<string, unknown> {
             lastMarkPrice: round(p.lastMarkPrice),
             unrealizedPnL: round(p.unrealizedPnL),
             openedAt: p.openedAt,
+            botRunId: p.botRunId ?? null,
         })),
     };
 }

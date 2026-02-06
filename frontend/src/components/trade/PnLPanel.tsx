@@ -85,8 +85,8 @@ export default function PnLPanel() {
             </div>
 
             {/* Stats Row */}
-            <div className="flex items-center justify-between px-4 py-2 border-t border-slate-700/30">
-                <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-t border-slate-700/30">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                     {/* Win Rate */}
                     <div className="flex items-center gap-1.5">
                         <div className="flex items-center gap-0.5">
