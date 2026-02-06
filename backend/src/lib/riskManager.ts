@@ -72,9 +72,10 @@ const KILL_SWITCH_SETTINGS_KEY = 'kill_switch';
 const KILL_SWITCH_GLOBAL_ACCOUNT = '__global__';
 
 const REJECT_SPIKE_LIMIT = Math.max(1, Number(process.env.REJECT_SPIKE_LIMIT) || 5);
-const RECONNECT_STORM_LIMIT = Math.max(1, Number(process.env.RECONNECT_STORM_LIMIT) || 5);
+const RECONNECT_STORM_LIMIT = Math.max(1, Number(process.env.RECONNECT_STORM_LIMIT) || 10);
 const SLIPPAGE_SPIKE_LIMIT = Math.max(1, Number(process.env.SLIPPAGE_SPIKE_LIMIT) || 5);
 const DEFAULT_MAX_CANCELS_PER_SECOND = Math.max(1, Number(process.env.DEFAULT_MAX_CANCELS_PER_SECOND) || 20);
+const KILL_SWITCH_AUTO_CLEAR_MS = Math.max(60000, Number(process.env.KILL_SWITCH_AUTO_CLEAR_MS) || 30 * 60 * 1000); // 30 min default
 
 const LATENCY_BLOWOUT_P99_MS = Math.max(1, Number(process.env.LATENCY_BLOWOUT_P99_MS) || 500);
 const LATENCY_BLOWOUT_WINDOW_MS = Math.max(1000, Number(process.env.LATENCY_BLOWOUT_WINDOW_MS) || 10000);
@@ -174,9 +175,21 @@ async function restoreKillSwitchState(): Promise<void> {
         return;
     }
 
-    (data || []).forEach((row: { account_id: string; value: unknown }) => {
+    const now = Date.now();
+    for (const row of data || []) {
         const state = row.value && typeof row.value === 'object' ? row.value as KillSwitchState : null;
-        if (!state?.active) return;
+        if (!state?.active) continue;
+
+        // Auto-expire non-manual kill switches older than TTL
+        const age = typeof state.triggeredAt === 'number' ? now - state.triggeredAt : Infinity;
+        if (!state.manual && age > KILL_SWITCH_AUTO_CLEAR_MS) {
+            const accountId = row.account_id === KILL_SWITCH_GLOBAL_ACCOUNT ? null : row.account_id;
+            riskLogger.info({ accountId: row.account_id, reason: state.reason, ageMs: age }, 'Auto-clearing expired kill switch on restore');
+            persistKillSwitchState(accountId, { active: false }).catch((error) => {
+                riskLogger.error({ error, accountId: row.account_id }, 'Expired kill switch clear persist failed');
+            });
+            continue;
+        }
 
         if (row.account_id === KILL_SWITCH_GLOBAL_ACCOUNT) {
             Object.assign(globalKillSwitch, state);
@@ -185,7 +198,7 @@ async function restoreKillSwitchState(): Promise<void> {
             killSwitchByAccount.set(row.account_id, state);
             notifyKillSwitch(row.account_id, state);
         }
-    });
+    }
 }
 
 async function ensureRiskCacheEntry(accountId: string): Promise<void> {
@@ -397,7 +410,31 @@ export function clearKillSwitch(accountId: string | null): void {
 }
 
 export function isKillSwitchActive(accountId: string): boolean {
-    return globalKillSwitch.active || (killSwitchByAccount.get(accountId)?.active ?? false);
+    const now = Date.now();
+
+    // Check account-level kill switch with inline TTL expiry
+    const accountState = killSwitchByAccount.get(accountId);
+    if (accountState?.active && !accountState.manual) {
+        const age = typeof accountState.triggeredAt === 'number' ? now - accountState.triggeredAt : 0;
+        if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
+            // Expired — clear asynchronously, don't block this trade
+            clearKillSwitch(accountId);
+            recordRiskEvent(accountId, 'kill_switch_auto_clear', accountState.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+            return globalKillSwitch.active === true;
+        }
+    }
+
+    // Check global kill switch with inline TTL expiry
+    if (globalKillSwitch.active && !globalKillSwitch.manual) {
+        const age = typeof globalKillSwitch.triggeredAt === 'number' ? now - globalKillSwitch.triggeredAt : 0;
+        if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
+            clearKillSwitch(null);
+            recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+            return accountState?.active === true;
+        }
+    }
+
+    return globalKillSwitch.active || (accountState?.active ?? false);
 }
 
 export function preTradeCheck(accountId: string, stake: number, limits: RiskLimits): { allowed: boolean; reason?: string } {
@@ -503,6 +540,29 @@ export async function initRiskManager(): Promise<void> {
         }
     }, LATENCY_BLOWOUT_WINDOW_MS);
     latencyTimer.unref();
+
+    // Periodic auto-clear sweep for non-manual kill switches that exceeded TTL
+    const autoClearTimer = setInterval(() => {
+        const now = Date.now();
+        for (const [accountId, state] of killSwitchByAccount.entries()) {
+            if (!state.active || state.manual) continue;
+            const age = typeof state.triggeredAt === 'number' ? now - state.triggeredAt : 0;
+            if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
+                riskLogger.info({ accountId, reason: state.reason, ageMs: age }, 'Auto-clearing expired kill switch');
+                clearKillSwitch(accountId);
+                recordRiskEvent(accountId, 'kill_switch_auto_clear', state.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+            }
+        }
+        if (globalKillSwitch.active && !globalKillSwitch.manual) {
+            const age = typeof globalKillSwitch.triggeredAt === 'number' ? now - globalKillSwitch.triggeredAt : 0;
+            if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
+                riskLogger.info({ reason: globalKillSwitch.reason, ageMs: age }, 'Auto-clearing expired global kill switch');
+                clearKillSwitch(null);
+                recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+            }
+        }
+    }, 60000); // Check every minute
+    autoClearTimer.unref();
 
     registerReconnectListener((accountId) => {
         recordReconnect(accountId);
