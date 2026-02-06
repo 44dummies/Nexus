@@ -316,7 +316,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const isLoginRoute = pathname === '/';
 
     return (
-        <div className={`${isLoginRoute ? '' : 'flex'} min-h-screen bg-background relative`}>
+        <div className={`${isLoginRoute ? '' : 'flex bg-background'} min-h-screen relative`}>
             {!isLoginRoute && (
                 <>
                     {/* Mobile Menu Trigger */}
