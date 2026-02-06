@@ -3,7 +3,6 @@ import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { subscribeTradeStream } from '../lib/tradeStream';
 import { subscribePnLStream, getPnLSnapshot } from '../lib/pnlTracker';
-import { subscribeCandleStream, getCandles, fetchHistoricalCandles, type CandleTimeframe } from '../lib/candleBuilder';
 import { executeTradeServerFast } from '../trade';
 import { requireAuth } from '../lib/authMiddleware';
 import { tradeRateLimit } from '../lib/rateLimit';
@@ -161,93 +160,6 @@ router.get('/pnl/stream', (req, res) => {
     res.write(`event: ready\ndata: {"ok":true}\n\n`);
 
     const unsubscribe = subscribePnLStream(activeAccount, res);
-
-    req.on('close', () => {
-        unsubscribe();
-    });
-});
-
-// ==================== Candle Endpoints ====================
-
-const VALID_TIMEFRAMES = new Set<CandleTimeframe>(['1s', '5s', '15s', '1m', '5m']);
-
-/**
- * GET /api/trades/candles?symbol=R_50&timeframe=5s — Candle snapshot (polling)
- */
-router.get('/candles', (req, res) => {
-    const activeAccount = req.auth?.accountId;
-    if (!activeAccount) {
-        return res.status(401).json({ error: 'No active account' });
-    }
-
-    const symbol = req.query.symbol as string;
-    const timeframe = (req.query.timeframe as CandleTimeframe) || '5s';
-
-    if (!symbol) {
-        return res.status(400).json({ error: 'Missing symbol parameter' });
-    }
-    if (!VALID_TIMEFRAMES.has(timeframe)) {
-        return res.status(400).json({ error: `Invalid timeframe. Valid: ${[...VALID_TIMEFRAMES].join(', ')}` });
-    }
-
-    const candles = getCandles(activeAccount, symbol, timeframe, true);
-    return res.json({ candles, timeframe, symbol });
-});
-
-/**
- * GET /api/trades/candles/history?symbol=R_50&timeframe=5s&count=100 — Fetch historical candles from Deriv API
- */
-router.get('/candles/history', async (req, res) => {
-    const activeAccount = req.auth?.accountId;
-    const token = req.auth?.token;
-    if (!activeAccount || !token) {
-        return res.status(401).json({ error: 'No active account' });
-    }
-
-    const symbol = req.query.symbol as string;
-    const timeframe = (req.query.timeframe as CandleTimeframe) || '5s';
-    const count = Math.min(parseInt(req.query.count as string, 10) || 100, 500);
-
-    if (!symbol) {
-        return res.status(400).json({ error: 'Missing symbol parameter' });
-    }
-    if (!VALID_TIMEFRAMES.has(timeframe)) {
-        return res.status(400).json({ error: `Invalid timeframe. Valid: ${[...VALID_TIMEFRAMES].join(', ')}` });
-    }
-
-    const candles = await fetchHistoricalCandles(activeAccount, symbol, timeframe, count);
-    return res.json({ candles, timeframe, symbol });
-});
-
-/**
- * GET /api/trades/candles/stream?symbol=R_50&timeframe=5s — Real-time candle SSE stream
- */
-router.get('/candles/stream', (req, res) => {
-    const activeAccount = req.auth?.accountId;
-    if (!activeAccount) {
-        return res.status(401).json({ error: 'No active account' });
-    }
-
-    const symbol = req.query.symbol as string;
-    const timeframe = (req.query.timeframe as CandleTimeframe) || '5s';
-
-    if (!symbol) {
-        return res.status(400).json({ error: 'Missing symbol parameter' });
-    }
-    if (!VALID_TIMEFRAMES.has(timeframe)) {
-        return res.status(400).json({ error: `Invalid timeframe. Valid: ${[...VALID_TIMEFRAMES].join(', ')}` });
-    }
-
-    res.status(200);
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders?.();
-
-    res.write(`event: ready\ndata: {"ok":true}\n\n`);
-
-    const unsubscribe = subscribeCandleStream(activeAccount, symbol, timeframe, res);
 
     req.on('close', () => {
         unsubscribe();

@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
@@ -12,7 +11,6 @@ const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHe
 const MarketSelector = dynamic(() => import('@/components/trade/MarketSelector'), { ssr: false });
 const SmartLayerPanel = dynamic(() => import('@/components/trade/SmartLayerPanel'), { ssr: false });
 const PnLPanel = dynamic(() => import('@/components/trade/PnLPanel'), { ssr: false });
-const AdvancedChart = dynamic(() => import('@/components/trade/AdvancedChart'), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
 
 function TradeContent() {
@@ -22,8 +20,6 @@ function TradeContent() {
         balance,
         isConnected,
     } = useTradingStore();
-
-    const [isChartMaximized, setIsChartMaximized] = useState(false);
 
     // Subscribe to real-time PnL stream
     usePnLStream();
@@ -65,14 +61,6 @@ function TradeContent() {
                 {/* Real-time PnL */}
                 <div className="mb-4">
                     <PnLPanel />
-                </div>
-
-                {/* Advanced Chart */}
-                <div className="glass-panel rounded-2xl p-4 sm:p-6">
-                    <AdvancedChart
-                        isMaximized={isChartMaximized}
-                        onToggleMaximize={() => setIsChartMaximized(prev => !prev)}
-                    />
                 </div>
             </div>
         </div>

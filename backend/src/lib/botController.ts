@@ -6,7 +6,6 @@
 
 import { EventEmitter } from 'events';
 import { subscribeTicks, unsubscribeTicks, getTickWindowView, type TickData } from './tickStream';
-import { ingestTick } from './candleBuilder';
 import { calculateATR, evaluateStrategy, getRequiredTicks, type StrategyConfig, type TradeSignal } from './strategyEngine';
 import { getRiskCache, initializeRiskCache } from './riskCache';
 import { executeTradeServerFast } from '../trade';
@@ -284,9 +283,6 @@ class SymbolActor {
     private processTick(tick: TickData): void {
         if (this.disposed) return;
         if (this.runIds.size === 0) return;
-
-        // Feed tick into candle builder for server-side OHLC aggregation
-        ingestTick(this.accountId, tick);
 
         for (const runId of this.runIds) {
             const run = activeBotRuns.get(runId);
