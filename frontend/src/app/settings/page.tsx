@@ -1,12 +1,10 @@
 'use client';
 
-import { Settings, Palette, Key, Bell, Shield, RefreshCw } from 'lucide-react';
+import { Settings, Palette, Bell, Shield, RefreshCw, BarChart2, Monitor } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { useTradingStore } from '@/store/tradingStore';
 
 const themes = [
@@ -30,10 +28,27 @@ const themes = [
     },
 ];
 
+const chartSizes = [
+    { id: 'compact' as const, label: 'Compact', description: 'Smaller chart, more room for data' },
+    { id: 'default' as const, label: 'Standard', description: 'Balanced view for most screens' },
+    { id: 'expanded' as const, label: 'Expanded', description: 'Maximum chart visibility' },
+];
+
 export default function SettingsPage() {
     const { theme, setTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
-    const { resetDailyStats, clearLogs } = useTradingStore();
+    const {
+        resetDailyStats,
+        clearLogs,
+        notifyTradeAlerts,
+        notifyErrorAlerts,
+        notifyBotStatus,
+        setNotifyTradeAlerts,
+        setNotifyErrorAlerts,
+        setNotifyBotStatus,
+        chartDefaultSize,
+        setChartDefaultSize,
+    } = useTradingStore();
 
     useEffect(() => {
         // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -100,27 +115,38 @@ export default function SettingsPage() {
                     )}
                 </section>
 
-                {/* API Settings */}
+                {/* Chart Preferences */}
                 <section className="glass-panel rounded-2xl p-6">
                     <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                        <Key className="w-5 h-5 text-accent" />
-                        API Configuration
+                        <BarChart2 className="w-5 h-5 text-accent" />
+                        Chart Preferences
                     </h2>
 
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <Label className="text-muted-foreground text-sm uppercase tracking-wider">
-                                Deriv App ID
-                            </Label>
-                            <Input
-                                value="••••••"
-                                type="password"
-                                disabled
-                                className="bg-muted/50 font-mono text-sm sm:text-base tracking-widest"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                App ID is configured via environment variables
-                            </p>
+                    <div>
+                        <p className="text-sm text-muted-foreground mb-3">Default chart size on the Trade page</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            {chartSizes.map((size) => (
+                                <button
+                                    key={size.id}
+                                    onClick={() => {
+                                        setChartDefaultSize(size.id);
+                                        toast.success('Chart Size Updated', {
+                                            description: `Default set to ${size.label}`,
+                                        });
+                                    }}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                                        chartDefaultSize === size.id
+                                            ? 'border-accent ring-2 ring-accent/20'
+                                            : 'border-border hover:border-accent/50'
+                                    }`}
+                                >
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <Monitor className="w-4 h-4 text-accent" />
+                                        <span className="font-medium text-sm">{size.label}</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">{size.description}</p>
+                                </button>
+                            ))}
                         </div>
                     </div>
                 </section>
@@ -136,16 +162,38 @@ export default function SettingsPage() {
                         <label className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
                             <div>
                                 <p className="font-medium">Trade Alerts</p>
-                                <p className="text-sm text-muted-foreground">Get notified when trades execute</p>
+                                <p className="text-sm text-muted-foreground">Get notified when trades execute or settle</p>
                             </div>
-                            <input type="checkbox" defaultChecked className="w-5 h-5 rounded" />
+                            <input
+                                type="checkbox"
+                                checked={notifyTradeAlerts}
+                                onChange={(e) => setNotifyTradeAlerts(e.target.checked)}
+                                className="w-5 h-5 rounded accent-accent"
+                            />
                         </label>
                         <label className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
                             <div>
                                 <p className="font-medium">Error Alerts</p>
-                                <p className="text-sm text-muted-foreground">Get notified when errors occur</p>
+                                <p className="text-sm text-muted-foreground">Get notified when WebSocket or trade errors occur</p>
                             </div>
-                            <input type="checkbox" defaultChecked className="w-5 h-5 rounded" />
+                            <input
+                                type="checkbox"
+                                checked={notifyErrorAlerts}
+                                onChange={(e) => setNotifyErrorAlerts(e.target.checked)}
+                                className="w-5 h-5 rounded accent-accent"
+                            />
+                        </label>
+                        <label className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                            <div>
+                                <p className="font-medium">Bot Status Changes</p>
+                                <p className="text-sm text-muted-foreground">Alerts when bot starts, stops, or encounters issues</p>
+                            </div>
+                            <input
+                                type="checkbox"
+                                checked={notifyBotStatus}
+                                onChange={(e) => setNotifyBotStatus(e.target.checked)}
+                                className="w-5 h-5 rounded accent-accent"
+                            />
                         </label>
                     </div>
                 </section>

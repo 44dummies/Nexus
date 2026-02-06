@@ -16,7 +16,10 @@ import {
     Monitor,
     ChevronLeft,
     ChevronRight,
-    LogOut
+    LogOut,
+    Wifi,
+    WifiOff,
+    Circle,
 } from 'lucide-react';
 import { useTradingStore } from '@/store/tradingStore';
 import { apiFetch } from '@/lib/api';
@@ -48,6 +51,9 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
     const [mounted, setMounted] = useState(false);
     const [isCollapsed, setIsCollapsed] = useState(false);
     const botRunning = useTradingStore((state) => state.botRunning);
+    const isConnected = useTradingStore((state) => state.isConnected);
+    const activeAccountType = useTradingStore((state) => state.activeAccountType);
+    const activeAccountId = useTradingStore((state) => state.activeAccountId);
     const logout = useTradingStore((state) => state.logout);
 
     // Prevent hydration mismatch
@@ -163,14 +169,50 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                 })}
             </nav>
 
-            {/* Bot Status */}
-            <div className="px-3 py-4 border-t border-sidebar-border">
+            {/* Connection + Bot Status */}
+            <div className="px-3 py-4 border-t border-sidebar-border space-y-3">
+                {/* Connection Health */}
+                <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
+                    {isConnected ? (
+                        <Wifi className="w-3.5 h-3.5 text-emerald-500" />
+                    ) : (
+                        <WifiOff className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                    )}
+                    <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs text-muted-foreground`}>
+                        {isConnected ? 'Connected' : 'Reconnecting...'}
+                    </span>
+                </div>
+
+                {/* Bot Status */}
                 <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
                     <div className={`w-2.5 h-2.5 rounded-full ${botRunning ? 'bg-emerald-400 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-gray-500'}`} />
                     <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'} text-xs text-muted-foreground uppercase tracking-wider`}>
                         {botRunning ? 'Bot Active' : 'Bot Offline'}
                     </span>
                 </div>
+
+                {/* Account Mode Badge */}
+                {activeAccountType && (
+                    <div className={`flex items-center gap-2 ${isCollapsed ? 'lg:justify-center' : 'lg:justify-start'} justify-center`}>
+                        <Circle
+                            className={`w-2.5 h-2.5 fill-current ${activeAccountType === 'real' ? 'text-emerald-500' : 'text-amber-500'}`}
+                        />
+                        <span className={`${isCollapsed ? 'hidden lg:hidden' : 'block'}`}>
+                            <span className={`text-[10px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded ${
+                                activeAccountType === 'real'
+                                    ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                                    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                            }`}>
+                                {activeAccountType}
+                            </span>
+                            {activeAccountId && (
+                                <span className="text-[10px] text-muted-foreground ml-1.5 font-mono">
+                                    {activeAccountId}
+                                </span>
+                            )}
+                        </span>
+                    </div>
+                )}
             </div>
 
             {/* Theme Switcher */}

@@ -1,6 +1,7 @@
 'use client';
 
 import { Activity, TrendingUp, TrendingDown, BarChart2 } from 'lucide-react';
+import { useTradingStore } from '@/store/tradingStore';
 
 interface DashboardStatsProps {
     lastTick: number;
@@ -11,6 +12,7 @@ interface DashboardStatsProps {
 }
 
 export function DashboardStats({ lastTick, prevTick, botRunning, netPnL, totalTrades }: DashboardStatsProps) {
+    const selectedSymbol = useTradingStore((state) => state.selectedSymbol);
     const tickDirection = lastTick > prevTick ? 'up' : lastTick < prevTick ? 'down' : 'neutral';
 
     return (
@@ -18,7 +20,7 @@ export function DashboardStats({ lastTick, prevTick, botRunning, netPnL, totalTr
             {/* Live Price */}
             <div className="glass-panel rounded-xl p-4">
                 <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">R_100</span>
+                    <span className="text-xs text-muted-foreground uppercase tracking-wider font-mono">{selectedSymbol || 'R_100'}</span>
                     {tickDirection === 'up' ? (
                         <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     ) : tickDirection === 'down' ? (

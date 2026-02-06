@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
@@ -10,6 +11,7 @@ const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisu
 const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr: false });
 const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHeader').then(mod => mod.DashboardHeader), { ssr: false });
 const AdvancedChart = dynamic(() => import('@/components/trade/AdvancedChart'), { ssr: false });
+const MarketSelector = dynamic(() => import('@/components/trade/MarketSelector'), { ssr: false });
 
 function TradeContent() {
     const {
@@ -20,6 +22,8 @@ function TradeContent() {
         balance,
         isConnected,
     } = useTradingStore();
+
+    const [isChartMaximized, setIsChartMaximized] = useState(false);
 
     return (
         <div className="relative min-h-screen">
@@ -33,15 +37,25 @@ function TradeContent() {
                     balance={balance}
                 />
 
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 mt-6">
-                    <div className="lg:col-span-2">
+                {/* Market Selector Bar */}
+                <div className="flex items-center gap-4 mt-4 mb-2">
+                    <MarketSelector />
+                </div>
+
+                <div className={`grid gap-6 mt-4 ${isChartMaximized ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-3'}`}>
+                    <div className={isChartMaximized ? '' : 'lg:col-span-2'}>
                         <div className="glass-panel rounded-2xl p-6 min-h-[360px] sm:min-h-[420px]">
-                            <AdvancedChart />
+                            <AdvancedChart
+                                isMaximized={isChartMaximized}
+                                onToggleMaximize={() => setIsChartMaximized((prev) => !prev)}
+                            />
                         </div>
                     </div>
-                    <div>
-                        <LiveFeed />
-                    </div>
+                    {!isChartMaximized && (
+                        <div>
+                            <LiveFeed />
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

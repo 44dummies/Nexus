@@ -80,6 +80,12 @@ interface TradingState {
     // Logging
     botLogs: BotLogEntry[];
 
+    // User Preferences
+    notifyTradeAlerts: boolean;
+    notifyErrorAlerts: boolean;
+    notifyBotStatus: boolean;
+    chartDefaultSize: 'compact' | 'default' | 'expanded';
+
     // Actions
     setAccounts: (accounts: Account[], email: string, activeAccountId?: string | null, activeAccountType?: 'real' | 'demo' | null, activeCurrency?: string | null) => void;
     switchAccount: (accountId: string) => void;
@@ -101,6 +107,10 @@ interface TradingState {
     resetDailyStats: () => void;
     addLog: (type: BotLogEntry['type'], message: string, data?: Record<string, unknown>) => void;
     clearLogs: () => void;
+    setNotifyTradeAlerts: (enabled: boolean) => void;
+    setNotifyErrorAlerts: (enabled: boolean) => void;
+    setNotifyBotStatus: (enabled: boolean) => void;
+    setChartDefaultSize: (size: 'compact' | 'default' | 'expanded') => void;
     logout: () => void;
 }
 
@@ -194,6 +204,10 @@ export const useTradingStore = create<TradingState>()(
             potentialProfit: null,
             tradeResults: [],
             botLogs: [],
+            notifyTradeAlerts: true,
+            notifyErrorAlerts: true,
+            notifyBotStatus: true,
+            chartDefaultSize: 'default',
 
             setAccounts: (accounts, email, activeAccountId, activeAccountType, activeCurrency) => {
                 const firstAccount = accounts[0];
@@ -389,6 +403,11 @@ export const useTradingStore = create<TradingState>()(
 
             clearLogs: () => set({ botLogs: [] }),
 
+            setNotifyTradeAlerts: (enabled) => set({ notifyTradeAlerts: enabled }),
+            setNotifyErrorAlerts: (enabled) => set({ notifyErrorAlerts: enabled }),
+            setNotifyBotStatus: (enabled) => set({ notifyBotStatus: enabled }),
+            setChartDefaultSize: (size) => set({ chartDefaultSize: size }),
+
             logout: () => set({
                 accounts: [],
                 activeAccountId: null,
@@ -438,6 +457,10 @@ export const useTradingStore = create<TradingState>()(
                 potentialProfit: null,
                 tradeResults: [],
                 botLogs: [],
+                notifyTradeAlerts: true,
+                notifyErrorAlerts: true,
+                notifyBotStatus: true,
+                chartDefaultSize: 'default',
             }),
         }),
         {
@@ -466,6 +489,10 @@ export const useTradingStore = create<TradingState>()(
                 drawdownLimitPct: state.drawdownLimitPct,
                 maxConsecutiveLosses: state.maxConsecutiveLosses,
                 lossCooldownMs: state.lossCooldownMs,
+                notifyTradeAlerts: state.notifyTradeAlerts,
+                notifyErrorAlerts: state.notifyErrorAlerts,
+                notifyBotStatus: state.notifyBotStatus,
+                chartDefaultSize: state.chartDefaultSize,
                 // Excluded from persistence (sensitive/ephemeral):
                 // accounts, userEmail, balance, currency, isAuthorized, isConnected,
                 // tickHistory, botRunning, tradeResults, botLogs, equity, etc.

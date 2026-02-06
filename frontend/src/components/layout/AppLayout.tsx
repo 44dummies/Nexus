@@ -15,7 +15,7 @@ interface AppLayoutProps {
 
 const RAW_APP_ID = (process.env.NEXT_PUBLIC_DERIV_APP_ID || '').trim();
 const APP_ID = Number.isFinite(Number(RAW_APP_ID)) && RAW_APP_ID ? RAW_APP_ID : '1089';
-const DEFAULT_SYMBOL = 'R_100';
+const FALLBACK_SYMBOL = 'R_100';
 const RAW_WS_URL = (process.env.NEXT_PUBLIC_DERIV_WS_URL || 'wss://ws.derivws.com/websockets/v3').trim();
 const WS_URL = RAW_WS_URL.replace(/\/$/, '');
 const WS_RECONNECT_BASE_MS = Number(process.env.NEXT_PUBLIC_WS_RECONNECT_BASE_MS || 1500);
@@ -40,7 +40,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
         maxStake,
         cooldownMs,
         isAuthorized,
+        selectedSymbol,
     } = useTradingStore();
+
+    const activeSymbol = selectedSymbol || FALLBACK_SYMBOL;
 
     const wsRef = useRef<WebSocket | null>(null);
     const engineRef = useRef<BotEngine | null>(null);
@@ -50,6 +53,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     const sessionRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const sessionRetryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const connectWebSocketRef = useRef<() => void>(() => {});
+    const activeSymbolRef = useRef(activeSymbol);
 
     // Sliding session: Refresh cookie every 5 minutes to keep session alive while app is open
     // Only run on authenticated routes (not on login page)
@@ -101,7 +105,8 @@ export default function AppLayout({ children }: AppLayoutProps) {
         wsRef.current = ws;
 
         ws.onopen = () => {
-            ws.send(JSON.stringify({ ticks: DEFAULT_SYMBOL, subscribe: 1 }));
+            const symbol = activeSymbolRef.current;
+            ws.send(JSON.stringify({ ticks: symbol, subscribe: 1 }));
             setConnectionStatus(true);
             isConnectingRef.current = false;
             reconnectAttemptsRef.current = 0;
@@ -109,7 +114,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
             const snapshot = useTradingStore.getState();
             engineRef.current = new BotEngine({
                 ws,
-                symbol: DEFAULT_SYMBOL,
+                symbol,
                 maxStake: snapshot.maxStake,
                 cooldownMs: snapshot.cooldownMs,
             });
@@ -164,6 +169,33 @@ export default function AppLayout({ children }: AppLayoutProps) {
     useEffect(() => {
         connectWebSocketRef.current = connectWebSocket;
     }, [connectWebSocket]);
+
+    // Re-subscribe when user selects a different market symbol
+    useEffect(() => {
+        activeSymbolRef.current = activeSymbol;
+        const ws = wsRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        // Clear tick history for the new symbol
+        useTradingStore.getState().addTick(0); // reset handled via fresh ticks
+        useTradingStore.setState({ tickHistory: [], lastTick: 0, prevTick: 0 });
+
+        // Forget old subscription and subscribe to new symbol
+        ws.send(JSON.stringify({ forget_all: 'ticks' }));
+        ws.send(JSON.stringify({ ticks: activeSymbol, subscribe: 1 }));
+
+        // Recreate engine with new symbol
+        if (engineRef.current) {
+            engineRef.current.shutdown();
+        }
+        const snapshot = useTradingStore.getState();
+        engineRef.current = new BotEngine({
+            ws,
+            symbol: activeSymbol,
+            maxStake: snapshot.maxStake,
+            cooldownMs: snapshot.cooldownMs,
+        });
+    }, [activeSymbol]);
 
     useEffect(() => {
         if (pathname === '/') {

@@ -3,6 +3,7 @@ import React from 'react';
 
 import { useTradingStore } from '@/store/tradingStore';
 import { useBotStream } from '@/hooks/useBotStream';
+import { getMarketDisplayName } from '@/components/trade/MarketSelector';
 import { TrendingUp, TrendingDown, Activity, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 
@@ -19,9 +20,12 @@ function LiveFeed() {
         clearLogs,
         tradeResults,
         activeRunId,
+        selectedSymbol,
     } = useTradingStore();
 
     useBotStream(activeRunId);
+
+    const symbolName = getMarketDisplayName(selectedSymbol);
 
     const direction = lastTick > prevTick ? 'up' : lastTick < prevTick ? 'down' : 'neutral';
     const change = lastTick - prevTick;
@@ -133,7 +137,7 @@ function LiveFeed() {
                 </div>
                 <div>
                     <div className="text-xs text-muted-foreground mb-1">Symbol</div>
-                    <div className="font-mono text-muted-foreground">R_100</div>
+                    <div className="font-mono text-muted-foreground truncate" title={symbolName}>{selectedSymbol || 'R_100'}</div>
                 </div>
             </div>
 

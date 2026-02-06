@@ -1,8 +1,9 @@
 'use client';
 
-import { useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useMemo, useRef, useState, useCallback, type MouseEvent } from 'react';
 import { useTradingStore } from '@/store/tradingStore';
-import { BarChart2, ChartCandlestick, Minus, Plus } from 'lucide-react';
+import { getMarketDisplayName } from '@/components/trade/MarketSelector';
+import { BarChart2, ChartCandlestick, Minus, Plus, Maximize2, Minimize2 } from 'lucide-react';
 
 type Candle = {
     open: number;
@@ -52,14 +53,39 @@ function movingAverage(values: number[], window: number) {
     return result;
 }
 
-export default function AdvancedChart() {
-    const { tickHistory, lastTick, prevTick } = useTradingStore();
+export type ChartSize = 'compact' | 'default' | 'expanded';
+
+const CHART_HEIGHTS: Record<ChartSize, string> = {
+    compact: 'h-[280px] sm:h-[320px]',
+    default: 'h-[360px] sm:h-[420px]',
+    expanded: 'h-[500px] sm:h-[600px]',
+};
+
+interface AdvancedChartProps {
+    isMaximized?: boolean;
+    onToggleMaximize?: () => void;
+}
+
+export default function AdvancedChart({ isMaximized = false, onToggleMaximize }: AdvancedChartProps) {
+    const { tickHistory, lastTick, prevTick, selectedSymbol } = useTradingStore();
     const [timeframe, setTimeframe] = useState(TIMEFRAMES[1].id);
     const [showFastMa, setShowFastMa] = useState(true);
     const [showSlowMa, setShowSlowMa] = useState(true);
     const [showArea, setShowArea] = useState(true);
     const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+    const [chartSize, setChartSize] = useState<ChartSize>('default');
     const svgRef = useRef<SVGSVGElement | null>(null);
+
+    const marketName = getMarketDisplayName(selectedSymbol);
+    const chartHeightClass = isMaximized ? 'h-[calc(100vh-200px)]' : CHART_HEIGHTS[chartSize];
+
+    const cycleSize = useCallback(() => {
+        setChartSize((prev) => {
+            const order: ChartSize[] = ['compact', 'default', 'expanded'];
+            const idx = order.indexOf(prev);
+            return order[(idx + 1) % order.length];
+        });
+    }, []);
 
     const {
         candles,
@@ -145,10 +171,29 @@ export default function AdvancedChart() {
                     <p className="text-xs text-muted-foreground uppercase tracking-[0.35em]">Advanced Charting</p>
                     <h2 className="text-2xl font-semibold flex items-center gap-2">
                         <ChartCandlestick className="w-5 h-5 text-accent" />
-                        R_100 Momentum
+                        {marketName}
                     </h2>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                    {/* Chart Size Controls */}
+                    <div className="flex items-center gap-1 mr-2 border-r border-border/50 pr-2">
+                        <button
+                            onClick={cycleSize}
+                            title={`Chart size: ${chartSize}`}
+                            className="px-2 py-1 rounded-full text-[10px] uppercase tracking-widest border border-border/60 text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+                        >
+                            {chartSize === 'compact' ? 'S' : chartSize === 'default' ? 'M' : 'L'}
+                        </button>
+                        {onToggleMaximize && (
+                            <button
+                                onClick={onToggleMaximize}
+                                title={isMaximized ? 'Exit fullscreen' : 'Maximize chart'}
+                                className="px-2 py-1 rounded-full text-[10px] border border-border/60 text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+                            >
+                                {isMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                            </button>
+                        )}
+                    </div>
                     {TIMEFRAMES.map((frame) => (
                         <button
                             key={frame.id}
@@ -199,7 +244,7 @@ export default function AdvancedChart() {
                     <svg
                         ref={svgRef}
                         viewBox={`0 0 ${width} ${height}`}
-                        className="w-full h-[360px] sm:h-[420px]"
+                        className={`w-full ${chartHeightClass}`}
                         onMouseMove={handleMouseMove}
                         onMouseLeave={() => setHoverIndex(null)}
                     >
