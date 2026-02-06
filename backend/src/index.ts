@@ -11,6 +11,7 @@ import notificationsRouter from './routes/notifications';
 import riskEventsRouter from './routes/risk-events';
 import botRunsRouter from './routes/bot-runs';
 import orderStatusRouter from './routes/order-status';
+import marketsRouter from './routes/markets';
 import logger from './lib/logger';
 import { defaultRateLimit } from './lib/rateLimit';
 import { startTradeBackfillJob } from './lib/tradeBackfill';
@@ -186,6 +187,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/trades', tradesRouter);
+app.use('/api/markets', marketsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/risk-events', riskEventsRouter);
 app.use('/api/bot-runs', botRunsRouter);

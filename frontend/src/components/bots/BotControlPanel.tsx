@@ -6,19 +6,27 @@ import { Button } from '@/components/ui/button';
 interface BotControlPanelProps {
     botRunning: boolean;
     isAuthorized: boolean;
+    autoModeEnabled: boolean;
     onStartBot: () => void;
     onStopBot: () => void;
 }
 
-export function BotControlPanel({ botRunning, isAuthorized, onStartBot, onStopBot }: BotControlPanelProps) {
+export function BotControlPanel({ botRunning, isAuthorized, autoModeEnabled, onStartBot, onStopBot }: BotControlPanelProps) {
     return (
         <div className="glass-panel rounded-2xl p-6">
             <h2 className="text-lg font-semibold mb-4">Bot Control</h2>
 
-            <div className="flex items-center gap-4 mb-6">
-                <div className={`w-4 h-4 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-gray-500'}`} />
-                <span className="text-lg font-medium">
-                    {botRunning ? 'Bot is Running' : 'Bot is Stopped'}
+            <div className="flex items-center justify-between gap-4 mb-6">
+                <div className="flex items-center gap-4">
+                    <div className={`w-4 h-4 rounded-full ${botRunning ? 'bg-emerald-500 animate-pulse shadow-lg shadow-emerald-500/50' : 'bg-gray-500'}`} />
+                    <span className="text-lg font-medium">
+                        {botRunning ? 'Bot is Running' : 'Bot is Stopped'}
+                    </span>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs uppercase tracking-widest ${
+                    autoModeEnabled ? 'bg-purple-500/15 text-purple-300' : 'bg-emerald-500/15 text-emerald-400'
+                }`}>
+                    {autoModeEnabled ? 'SmartLayer' : 'Standard'}
                 </span>
             </div>
 

@@ -4,11 +4,8 @@ import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import { useTradingStore } from '@/store/tradingStore';
-import { usePnLStream } from '@/hooks/usePnLStream';
 
 // Dynamic imports for heavy trading components
-const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHeader').then(mod => mod.DashboardHeader), { ssr: false });
-const MarketSelector = dynamic(() => import('@/components/trade/MarketSelector'), { ssr: false });
 const SmartLayerPanel = dynamic(() => import('@/components/trade/SmartLayerPanel'), { ssr: false });
 const PnLPanel = dynamic(() => import('@/components/trade/PnLPanel'), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
@@ -19,38 +16,38 @@ function TradeContent() {
         currency,
         balance,
         isConnected,
+        activeAccountType,
     } = useTradingStore();
-
-    // Subscribe to real-time PnL stream
-    usePnLStream();
 
     return (
         <div className="relative min-h-screen bg-background">
             <div className="relative z-10 mx-auto w-full max-w-6xl px-4 sm:px-6 pt-16 lg:pt-6 pb-6">
-                {/* Header row: title + account switcher + balance */}
-                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
-                    <DashboardHeader
-                        isAuthorized={isAuthorized}
-                        isConnected={isConnected}
-                        currency={currency}
-                        balance={balance}
-                    />
-                    <div className="flex items-center gap-3">
-                        {/* Live Balance Pill */}
+                {/* Header row: live balance + mode badge + account switcher */}
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-4 rounded-2xl border border-border/60 bg-muted/30 px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-2 text-sm">
+                            <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`} />
+                            <span className="text-xs uppercase tracking-widest text-muted-foreground">
+                                {isConnected ? 'Live' : 'Connecting'}
+                            </span>
+                        </div>
                         {isAuthorized && (
-                            <div className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/40 px-4 py-2 text-sm font-mono">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <div className="flex items-center gap-2 rounded-full border border-border/70 bg-background/60 px-4 py-2 text-sm font-mono">
                                 <span className="text-muted-foreground">{currency || 'USD'}</span>
                                 <span className="font-semibold text-foreground">{(balance ?? 0).toFixed(2)}</span>
                             </div>
                         )}
-                        <AccountSwitcher />
+                        {activeAccountType && (
+                            <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest ${
+                                activeAccountType === 'real'
+                                    ? 'bg-emerald-500/15 text-emerald-500'
+                                    : 'bg-amber-500/15 text-amber-500'
+                            }`}>
+                                {activeAccountType}
+                            </span>
+                        )}
                     </div>
-                </div>
-
-                {/* Market Selector Bar */}
-                <div className="flex items-center gap-4 mb-3">
-                    <MarketSelector />
+                    <AccountSwitcher />
                 </div>
 
                 {/* Smart Layer Panel */}

@@ -80,6 +80,10 @@ export function BotCard({ profile, selected, onSelect }: BotCardProps) {
                     <span className="text-foreground">{profile.edge}</span>
                 </div>
             </div>
+
+            <div className="mt-4 text-[10px] uppercase tracking-widest text-muted-foreground">
+                Tap for details
+            </div>
         </button>
     );
 }

@@ -333,6 +333,21 @@ export const useTradingStore = create<TradingState>()(
                         lastTradeTime: null,
                         activeRunId: null,
                         selectedSymbol: 'R_100',
+                        tradeResults: [],
+                        botLogs: [],
+                        pnlRealizedPnL: 0,
+                        pnlUnrealizedPnL: 0,
+                        pnlNetPnL: 0,
+                        pnlOpenPositionCount: 0,
+                        pnlOpenExposure: 0,
+                        pnlWinCount: 0,
+                        pnlLossCount: 0,
+                        pnlAvgWin: 0,
+                        pnlAvgLoss: 0,
+                        pnlBalanceDrift: null,
+                        pnlLastKnownBalance: null,
+                        pnlLastUpdated: null,
+                        pnlPositions: [],
                     });
                 }
             },
@@ -444,10 +459,6 @@ export const useTradingStore = create<TradingState>()(
 
             recordTradeResult: ({ profit, contractId }) => {
                 set((state) => {
-                    const nextEquity = state.equity === null ? null : state.equity + profit;
-                    const nextEquityPeak = nextEquity === null
-                        ? state.equityPeak
-                        : Math.max(state.equityPeak ?? nextEquity, nextEquity);
                     const timestamp = Date.now();
                     const tradeEntry: TradeResultEntry = {
                         id: `${contractId ?? 'trade'}-${timestamp}-${Math.random().toString(36).slice(2, 6)}`,
@@ -456,12 +467,8 @@ export const useTradingStore = create<TradingState>()(
                         contractId,
                     };
                     return {
-                        totalLossToday: profit < 0 ? state.totalLossToday + Math.abs(profit) : state.totalLossToday,
-                        totalProfitToday: profit > 0 ? state.totalProfitToday + profit : state.totalProfitToday,
                         lossStreak: profit < 0 ? state.lossStreak + 1 : 0,
                         consecutiveWins: profit > 0 ? state.consecutiveWins + 1 : 0,
-                        equity: nextEquity,
-                        equityPeak: nextEquityPeak,
                         lastLossTime: profit < 0 ? Date.now() : state.lastLossTime,
                         lastTradeProfit: profit,
                         tradeResults: [tradeEntry, ...state.tradeResults].slice(0, MAX_TRADE_RESULTS),
@@ -534,7 +541,7 @@ export const useTradingStore = create<TradingState>()(
                 pnlLastUpdated: data.lastUpdated ?? Date.now(),
                 pnlPositions: data.positions ?? [],
                 // Sync totalProfitToday/totalLossToday from backend pnlTracker
-                // This unifies PnL so LiveFeed and PnLPanel show the same numbers
+                // Keeps all PnL totals sourced from the backend SSE stream
                 ...(typeof data.totalProfit === 'number' ? { totalProfitToday: data.totalProfit } : {}),
                 ...(typeof data.totalLoss === 'number' ? { totalLossToday: data.totalLoss } : {}),
             }),

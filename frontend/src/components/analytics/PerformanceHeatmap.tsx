@@ -18,6 +18,12 @@ interface TradeRow {
     bot_id?: string | null;
 }
 
+function toUtcDayKey(value: string): string | null {
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return null;
+    return date.toISOString().slice(0, 10);
+}
+
 function getColorForPnL(pnl: number): string {
     if (pnl === 0) return 'hsl(210 20% 90% / 0.4)';
 
@@ -61,7 +67,8 @@ function PerformanceHeatmap() {
 
                 const byDay = new Map<string, DayData>();
                 trades.forEach((trade) => {
-                    const dateKey = trade.created_at.split('T')[0];
+                    const dateKey = toUtcDayKey(trade.created_at);
+                    if (!dateKey) return;
                     const entry = byDay.get(dateKey) || { date: dateKey, pnl: 0, trades: 0 };
                     entry.pnl += Number(trade.profit ?? 0);
                     entry.trades += 1;
@@ -74,7 +81,7 @@ function PerformanceHeatmap() {
                 for (let i = 90; i >= 0; i--) {
                     const date = new Date(today);
                     date.setDate(date.getDate() - i);
-                    const key = date.toISOString().split('T')[0];
+                    const key = date.toISOString().slice(0, 10);
                     const entry = byDay.get(key) || { date: key, pnl: 0, trades: 0 };
                     entry.pnl = Math.round(entry.pnl * 100) / 100;
                     days.push(entry);

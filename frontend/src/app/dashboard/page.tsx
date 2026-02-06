@@ -4,166 +4,29 @@ import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import NotificationsPanel from '@/components/dashboard/NotificationsPanel';
-import { useEffect, useMemo, useState } from 'react';
 import { useTradingStore } from '@/store/tradingStore';
 import { BotRunToggle } from '@/components/bots/BotRunToggle';
-import { apiFetch, apiUrl } from '@/lib/api';
 
 const PerformanceHeatmap = dynamic(() => import('@/components/analytics/PerformanceHeatmap'), { ssr: false });
 const DashboardStats = dynamic(() => import('@/components/dashboard/DashboardStats').then(mod => mod.DashboardStats), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
-
-type TradeRow = {
-    id?: string;
-    profit?: number | string | null;
-    created_at?: string | null;
-    contractId?: number | null;
-};
-
-const getUtcDayRange = () => {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const end = new Date(start);
-    end.setUTCDate(end.getUTCDate() + 1);
-    return { startMs: start.getTime(), endMs: end.getTime() };
-};
 
 function DashboardContent() {
     const {
         lastTick,
         prevTick,
         botRunning,
-        isAuthorized,
-        activeAccountId,
+        pnlNetPnL,
+        pnlWinCount,
+        pnlLossCount,
     } = useTradingStore();
 
-    const [todayTrades, setTodayTrades] = useState<TradeRow[]>([]);
-    const totalTrades = todayTrades.length;
+    const totalTrades = pnlWinCount + pnlLossCount;
+    const winRate = totalTrades ? (pnlWinCount / totalTrades) * 100 : 0;
 
-    const { netPnL, wins, losses } = useMemo(() => {
-        let nextNet = 0;
-        let nextWins = 0;
-        let nextLosses = 0;
-
-        todayTrades.forEach((trade) => {
-            const profit = typeof trade.profit === 'number'
-                ? trade.profit
-                : typeof trade.profit === 'string'
-                    ? Number(trade.profit)
-                    : 0;
-            if (!Number.isFinite(profit)) return;
-            nextNet += profit;
-            if (profit >= 0) {
-                nextWins += 1;
-            } else {
-                nextLosses += 1;
-            }
-        });
-
-        return { netPnL: nextNet, wins: nextWins, losses: nextLosses };
-    }, [todayTrades]);
-
-    const winRate = useMemo(() => {
-        return totalTrades ? (wins / totalTrades) * 100 : 0;
-    }, [wins, totalTrades]);
-
-    useEffect(() => {
-        if (!isAuthorized) {
-            setTodayTrades([]);
-            return;
-        }
-
-        let isMounted = true;
-
-        const fetchTodayTrades = async () => {
-            try {
-                const res = await apiFetch('/api/trades?limit=1000');
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                    throw new Error(typeof data?.error === 'string' ? data.error : 'Failed to fetch trades');
-                }
-
-                const trades = Array.isArray(data?.trades) ? data.trades as TradeRow[] : [];
-                const { startMs, endMs } = getUtcDayRange();
-                const filtered = trades.filter((trade) => {
-                    if (!trade.created_at) return false;
-                    const time = new Date(trade.created_at).getTime();
-                    return Number.isFinite(time) && time >= startMs && time < endMs;
-                });
-
-                if (isMounted) {
-                    setTodayTrades(filtered);
-                }
-            } catch {
-                if (isMounted) {
-                    setTodayTrades([]);
-                }
-            }
-        };
-
-        fetchTodayTrades();
-        const interval = setInterval(fetchTodayTrades, 30000);
-
-        return () => {
-            isMounted = false;
-            clearInterval(interval);
-        };
-    }, [isAuthorized, activeAccountId]);
-
-    useEffect(() => {
-        if (!isAuthorized) return;
-
-        const streamUrl = apiUrl('/api/trades/stream');
-        const source = new EventSource(streamUrl, { withCredentials: true });
-
-        const handleTradeEvent = (event: MessageEvent) => {
-            try {
-                const payload = JSON.parse(event.data) as {
-                    id?: string | null;
-                    contractId?: number | null;
-                    profit?: number | string | null;
-                    createdAt?: string | null;
-                    created_at?: string | null;
-                    symbol?: string | null;
-                };
-
-                const createdAt = payload.createdAt || payload.created_at || null;
-                if (!createdAt) return;
-
-                const createdMs = new Date(createdAt).getTime();
-                if (!Number.isFinite(createdMs)) return;
-
-                const { startMs, endMs } = getUtcDayRange();
-                if (createdMs < startMs || createdMs >= endMs) return;
-
-                const tradeId = payload.id ?? null;
-                const contractId = payload.contractId ?? null;
-
-                setTodayTrades((prev) => {
-                    const exists = prev.some((trade) =>
-                        (trade.id && tradeId && trade.id === tradeId)
-                        || (trade.contractId && contractId && trade.contractId === contractId)
-                    );
-                    if (exists) return prev;
-                    return [{
-                        id: tradeId ?? undefined,
-                        contractId: contractId ?? undefined,
-                        profit: payload.profit ?? 0,
-                        created_at: createdAt,
-                    }, ...prev];
-                });
-            } catch {
-                // ignore malformed events
-            }
-        };
-
-        source.addEventListener('trade', handleTradeEvent);
-
-        return () => {
-            source.removeEventListener('trade', handleTradeEvent);
-            source.close();
-        };
-    }, [isAuthorized, activeAccountId]);
+    const netPnL = pnlNetPnL;
+    const wins = pnlWinCount;
+    const losses = pnlLossCount;
 
     return (
         <div className="relative min-h-screen">
@@ -199,9 +62,9 @@ function DashboardContent() {
                             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                                 <div>
                                     <h3 className="text-lg font-semibold">Performance Overview</h3>
-                                    <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">
-                                        Last 30 days
-                                    </p>
+                            <p className="text-xs text-muted-foreground uppercase tracking-widest mt-1">
+                                Live P&amp;L snapshot
+                            </p>
                                 </div>
                                 <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-muted-foreground">
                                     <span className="rounded-full border border-border/60 bg-muted/30 px-3 py-1">
@@ -222,7 +85,7 @@ function DashboardContent() {
                         <section className="glass-panel rounded-2xl p-4 sm:p-6 space-y-4">
                             <div className="flex items-center justify-between">
                                 <h3 className="text-lg font-semibold">Quick Insights</h3>
-                                <span className="text-xs uppercase tracking-widest text-muted-foreground">Today</span>
+                                <span className="text-xs uppercase tracking-widest text-muted-foreground">Session</span>
                             </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div className="rounded-xl border border-border/60 bg-muted/30 p-4">

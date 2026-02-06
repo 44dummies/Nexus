@@ -12,126 +12,13 @@ import { BotCard } from '@/components/bots/BotCard';
 import { EntryControls } from '@/components/bots/EntryControls';
 import { RiskParameters } from '@/components/bots/RiskParameters';
 import { BotTuningPanel } from '@/components/bots/BotTuningPanel';
+import BotDetailsDialog from '@/components/bots/BotDetailsDialog';
 import { BOT_CATALOG } from '@/lib/bot/catalog';
 import { getBotConfig } from '@/lib/bot/config';
 import { getExecutionProfile } from '@/lib/bot/executionProfiles';
 import { getBackendRunStatus, startBackendRun, stopBackendRun } from '@/lib/bot/engine';
-import { Brain, Lock, ChevronRight, X, Zap, Shield, TrendingUp } from 'lucide-react';
-
-// Available markets for bot trading
-const MARKETS = [
-    { id: 'R_100', name: 'Volatility 100 Index', category: 'Synthetics' },
-    { id: 'R_75', name: 'Volatility 75 Index', category: 'Synthetics' },
-    { id: 'R_50', name: 'Volatility 50 Index', category: 'Synthetics' },
-    { id: 'R_25', name: 'Volatility 25 Index', category: 'Synthetics' },
-    { id: 'R_10', name: 'Volatility 10 Index', category: 'Synthetics' },
-    { id: '1HZ100V', name: 'Volatility 100 (1s) Index', category: 'Synthetics' },
-    { id: '1HZ75V', name: 'Volatility 75 (1s) Index', category: 'Synthetics' },
-    { id: '1HZ50V', name: 'Volatility 50 (1s) Index', category: 'Synthetics' },
-    { id: 'BOOM1000', name: 'Boom 1000 Index', category: 'Crash/Boom' },
-    { id: 'BOOM500', name: 'Boom 500 Index', category: 'Crash/Boom' },
-    { id: 'CRASH1000', name: 'Crash 1000 Index', category: 'Crash/Boom' },
-    { id: 'CRASH500', name: 'Crash 500 Index', category: 'Crash/Boom' },
-    { id: 'JD100', name: 'Jump 100 Index', category: 'Jump' },
-    { id: 'JD50', name: 'Jump 50 Index', category: 'Jump' },
-];
-
-// ==================== Bot Detail Drawer ====================
-
-function BotDetailDrawer({
-    bot,
-    onClose,
-}: {
-    bot: (typeof BOT_CATALOG)[number];
-    onClose: () => void;
-}) {
-    const profile = getExecutionProfile(bot.executionProfileId);
-
-    return (
-        <div className="fixed inset-0 z-50 flex justify-end">
-            {/* Backdrop */}
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-            {/* Drawer */}
-            <div className="relative w-full max-w-md bg-background border-l border-border overflow-y-auto animate-in slide-in-from-right">
-                <div className="sticky top-0 z-10 flex items-center justify-between p-4 border-b border-border bg-background/90 backdrop-blur">
-                    <h3 className="text-lg font-semibold">{bot.name}</h3>
-                    <button
-                        onClick={onClose}
-                        className="flex items-center justify-center w-11 h-11 rounded-xl hover:bg-muted transition-colors"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
-
-                <div className="p-4 sm:p-6 space-y-6">
-                    {/* Summary */}
-                    <div>
-                        <p className="text-sm text-muted-foreground leading-relaxed">{bot.summary}</p>
-                    </div>
-
-                    {/* Strategy Attributes */}
-                    <div className="grid grid-cols-2 gap-3">
-                        <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <TrendingUp className="w-3.5 h-3.5 text-accent" />
-                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Market Fit</span>
-                            </div>
-                            <p className="text-sm font-medium">{bot.marketFit}</p>
-                        </div>
-                        <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Edge</span>
-                            </div>
-                            <p className="text-sm font-medium">{bot.edge}</p>
-                        </div>
-                        <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <Shield className="w-3.5 h-3.5 text-blue-400" />
-                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Risk Profile</span>
-                            </div>
-                            <p className="text-sm font-medium">{profile.name}</p>
-                        </div>
-                        <div className="rounded-xl border border-border/60 bg-muted/30 p-3">
-                            <div className="flex items-center gap-1.5 mb-1">
-                                <Brain className="w-3.5 h-3.5 text-purple-400" />
-                                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Strategy ID</span>
-                            </div>
-                            <p className="text-sm font-mono">{bot.id}</p>
-                        </div>
-                    </div>
-
-                    {/* Execution Profile Details */}
-                    <div>
-                        <h4 className="text-sm font-semibold mb-3 uppercase tracking-wider text-muted-foreground">Execution Profile</h4>
-                        <div className="space-y-2 text-sm">
-                            <div className="flex justify-between py-1.5 border-b border-border/30">
-                                <span className="text-muted-foreground">Entry Timeout</span>
-                                <span className="font-mono">{profile.defaults.entryTimeoutMs}ms</span>
-                            </div>
-                            <div className="flex justify-between py-1.5 border-b border-border/30">
-                                <span className="text-muted-foreground">Polling Interval</span>
-                                <span className="font-mono">{profile.defaults.entryPollingMs}ms</span>
-                            </div>
-                            <div className="flex justify-between py-1.5 border-b border-border/30">
-                                <span className="text-muted-foreground">Slippage Tolerance</span>
-                                <span className="font-mono">{profile.defaults.entrySlippagePct}%</span>
-                            </div>
-                            <div className="flex justify-between py-1.5 border-b border-border/30">
-                                <span className="text-muted-foreground">Aggressiveness</span>
-                                <span className="font-mono">{profile.defaults.entryAggressiveness}</span>
-                            </div>
-                            <div className="flex justify-between py-1.5">
-                                <span className="text-muted-foreground">Min Edge</span>
-                                <span className="font-mono">{profile.defaults.entryMinEdgePct}%</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-}
+import { useMarketCatalog } from '@/hooks/useMarketCatalog';
+import { Brain, Lock } from 'lucide-react';
 
 // ==================== SmartLayer Toggle ====================
 
@@ -251,7 +138,23 @@ function BotsContent() {
         autoModeEnabled,
     } = useTradingStore();
 
-    const [drawerBot, setDrawerBot] = useState<(typeof BOT_CATALOG)[number] | null>(null);
+    const [detailBot, setDetailBot] = useState<(typeof BOT_CATALOG)[number] | null>(null);
+    const { markets, loading: marketsLoading, error: marketsError } = useMarketCatalog();
+
+    const marketGroups = markets.reduce((acc, market) => {
+        if (!acc[market.category]) acc[market.category] = [];
+        acc[market.category].push(market);
+        return acc;
+    }, {} as Record<string, typeof markets>);
+
+    const marketCategoryLabels: Record<string, string> = {
+        synthetic: 'Synthetics',
+        crash_boom: 'Crash/Boom',
+        jump: 'Jump',
+        forex: 'Forex',
+        crypto: 'Crypto',
+        commodities: 'Commodities',
+    };
 
     const selectedStrategy = selectedBotId || 'rsi';
     const selectedBot = BOT_CATALOG.find((bot) => bot.id === selectedStrategy) || BOT_CATALOG[0];
@@ -439,26 +342,18 @@ function BotsContent() {
                     </div>
 
                     <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 transition-opacity ${
-                        isLocked ? 'opacity-50 pointer-events-none' : ''
+                        isLocked ? 'opacity-70' : ''
                     }`}>
                         {BOT_CATALOG.map((bot) => (
                             <div key={bot.id} className="relative group">
                                 <BotCard
                                     profile={bot}
                                     selected={bot.id === selectedStrategy}
-                                    onSelect={handleSelectStrategy}
-                                />
-                                {/* Detail drawer trigger */}
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDrawerBot(bot);
+                                    onSelect={() => {
+                                        handleSelectStrategy(bot.id);
+                                        setDetailBot(bot);
                                     }}
-                                    className="absolute top-2 right-2 flex items-center justify-center w-9 h-9 sm:w-8 sm:h-8 rounded-lg bg-background/80 border border-border/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:bg-muted"
-                                    title="View details"
-                                >
-                                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                                </button>
+                                />
                             </div>
                         ))}
                     </div>
@@ -524,33 +419,34 @@ function BotsContent() {
                         <select
                             value={selectedSymbol ?? ''}
                             onChange={(e) => setSelectedSymbol(e.target.value)}
-                            disabled={botRunning}
+                            disabled={botRunning || marketsLoading}
                             className="w-full p-3 rounded-xl bg-background/50 border border-border/50 text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            {Object.entries(
-                                MARKETS.reduce((acc, market) => {
-                                    if (!acc[market.category]) acc[market.category] = [];
-                                    acc[market.category].push(market);
-                                    return acc;
-                                }, {} as Record<string, typeof MARKETS>)
-                            ).map(([category, markets]) => (
-                                <optgroup key={category} label={category}>
-                                    {markets.map((market) => (
-                                        <option key={market.id} value={market.id}>
-                                            {market.name}
+                            {marketsLoading && <option>Loading markets…</option>}
+                            {!marketsLoading && marketsError && <option>Markets unavailable</option>}
+                            {!marketsLoading && !marketsError && Object.entries(marketGroups).map(([category, group]) => (
+                                <optgroup key={category} label={marketCategoryLabels[category] ?? category}>
+                                    {group.map((market) => (
+                                        <option key={market.symbol} value={market.symbol}>
+                                            {market.displayName}
                                         </option>
                                     ))}
                                 </optgroup>
                             ))}
                         </select>
                         <p className="text-xs text-muted-foreground mt-2">
-                            Selected: <span className="font-mono text-foreground">{selectedSymbol ?? '—'}</span>
+                            {marketsError ? marketsError : (
+                                <>
+                                    Selected: <span className="font-mono text-foreground">{selectedSymbol ?? '—'}</span>
+                                </>
+                            )}
                         </p>
                     </div>
 
                     <BotControlPanel
                         botRunning={botRunning}
                         isAuthorized={isAuthorized}
+                        autoModeEnabled={autoModeEnabled}
                         onStartBot={handleStartBot}
                         onStopBot={handleStopBot}
                     />
@@ -559,14 +455,8 @@ function BotsContent() {
 
             {/* Risk & Entry Controls — locked in auto mode */}
             <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 transition-opacity ${
-                isLocked ? 'opacity-50 pointer-events-none' : ''
+                isLocked ? 'opacity-90' : ''
             }`}>
-                {isLocked && (
-                    <div className="lg:col-span-2 flex items-center justify-center gap-2 text-xs text-purple-400 bg-purple-500/5 border border-purple-500/20 rounded-xl py-2">
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>Risk and entry controls are managed by SmartLayer in auto mode</span>
-                    </div>
-                )}
                 <RiskParameters
                     baseStake={baseStake}
                     maxStake={maxStake}
@@ -578,6 +468,7 @@ function BotsContent() {
                     drawdownLimitPct={drawdownLimitPct}
                     maxConsecutiveLosses={maxConsecutiveLosses}
                     lossCooldownMs={lossCooldownMs}
+                    isLocked={isLocked}
                     setBotConfig={setBotConfig}
                 />
 
@@ -589,17 +480,17 @@ function BotsContent() {
                     entrySlippagePct={entrySlippagePct}
                     entryAggressiveness={entryAggressiveness}
                     entryMinEdgePct={entryMinEdgePct}
+                    isLocked={isLocked}
                     setEntryConfig={setEntryConfig}
                 />
             </div>
 
-            {!isLocked && (
-                <BotTuningPanel
-                    botId={selectedStrategy}
-                    config={selectedBotConfig}
-                    onUpdate={(patch) => setBotConfigFor(selectedStrategy, patch)}
-                />
-            )}
+            <BotTuningPanel
+                botId={selectedStrategy}
+                config={selectedBotConfig}
+                isLocked={isLocked}
+                onUpdate={(patch) => setBotConfigFor(selectedStrategy, patch)}
+            />
 
             <BotsPerformance
                 totalProfitToday={totalProfitToday}
@@ -607,10 +498,17 @@ function BotsContent() {
                 netPnL={netPnL}
             />
 
-            {/* Bot Detail Drawer */}
-            {drawerBot && (
-                <BotDetailDrawer bot={drawerBot} onClose={() => setDrawerBot(null)} />
-            )}
+            <BotDetailsDialog
+                open={!!detailBot}
+                bot={detailBot}
+                isLocked={isLocked}
+                isSelected={detailBot?.id === selectedStrategy}
+                onClose={() => setDetailBot(null)}
+                onSelect={(id) => {
+                    handleSelectStrategy(id);
+                    setDetailBot(null);
+                }}
+            />
         </div>
     );
 }

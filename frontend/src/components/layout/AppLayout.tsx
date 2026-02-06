@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useTradingStore } from '@/store/tradingStore';
 import { BotEngine } from '@/lib/bot/engine';
 import { apiFetch } from '@/lib/api';
+import TradingStreamMonitor from '@/components/streams/TradingStreamMonitor';
 
 const Sidebar = dynamic(() => import('@/components/layout/Sidebar'), { ssr: false });
 
@@ -327,6 +328,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
     return (
         <div className={`${isLoginRoute ? '' : 'flex bg-background'} min-h-[100dvh] relative`}>
+            {!isLoginRoute && <TradingStreamMonitor />}
             {!isLoginRoute && (
                 <>
                     {/* Mobile Menu Trigger — 44px touch target */}

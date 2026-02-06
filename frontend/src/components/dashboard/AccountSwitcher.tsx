@@ -6,8 +6,12 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { apiFetch } from '@/lib/api';
 
-export default function AccountSwitcher() {
-    const { accounts, activeAccountId, setActiveAccount } = useTradingStore();
+interface AccountSwitcherProps {
+    compact?: boolean;
+}
+
+export default function AccountSwitcher({ compact = false }: AccountSwitcherProps) {
+    const { accounts, activeAccountId, switchAccount } = useTradingStore();
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement | null>(null);
     const firstItemRef = useRef<HTMLButtonElement | null>(null);
@@ -53,7 +57,10 @@ export default function AccountSwitcher() {
                 aria-haspopup="menu"
                 aria-expanded={isOpen}
                 aria-controls="account-switcher-menu"
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/30 hover:bg-muted/50 border border-border/70 shadow-soft transition-colors"
+                aria-label={compact ? `Switch account (active: ${activeAccount?.id ?? 'unknown'})` : undefined}
+                className={`flex items-center gap-2 rounded-lg bg-muted/30 hover:bg-muted/50 border border-border/70 shadow-soft transition-colors ${
+                    compact ? 'h-11 w-11 justify-center p-0' : 'px-3 py-2'
+                }`}
                 onKeyDown={(event) => {
                     if (event.key === 'ArrowDown') {
                         event.preventDefault();
@@ -64,9 +71,13 @@ export default function AccountSwitcher() {
                 <Circle
                     className={`w-2 h-2 fill-current ${activeAccount?.type === 'real' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}
                 />
-                <span className="font-mono text-sm">{activeAccount?.id}</span>
-                <span className="text-xs text-muted-foreground uppercase">{activeAccount?.type}</span>
-                <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                {!compact && (
+                    <>
+                        <span className="font-mono text-sm">{activeAccount?.id}</span>
+                        <span className="text-xs text-muted-foreground uppercase">{activeAccount?.type}</span>
+                        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </>
+                )}
             </button>
 
             <AnimatePresence>
@@ -110,7 +121,7 @@ export default function AccountSwitcher() {
                                                 throw new Error('Account switch failed');
                                             }
 
-                                            setActiveAccount(account.id, account.type, account.currency);
+                                            switchAccount(account.id);
                                             setIsOpen(false);
                                         } catch (err) {
                                             console.error(err);

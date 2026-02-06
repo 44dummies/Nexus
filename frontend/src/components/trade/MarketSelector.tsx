@@ -1,58 +1,19 @@
 'use client';
 
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Search, ChevronDown, TrendingUp, BarChart2, Coins, Globe } from 'lucide-react';
+import { Search, ChevronDown, TrendingUp, BarChart2, Coins, Globe, Flame, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTradingStore } from '@/store/tradingStore';
-
-export interface MarketInfo {
-    symbol: string;
-    displayName: string;
-    category: 'synthetic' | 'forex' | 'crypto' | 'commodities';
-}
-
-const MARKETS: MarketInfo[] = [
-    // Synthetic Indices
-    { symbol: 'R_10', displayName: 'Volatility 10 Index', category: 'synthetic' },
-    { symbol: 'R_25', displayName: 'Volatility 25 Index', category: 'synthetic' },
-    { symbol: 'R_50', displayName: 'Volatility 50 Index', category: 'synthetic' },
-    { symbol: 'R_75', displayName: 'Volatility 75 Index', category: 'synthetic' },
-    { symbol: 'R_100', displayName: 'Volatility 100 Index', category: 'synthetic' },
-    { symbol: '1HZ10V', displayName: 'Volatility 10 (1s) Index', category: 'synthetic' },
-    { symbol: '1HZ25V', displayName: 'Volatility 25 (1s) Index', category: 'synthetic' },
-    { symbol: '1HZ50V', displayName: 'Volatility 50 (1s) Index', category: 'synthetic' },
-    { symbol: '1HZ75V', displayName: 'Volatility 75 (1s) Index', category: 'synthetic' },
-    { symbol: '1HZ100V', displayName: 'Volatility 100 (1s) Index', category: 'synthetic' },
-    // Forex
-    { symbol: 'frxEURUSD', displayName: 'EUR/USD', category: 'forex' },
-    { symbol: 'frxGBPUSD', displayName: 'GBP/USD', category: 'forex' },
-    { symbol: 'frxUSDJPY', displayName: 'USD/JPY', category: 'forex' },
-    { symbol: 'frxAUDUSD', displayName: 'AUD/USD', category: 'forex' },
-    { symbol: 'frxUSDCAD', displayName: 'USD/CAD', category: 'forex' },
-    // Crypto
-    { symbol: 'cryBTCUSD', displayName: 'BTC/USD', category: 'crypto' },
-    { symbol: 'cryETHUSD', displayName: 'ETH/USD', category: 'crypto' },
-    // Commodities
-    { symbol: 'frxXAUUSD', displayName: 'Gold/USD', category: 'commodities' },
-    { symbol: 'frxXAGUSD', displayName: 'Silver/USD', category: 'commodities' },
-];
+import { useMarketCatalog, type MarketInfo } from '@/hooks/useMarketCatalog';
 
 const CATEGORY_META: Record<string, { label: string; icon: typeof TrendingUp }> = {
     synthetic: { label: 'Synthetic Indices', icon: BarChart2 },
+    crash_boom: { label: 'Crash/Boom', icon: Flame },
+    jump: { label: 'Jump Indices', icon: Zap },
     forex: { label: 'Forex', icon: Globe },
     crypto: { label: 'Crypto', icon: Coins },
     commodities: { label: 'Commodities', icon: TrendingUp },
 };
-
-export function getMarketDisplayName(symbol: string | null): string {
-    if (!symbol) return 'Select Market';
-    return MARKETS.find((m) => m.symbol === symbol)?.displayName ?? symbol;
-}
-
-export function getMarketCategory(symbol: string | null): string {
-    if (!symbol) return '';
-    return MARKETS.find((m) => m.symbol === symbol)?.category ?? 'synthetic';
-}
 
 export default function MarketSelector() {
     const { selectedSymbol, setSelectedSymbol } = useTradingStore();
@@ -60,6 +21,7 @@ export default function MarketSelector() {
     const [search, setSearch] = useState('');
     const containerRef = useRef<HTMLDivElement | null>(null);
     const searchRef = useRef<HTMLInputElement | null>(null);
+    const { markets, loading, error } = useMarketCatalog();
 
     useEffect(() => {
         if (!isOpen) return;
@@ -101,15 +63,15 @@ export default function MarketSelector() {
     };
 
     const filtered = useMemo(() => {
-        if (!search.trim()) return MARKETS;
+        if (!search.trim()) return markets;
         const q = search.toLowerCase();
-        return MARKETS.filter(
+        return markets.filter(
             (m) =>
                 m.displayName.toLowerCase().includes(q) ||
                 m.symbol.toLowerCase().includes(q) ||
                 m.category.toLowerCase().includes(q)
         );
-    }, [search]);
+    }, [markets, search]);
 
     const grouped = useMemo(() => {
         const groups: Record<string, MarketInfo[]> = {};
@@ -120,7 +82,8 @@ export default function MarketSelector() {
         return groups;
     }, [filtered]);
 
-    const displayName = getMarketDisplayName(selectedSymbol);
+    const selectedMarket = markets.find((market) => market.symbol === selectedSymbol);
+    const displayName = selectedMarket?.displayName ?? selectedSymbol ?? 'Select Market';
 
     return (
         <div ref={containerRef} className="relative z-[100]">
@@ -143,7 +106,7 @@ export default function MarketSelector() {
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -8, scale: 0.98 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute top-full mt-2 left-0 w-80 glass-panel rounded-xl overflow-hidden shadow-soft-lg ring-1 ring-border/40"
+                        className="absolute top-full mt-2 left-0 w-[min(20rem,calc(100vw-2rem))] glass-panel rounded-xl overflow-hidden shadow-soft-lg ring-1 ring-border/40"
                         role="listbox"
                         aria-label="Select market"
                     >
@@ -164,46 +127,53 @@ export default function MarketSelector() {
 
                         {/* Market List */}
                         <div className="max-h-72 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-border/60">
-                            {Object.keys(grouped).length === 0 ? (
-                                <div className="text-center py-6 text-sm text-muted-foreground">No markets found</div>
-                            ) : (
-                                Object.entries(grouped).map(([category, markets]) => {
-                                    const meta = CATEGORY_META[category];
-                                    const Icon = meta?.icon ?? BarChart2;
-                                    return (
-                                        <div key={category} className="mb-2 last:mb-0">
-                                            <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground">
-                                                <Icon className="w-3 h-3" />
-                                                {meta?.label ?? category}
-                                            </div>
-                                            {markets.map((m) => (
-                                                <button
-                                                    key={m.symbol}
-                                                    role="option"
-                                                    aria-selected={m.symbol === selectedSymbol}
-                                                    onClick={() => {
-                                                        setSelectedSymbol(m.symbol);
-                                                        setIsOpen(false);
-                                                    }}
-                                                    className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                                                        m.symbol === selectedSymbol
-                                                            ? 'bg-accent/10 text-accent'
-                                                            : 'hover:bg-muted/40 text-foreground'
-                                                    }`}
-                                                >
-                                                    <div>
-                                                        <div className="font-medium">{m.displayName}</div>
-                                                        <div className="text-[10px] font-mono text-muted-foreground">{m.symbol}</div>
-                                                    </div>
-                                                    {m.symbol === selectedSymbol && (
-                                                        <div className="w-2 h-2 rounded-full bg-accent" />
-                                                    )}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    );
-                                })
+                            {loading && (
+                                <div className="text-center py-6 text-sm text-muted-foreground">Loading markets…</div>
                             )}
+                            {!loading && error && (
+                                <div className="text-center py-6 text-sm text-muted-foreground">
+                                    {error}
+                                </div>
+                            )}
+                            {!loading && !error && Object.keys(grouped).length === 0 && (
+                                <div className="text-center py-6 text-sm text-muted-foreground">No markets found</div>
+                            )}
+                            {!loading && !error && Object.entries(grouped).map(([category, group]) => {
+                                const meta = CATEGORY_META[category];
+                                const Icon = meta?.icon ?? BarChart2;
+                                return (
+                                    <div key={category} className="mb-2 last:mb-0">
+                                        <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground">
+                                            <Icon className="w-3 h-3" />
+                                            {meta?.label ?? category}
+                                        </div>
+                                        {group.map((m: MarketInfo) => (
+                                            <button
+                                                key={m.symbol}
+                                                role="option"
+                                                aria-selected={m.symbol === selectedSymbol}
+                                                onClick={() => {
+                                                    setSelectedSymbol(m.symbol);
+                                                    setIsOpen(false);
+                                                }}
+                                                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
+                                                    m.symbol === selectedSymbol
+                                                        ? 'bg-accent/10 text-accent'
+                                                        : 'hover:bg-muted/40 text-foreground'
+                                                }`}
+                                            >
+                                                <div>
+                                                    <div className="font-medium">{m.displayName}</div>
+                                                    <div className="text-[10px] font-mono text-muted-foreground">{m.symbol}</div>
+                                                </div>
+                                                {m.symbol === selectedSymbol && (
+                                                    <div className="w-2 h-2 rounded-full bg-accent" />
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </motion.div>
                 )}

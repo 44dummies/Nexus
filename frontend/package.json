@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "env -u NODE_OPTIONS NODE_OPTIONS=--localstorage-file=.next/localstorage next build",
+    "build": "env -u NODE_OPTIONS NODE_OPTIONS=--localstorage-file=.next/localstorage next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",

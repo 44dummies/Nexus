@@ -18,7 +18,6 @@ import {
     LogOut,
     Wifi,
     WifiOff,
-    Circle,
 } from 'lucide-react';
 import { useTradingStore } from '@/store/tradingStore';
 import { apiFetch } from '@/lib/api';
@@ -55,7 +54,6 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
     const botRunning = useTradingStore((state) => state.botRunning);
     const isConnected = useTradingStore((state) => state.isConnected);
     const activeAccountType = useTradingStore((state) => state.activeAccountType);
-    const activeAccountId = useTradingStore((state) => state.activeAccountId);
     const logout = useTradingStore((state) => state.logout);
 
     // Prevent hydration mismatch
@@ -225,18 +223,12 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
             {/* Footer: Account Switcher + Logout */}
             <div className="p-3 border-t border-sidebar-border space-y-2">
                 {/* Account Switcher — integrated into sidebar footer */}
-                {!isCollapsed && (
-                    <div className="mb-1">
-                        <AccountSwitcher />
-                    </div>
-                )}
-                {/* Collapsed: show account type badge */}
+                <div className={`mb-1 ${isCollapsed ? 'flex justify-center' : ''}`}>
+                    <AccountSwitcher compact={isCollapsed} />
+                </div>
                 {isCollapsed && activeAccountType && (
-                    <div className="flex justify-center">
-                        <Circle
-                            className={`w-3 h-3 fill-current ${activeAccountType === 'real' ? 'text-emerald-500' : 'text-amber-500'}`}
-                            title={`${activeAccountType} — ${activeAccountId}`}
-                        />
+                    <div className="flex justify-center text-[10px] text-muted-foreground">
+                        {activeAccountType === 'real' ? 'REAL' : 'DEMO'}
                     </div>
                 )}
 

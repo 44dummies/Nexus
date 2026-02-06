@@ -6,9 +6,10 @@ export function useBotStream(botRunId: string | null) {
     const eventSourceRef = useRef<EventSource | null>(null);
     const addLog = useTradingStore((state) => state.addLog);
     const updateSmartLayerState = useTradingStore((state) => state.updateSmartLayerState);
+    const isAuthorized = useTradingStore((state) => state.isAuthorized);
 
     useEffect(() => {
-        if (!botRunId) {
+        if (!isAuthorized || !botRunId) {
             if (eventSourceRef.current) {
                 eventSourceRef.current.close();
                 eventSourceRef.current = null;
@@ -70,5 +71,5 @@ export function useBotStream(botRunId: string | null) {
                 eventSourceRef.current = null;
             }
         };
-    }, [botRunId, addLog, updateSmartLayerState]);
+    }, [botRunId, isAuthorized, addLog, updateSmartLayerState]);
 }

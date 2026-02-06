@@ -13,6 +13,7 @@ interface EntryControlsProps {
     entrySlippagePct: number;
     entryAggressiveness: number;
     entryMinEdgePct: number;
+    isLocked: boolean;
     setEntryConfig: (config: Partial<{
         entryProfileId: string | null;
         entryMode: 'HYBRID_LIMIT_MARKET' | 'MARKET';
@@ -32,14 +33,21 @@ export function EntryControls({
     entrySlippagePct,
     entryAggressiveness,
     entryMinEdgePct,
+    isLocked,
     setEntryConfig,
 }: EntryControlsProps) {
+    const autoManaged = isLocked;
     return (
         <div className="glass-panel rounded-2xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Sliders className="w-5 h-5 text-accent" />
                 Entry Logic
             </h2>
+            {autoManaged && (
+                <div className="mb-4 rounded-xl border border-purple-500/30 bg-purple-500/10 p-3 text-xs text-purple-200">
+                    Entry logic is auto-managed by SmartLayer while Auto Mode is active.
+                </div>
+            )}
 
             <div className="space-y-4">
                 <div className="space-y-2">
@@ -58,7 +66,10 @@ export function EntryControls({
                                     entryAggressiveness: profile.defaults.entryAggressiveness,
                                     entryMinEdgePct: profile.defaults.entryMinEdgePct,
                                 })}
-                                className={`text-left px-3 py-2 rounded-lg border transition-all ${entryProfileId === profile.id
+                                disabled={autoManaged}
+                                className={`text-left px-3 py-2 rounded-lg border transition-all ${
+                                    autoManaged ? 'opacity-60 cursor-not-allowed' : ''
+                                } ${entryProfileId === profile.id
                                     ? 'border-accent bg-accent/10 text-accent'
                                     : 'border-border bg-muted/30 text-muted-foreground hover:border-accent/50'
                                     }`}
@@ -80,7 +91,10 @@ export function EntryControls({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <button
                             onClick={() => setEntryConfig({ entryMode: 'HYBRID_LIMIT_MARKET' })}
-                            className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-all ${entryMode === 'HYBRID_LIMIT_MARKET'
+                            disabled={autoManaged}
+                            className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-all ${
+                                autoManaged ? 'opacity-60 cursor-not-allowed' : ''
+                            } ${entryMode === 'HYBRID_LIMIT_MARKET'
                                 ? 'border-accent bg-accent/10 text-accent'
                                 : 'border-border bg-muted/30 text-muted-foreground hover:border-accent/50'
                                 }`}
@@ -89,7 +103,10 @@ export function EntryControls({
                         </button>
                         <button
                             onClick={() => setEntryConfig({ entryMode: 'MARKET' })}
-                            className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-all ${entryMode === 'MARKET'
+                            disabled={autoManaged}
+                            className={`flex-1 px-3 py-2 rounded-lg text-sm border transition-all ${
+                                autoManaged ? 'opacity-60 cursor-not-allowed' : ''
+                            } ${entryMode === 'MARKET'
                                 ? 'border-accent bg-accent/10 text-accent'
                                 : 'border-border bg-muted/30 text-muted-foreground hover:border-accent/50'
                                 }`}
@@ -115,7 +132,7 @@ export function EntryControls({
                             value={entryTimeoutMs}
                             onChange={(e) => setEntryConfig({ entryTimeoutMs: Math.max(200, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
-                            disabled={entryMode === 'MARKET'}
+                            disabled={entryMode === 'MARKET' || autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -130,7 +147,7 @@ export function EntryControls({
                             value={entryPollingMs}
                             onChange={(e) => setEntryConfig({ entryPollingMs: Math.max(50, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
-                            disabled={entryMode === 'MARKET'}
+                            disabled={entryMode === 'MARKET' || autoManaged}
                         />
                     </div>
                 </div>
@@ -148,7 +165,7 @@ export function EntryControls({
                             value={entrySlippagePct}
                             onChange={(e) => setEntryConfig({ entrySlippagePct: Math.max(0, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
-                            disabled={entryMode === 'MARKET'}
+                            disabled={entryMode === 'MARKET' || autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -163,7 +180,7 @@ export function EntryControls({
                             value={entryMinEdgePct}
                             onChange={(e) => setEntryConfig({ entryMinEdgePct: Math.max(0, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
-                            disabled={entryMode === 'MARKET'}
+                            disabled={entryMode === 'MARKET' || autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -179,7 +196,7 @@ export function EntryControls({
                             value={entryAggressiveness}
                             onChange={(e) => setEntryConfig({ entryAggressiveness: Math.min(1, Math.max(0, e.currentTarget.valueAsNumber || 0)) })}
                             className="bg-muted/50 border-border font-mono"
-                            disabled={entryMode === 'MARKET'}
+                            disabled={entryMode === 'MARKET' || autoManaged}
                         />
                     </div>
                 </div>

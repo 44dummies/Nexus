@@ -16,6 +16,7 @@ interface RiskParametersProps {
     drawdownLimitPct: number;
     maxConsecutiveLosses: number;
     lossCooldownMs: number;
+    isLocked: boolean;
     setBotConfig: (config: Partial<Pick<BotConfig,
         'baseStake'
         | 'maxStake'
@@ -41,14 +42,21 @@ export function RiskParameters({
     drawdownLimitPct,
     maxConsecutiveLosses,
     lossCooldownMs,
+    isLocked,
     setBotConfig,
 }: RiskParametersProps) {
+    const autoManaged = isLocked;
     return (
         <div className="glass-panel rounded-2xl p-6">
             <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5 text-yellow-500" />
                 Risk Parameters
             </h2>
+            {autoManaged && (
+                <div className="mb-4 rounded-xl border border-purple-500/30 bg-purple-500/10 p-3 text-xs text-purple-200">
+                    SmartLayer is managing risk caps. You can still adjust Stake, Stop Loss, and Take Profit.
+                </div>
+            )}
 
             <div className="space-y-4">
                 <div className="space-y-2">
@@ -79,6 +87,7 @@ export function RiskParameters({
                             value={maxStake}
                             onChange={(e) => setBotConfig({ maxStake: Math.max(0, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -124,6 +133,7 @@ export function RiskParameters({
                                 setBotConfig({ cooldownMs: seconds * 1000 });
                             }}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                         <p className="text-[11px] text-muted-foreground">Per-bot cooldowns override this default.</p>
                     </div>
@@ -142,6 +152,7 @@ export function RiskParameters({
                             value={baseRiskPct}
                             onChange={(e) => setBotConfig({ baseRiskPct: Math.max(0, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -156,6 +167,7 @@ export function RiskParameters({
                             value={dailyLossLimitPct}
                             onChange={(e) => setBotConfig({ dailyLossLimitPct: Math.max(0, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -170,6 +182,7 @@ export function RiskParameters({
                             value={drawdownLimitPct}
                             onChange={(e) => setBotConfig({ drawdownLimitPct: Math.max(0, e.currentTarget.valueAsNumber || 0) })}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -184,6 +197,7 @@ export function RiskParameters({
                             value={maxConsecutiveLosses}
                             onChange={(e) => setBotConfig({ maxConsecutiveLosses: Math.max(1, e.currentTarget.valueAsNumber || 1) })}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                     </div>
                     <div className="space-y-2">
@@ -201,6 +215,7 @@ export function RiskParameters({
                                 setBotConfig({ lossCooldownMs: minutes * 60000 });
                             }}
                             className="bg-muted/50 border-border font-mono"
+                            disabled={autoManaged}
                         />
                     </div>
                 </div>
