@@ -17,7 +17,7 @@ const RECOMMENDED_ENV = [
     { key: 'DERIV_WS_URL', severity: 'warn', message: 'Missing Deriv WebSocket URL', remediation: 'Set DERIV_WS_URL if using a custom endpoint.' },
     { key: 'SUPABASE_URL', severity: 'warn', message: 'Missing Supabase URL', remediation: 'Set SUPABASE_URL for persistence.' },
     { key: 'SUPABASE_SERVICE_ROLE_KEY', severity: 'warn', message: 'Missing Supabase service role key', remediation: 'Set SUPABASE_SERVICE_ROLE_KEY for admin writes.' },
-    { key: 'KILL_SWITCH_ADMIN_TOKEN', severity: 'error', message: 'Missing kill-switch admin token', remediation: 'Set KILL_SWITCH_ADMIN_TOKEN to enable kill-switch admin actions.' },
+    { key: 'KILL_SWITCH_ADMIN_TOKEN', severity: 'warn', message: 'Missing kill-switch admin token', remediation: 'Set KILL_SWITCH_ADMIN_TOKEN to enable kill-switch admin actions.' },
     { key: 'ADMIN_SECRET', severity: 'warn', message: 'Missing ADMIN_SECRET for metrics access', remediation: 'Set ADMIN_SECRET to protect /metrics.' },
     { key: 'CORS_ORIGIN', severity: 'warn', message: 'Missing CORS_ORIGIN', remediation: 'Set CORS_ORIGIN or FRONTEND_URL to allow browser access.' },
 ];
