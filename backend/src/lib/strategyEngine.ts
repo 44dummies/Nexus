@@ -407,6 +407,7 @@ export function evaluateStrategy(
         case 'microstructure':
             return evaluateMicrostructureStrategy(ctx, mergedConfig, microContext);
         default:
+            // Unknown strategy falls back to RSI - this masks misconfiguration
             return evaluateRsiStrategy(ctx, mergedConfig);
     }
 }

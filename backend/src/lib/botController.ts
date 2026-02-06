@@ -80,6 +80,9 @@ export interface ActiveBotRun {
 // Active bot runs: botRunId -> ActiveBotRun
 const activeBotRuns = new Map<string, ActiveBotRun>();
 
+// Import profit attribution from separate module to avoid circular deps
+import { registerBotContract, registerProfitCallback, unregisterProfitCallback } from './botProfitAttribution';
+
 const { client: supabaseAdmin } = getSupabaseAdmin();
 
 const DEFAULT_MICROBATCH_SIZE = Math.max(1, Number(process.env.BOT_MICROBATCH_SIZE) || 1);
@@ -352,6 +355,22 @@ export async function startBotRun(
 
     activeBotRuns.set(botRunId, botRun);
 
+    // Register profit attribution callback so settlements update totalProfit
+    registerProfitCallback(botRunId, (contractId, profit) => {
+        botRun.totalProfit += profit;
+        botEvents.emit('event', {
+            type: 'log',
+            botRunId,
+            data: {
+                bot_run_id: botRunId,
+                account_id: accountId,
+                level: 'result',
+                message: `Settlement: ${profit >= 0 ? '+' : ''}${profit.toFixed(2)}`,
+                data: { contractId, profit, totalProfit: botRun.totalProfit },
+            },
+        });
+    });
+
     primeRiskConfig(botRunId, accountId, config.risk ?? null);
 
     try {
@@ -360,6 +379,7 @@ export async function startBotRun(
     } catch (error) {
         activeBotRuns.delete(botRunId);
         dropRiskConfig(botRunId);
+        unregisterProfitCallback(botRunId);
         throw error;
     }
 
@@ -609,7 +629,8 @@ function executeTradeForRun(
         preGate
     ).then((result) => {
         botRun.tradesExecuted += 1;
-
+        // Track the open contract for profit attribution on settlement
+        registerBotContract(result.contractId, botRun.id);
         botLogger.info({
             botRunId: botRun.id,
             signal,
@@ -725,6 +746,7 @@ export async function stopBotRun(botRunId: string): Promise<void> {
     // Remove from active runs
     activeBotRuns.delete(botRunId);
     dropRiskConfig(botRunId);
+    unregisterProfitCallback(botRunId);
 
     botLogger.info({
         botRunId,

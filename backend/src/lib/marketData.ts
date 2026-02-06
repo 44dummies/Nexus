@@ -81,22 +81,28 @@ class SyntheticBook {
         const latestIdx = this.timeBuffer.length - 1;
         const latestTs = this.timeBuffer.get(latestIdx);
         const cutoff = latestTs - windowMs;
-        let earliestPrice: number | null = null;
+        let windowStartPrice: number | null = null;
 
+        // Walk backwards from latest to find the oldest tick still within the window
         for (let i = latestIdx; i >= 0; i--) {
             const ts = this.timeBuffer.get(i);
-            if (ts < cutoff) break;
-            earliestPrice = this.priceBuffer.get(i);
+            if (ts < cutoff) {
+                // This tick is before the window; the previous one (i+1) was the window start
+                break;
+            }
+            // This tick is within the window; it's the oldest so far
+            windowStartPrice = this.priceBuffer.get(i);
         }
 
-        if (earliestPrice === null || !Number.isFinite(earliestPrice)) return null;
-        if (earliestPrice === 0) return null;
-        return (latestPrice - earliestPrice) / earliestPrice;
+        if (windowStartPrice === null || !Number.isFinite(windowStartPrice)) return null;
+        if (windowStartPrice === 0) return null;
+        return (latestPrice - windowStartPrice) / windowStartPrice;
     }
 }
 
 interface SymbolMarketData {
     accountId: string;
+    token: string;
     symbol: string;
     mode: MarketDataMode;
     orderBook: OrderBook | null;
@@ -131,6 +137,7 @@ function getOrCreateState(accountId: string, symbol: string): SymbolMarketData {
     if (!state) {
         state = {
             accountId,
+            token: '',
             symbol,
             mode: 'synthetic',
             orderBook: null,
@@ -170,8 +177,9 @@ async function subscribeOrderBook(accountId: string, token: string, symbol: stri
         if (response.subscription?.id) {
             state.orderBookSubscriptionId = response.subscription.id;
         }
-    } catch {
+    } catch (error) {
         metrics.counter('marketdata.orderbook_error');
+        tickLogger.warn({ accountId, symbol, error }, 'Order book subscription failed, falling back to synthetic');
         state.mode = 'synthetic';
     }
 }
@@ -207,6 +215,8 @@ function handleOrderBookMessage(accountId: string, message: Record<string, unkno
 
 export async function ensureMarketData(accountId: string, token: string, symbol: string): Promise<void> {
     const state = getOrCreateState(accountId, symbol);
+    // Always update the token so reconnect handlers use the latest
+    state.token = token;
     if (!registeredAccounts.has(accountId)) {
         registerStreamingListener(accountId, (accId, message) => {
             handleOrderBookMessage(accId, message);
@@ -215,7 +225,8 @@ export async function ensureMarketData(accountId: string, token: string, symbol:
             if (!isReconnect) return;
             for (const entry of marketData.values()) {
                 if (entry.accountId !== accountId || entry.mode !== 'order_book') continue;
-                subscribeOrderBook(accountId, token, entry.symbol).catch((error) => {
+                // Use the stored (latest) token, not the stale closure token
+                subscribeOrderBook(accountId, entry.token, entry.symbol).catch((error) => {
                     metrics.counter('marketdata.orderbook_resubscribe_error');
                     tickLogger.error({ error, accountId, symbol: entry.symbol }, 'Order book resubscribe failed');
                 });

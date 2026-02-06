@@ -4,6 +4,7 @@ import { persistenceQueue } from './persistenceQueue';
 import { metrics } from './metrics';
 import { tradeLogger } from './logger';
 import { writePersistenceFallback } from './persistenceFallback';
+import { attributeSettledProfit } from './botProfitAttribution';
 
 
 export async function persistTrade(payload: {
@@ -50,6 +51,9 @@ export async function persistTrade(payload: {
                 symbol: payload.symbol ?? null,
                 createdAt: (data as { created_at?: string | null } | null)?.created_at ?? new Date().toISOString(),
             });
+
+            // Attribute profit back to the originating bot run
+            attributeSettledProfit(payload.contractId, payload.profit);
 
             metrics.counter('persistence.trade_ok');
             return data?.id ?? null;

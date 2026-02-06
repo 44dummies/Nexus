@@ -87,11 +87,13 @@ export function resubscribePendingSettlements(accountId: string): void {
 function sweepStaleSettlements(): void {
     const now = Date.now();
     for (const [accountId, bucket] of pendingSettlements.entries()) {
+        const toRemove: number[] = [];
         for (const entry of bucket.values()) {
             if (now - entry.lastUpdateAt < RESUBSCRIBE_STALE_MS) continue;
             if (entry.resubscribeAttempts >= RESUBSCRIBE_MAX_ATTEMPTS) {
-                tradeLogger.warn({ accountId, contractId: entry.contractId }, 'Settlement resubscribe attempts exhausted');
+                tradeLogger.warn({ accountId, contractId: entry.contractId }, 'Settlement resubscribe attempts exhausted - removing stale entry');
                 metrics.counter('settlement.resubscribe_exhausted');
+                toRemove.push(entry.contractId);
                 continue;
             }
             entry.resubscribeAttempts += 1;
@@ -107,6 +109,12 @@ function sweepStaleSettlements(): void {
                 tradeLogger.error({ accountId, contractId: entry.contractId, error }, 'Settlement resubscribe failed');
                 metrics.counter('settlement.resubscribe_error');
             }
+        }
+        for (const contractId of toRemove) {
+            bucket.delete(contractId);
+        }
+        if (bucket.size === 0) {
+            pendingSettlements.delete(accountId);
         }
         metrics.gauge('settlement.pending_count', bucket.size);
     }
