@@ -19,6 +19,9 @@ export async function persistTrade(payload: {
     duration?: number | null;
     durationUnit?: string | null;
     profit: number;
+    buyPrice?: number | null;
+    payout?: number | null;
+    direction?: 'CALL' | 'PUT' | null;
     status: string;
     createdAt?: string | null;
 }) {
@@ -36,6 +39,9 @@ export async function persistTrade(payload: {
                 duration: payload.duration ?? null,
                 duration_unit: payload.durationUnit ?? null,
                 profit: payload.profit,
+                buy_price: payload.buyPrice ?? null,
+                payout: payload.payout ?? null,
+                direction: payload.direction ?? null,
                 status: payload.status,
                 created_at: payload.createdAt ?? undefined,
             }).select('id, created_at').maybeSingle());
@@ -49,6 +55,10 @@ export async function persistTrade(payload: {
                 contractId: payload.contractId,
                 profit: payload.profit,
                 symbol: payload.symbol ?? null,
+                buyPrice: payload.buyPrice ?? null,
+                payout: payload.payout ?? null,
+                direction: payload.direction ?? null,
+                stake: payload.stake ?? null,
                 createdAt: (data as { created_at?: string | null } | null)?.created_at ?? new Date().toISOString(),
             });
 

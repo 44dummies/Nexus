@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { motion, Variants, useReducedMotion } from 'framer-motion';
 import { ArrowRight, ShieldCheck, Activity } from 'lucide-react';
-import { Scene3D } from '@/components/three/Scene3D';
+import LiquidEther from '@/components/backgrounds/LiquidEther';
 import { apiFetch } from '@/lib/api';
 import { LogoMark } from '@/components/brand/LogoMark';
 import { toast } from 'sonner';
@@ -65,8 +65,26 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-center px-6 py-10 overflow-hidden">
-      {/* 3D Background */}
-      <Scene3D />
+      {/* Liquid Ether Background */}
+      <div className="fixed inset-0 -z-10 bg-[#0a0a0f]">
+        <LiquidEther
+          colors={['#5227FF', '#FF9FFC', '#B19EEF']}
+          mouseForce={20}
+          cursorSize={100}
+          isViscous
+          viscous={30}
+          iterationsViscous={32}
+          iterationsPoisson={32}
+          resolution={0.5}
+          isBounce={false}
+          autoDemo
+          autoSpeed={0.5}
+          autoIntensity={2.2}
+          takeoverDuration={0.25}
+          autoResumeDelay={3000}
+          autoRampDuration={0.6}
+        />
+      </div>
 
       {/* Main Content - No Glass Card, just floating elements */}
       <motion.div

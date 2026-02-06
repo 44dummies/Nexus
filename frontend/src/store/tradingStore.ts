@@ -86,6 +86,40 @@ interface TradingState {
     notifyBotStatus: boolean;
     chartDefaultSize: 'compact' | 'default' | 'expanded';
 
+    // Smart Layer / Auto Mode
+    autoModeEnabled: boolean;
+    currentRegime: string | null;
+    regimeConfidence: number | null;
+    activeAutoStrategy: string | null;
+    smartLayerRiskGate: string | null;
+    smartLayerCorrelationId: string | null;
+    lastStrategySwitchReason: string | null;
+
+    // PnL Tracking (from backend SSE stream)
+    pnlRealizedPnL: number;
+    pnlUnrealizedPnL: number;
+    pnlNetPnL: number;
+    pnlOpenPositionCount: number;
+    pnlOpenExposure: number;
+    pnlWinCount: number;
+    pnlLossCount: number;
+    pnlAvgWin: number;
+    pnlAvgLoss: number;
+    pnlBalanceDrift: number | null;
+    pnlLastKnownBalance: number | null;
+    pnlLastUpdated: number | null;
+    pnlPositions: Array<{
+        contractId: number;
+        symbol: string;
+        direction: string;
+        buyPrice: number;
+        stake: number;
+        payout: number;
+        lastMarkPrice: number;
+        unrealizedPnL: number;
+        openedAt: number;
+    }>;
+
     // Actions
     setAccounts: (accounts: Account[], email: string, activeAccountId?: string | null, activeAccountType?: 'real' | 'demo' | null, activeCurrency?: string | null) => void;
     switchAccount: (accountId: string) => void;
@@ -111,6 +145,40 @@ interface TradingState {
     setNotifyErrorAlerts: (enabled: boolean) => void;
     setNotifyBotStatus: (enabled: boolean) => void;
     setChartDefaultSize: (size: 'compact' | 'default' | 'expanded') => void;
+    setAutoModeEnabled: (enabled: boolean) => void;
+    updateSmartLayerState: (state: {
+        regime?: string | null;
+        regimeConfidence?: number | null;
+        activeStrategy?: string | null;
+        riskGate?: string | null;
+        correlationId?: string | null;
+        switchReason?: string | null;
+    }) => void;
+    updatePnL: (data: {
+        realizedPnL?: number;
+        unrealizedPnL?: number;
+        netPnL?: number;
+        openPositionCount?: number;
+        openExposure?: number;
+        winCount?: number;
+        lossCount?: number;
+        avgWin?: number;
+        avgLoss?: number;
+        balanceDrift?: number | null;
+        lastKnownBalance?: number | null;
+        lastUpdated?: number;
+        positions?: Array<{
+            contractId: number;
+            symbol: string;
+            direction: string;
+            buyPrice: number;
+            stake: number;
+            payout: number;
+            lastMarkPrice: number;
+            unrealizedPnL: number;
+            openedAt: number;
+        }>;
+    }) => void;
     logout: () => void;
 }
 
@@ -208,6 +276,26 @@ export const useTradingStore = create<TradingState>()(
             notifyErrorAlerts: true,
             notifyBotStatus: true,
             chartDefaultSize: 'default',
+            autoModeEnabled: false,
+            currentRegime: null,
+            regimeConfidence: null,
+            activeAutoStrategy: null,
+            smartLayerRiskGate: null,
+            smartLayerCorrelationId: null,
+            lastStrategySwitchReason: null,
+            pnlRealizedPnL: 0,
+            pnlUnrealizedPnL: 0,
+            pnlNetPnL: 0,
+            pnlOpenPositionCount: 0,
+            pnlOpenExposure: 0,
+            pnlWinCount: 0,
+            pnlLossCount: 0,
+            pnlAvgWin: 0,
+            pnlAvgLoss: 0,
+            pnlBalanceDrift: null,
+            pnlLastKnownBalance: null,
+            pnlLastUpdated: null,
+            pnlPositions: [],
 
             setAccounts: (accounts, email, activeAccountId, activeAccountType, activeCurrency) => {
                 const firstAccount = accounts[0];
@@ -408,6 +496,42 @@ export const useTradingStore = create<TradingState>()(
             setNotifyBotStatus: (enabled) => set({ notifyBotStatus: enabled }),
             setChartDefaultSize: (size) => set({ chartDefaultSize: size }),
 
+            setAutoModeEnabled: (enabled) => set({
+                autoModeEnabled: enabled,
+                // Reset smart layer state when toggling
+                currentRegime: enabled ? null : null,
+                regimeConfidence: enabled ? null : null,
+                activeAutoStrategy: enabled ? null : null,
+                smartLayerRiskGate: enabled ? null : null,
+                smartLayerCorrelationId: enabled ? null : null,
+                lastStrategySwitchReason: enabled ? null : null,
+            }),
+
+            updateSmartLayerState: (state) => set((prev) => ({
+                currentRegime: state.regime !== undefined ? state.regime : prev.currentRegime,
+                regimeConfidence: state.regimeConfidence !== undefined ? state.regimeConfidence : prev.regimeConfidence,
+                activeAutoStrategy: state.activeStrategy !== undefined ? state.activeStrategy : prev.activeAutoStrategy,
+                smartLayerRiskGate: state.riskGate !== undefined ? state.riskGate : prev.smartLayerRiskGate,
+                smartLayerCorrelationId: state.correlationId !== undefined ? state.correlationId : prev.smartLayerCorrelationId,
+                lastStrategySwitchReason: state.switchReason !== undefined ? state.switchReason : prev.lastStrategySwitchReason,
+            })),
+
+            updatePnL: (data) => set({
+                pnlRealizedPnL: data.realizedPnL ?? 0,
+                pnlUnrealizedPnL: data.unrealizedPnL ?? 0,
+                pnlNetPnL: data.netPnL ?? 0,
+                pnlOpenPositionCount: data.openPositionCount ?? 0,
+                pnlOpenExposure: data.openExposure ?? 0,
+                pnlWinCount: data.winCount ?? 0,
+                pnlLossCount: data.lossCount ?? 0,
+                pnlAvgWin: data.avgWin ?? 0,
+                pnlAvgLoss: data.avgLoss ?? 0,
+                pnlBalanceDrift: data.balanceDrift ?? null,
+                pnlLastKnownBalance: data.lastKnownBalance ?? null,
+                pnlLastUpdated: data.lastUpdated ?? Date.now(),
+                pnlPositions: data.positions ?? [],
+            }),
+
             logout: () => set({
                 accounts: [],
                 activeAccountId: null,
@@ -461,6 +585,26 @@ export const useTradingStore = create<TradingState>()(
                 notifyErrorAlerts: true,
                 notifyBotStatus: true,
                 chartDefaultSize: 'default',
+                autoModeEnabled: false,
+                currentRegime: null,
+                regimeConfidence: null,
+                activeAutoStrategy: null,
+                smartLayerRiskGate: null,
+                smartLayerCorrelationId: null,
+                lastStrategySwitchReason: null,
+                pnlRealizedPnL: 0,
+                pnlUnrealizedPnL: 0,
+                pnlNetPnL: 0,
+                pnlOpenPositionCount: 0,
+                pnlOpenExposure: 0,
+                pnlWinCount: 0,
+                pnlLossCount: 0,
+                pnlAvgWin: 0,
+                pnlAvgLoss: 0,
+                pnlBalanceDrift: null,
+                pnlLastKnownBalance: null,
+                pnlLastUpdated: null,
+                pnlPositions: [],
             }),
         }),
         {
@@ -493,6 +637,7 @@ export const useTradingStore = create<TradingState>()(
                 notifyErrorAlerts: state.notifyErrorAlerts,
                 notifyBotStatus: state.notifyBotStatus,
                 chartDefaultSize: state.chartDefaultSize,
+                autoModeEnabled: state.autoModeEnabled,
                 // Excluded from persistence (sensitive/ephemeral):
                 // accounts, userEmail, balance, currency, isAuthorized, isConnected,
                 // tickHistory, botRunning, tradeResults, botLogs, equity, etc.

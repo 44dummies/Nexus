@@ -24,6 +24,8 @@ export type StartBackendPayload = {
     risk?: Record<string, unknown>;
     performance?: Record<string, unknown>;
     entry?: Record<string, unknown>;
+    /** Enable Smart Layer auto mode: regime detection + strategy switching */
+    autoMode?: boolean;
 };
 
 export async function startBackendRun(payload: StartBackendPayload) {
@@ -133,7 +135,8 @@ export class BotEngine {
         this.paused = false;
         this.lastStrategyId = strategyId;
 
-        this.addLog('info', `Starting backend bot: ${strategyId} on ${this.symbol}`);
+        const autoModeEnabled = useTradingStore.getState().autoModeEnabled;
+        this.addLog('info', `Starting backend bot: ${strategyId} on ${this.symbol}${autoModeEnabled ? ' (Auto Mode)' : ''}`);
 
         try {
             const response = await apiFetch('/api/bot-runs', {
@@ -147,7 +150,8 @@ export class BotEngine {
                     duration: this.duration ?? 5,
                     durationUnit: this.durationUnit ?? 't',
                     cooldownMs: this.cooldownMs,
-                    strategyConfig: {}, // Can pass UI config here if needed
+                    strategyConfig: {},
+                    autoMode: autoModeEnabled,
                 }),
             });
             const result = await response.json();

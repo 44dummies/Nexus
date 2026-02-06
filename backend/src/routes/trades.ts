@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { classifySupabaseError, getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { parseLimitParam } from '../lib/requestUtils';
 import { subscribeTradeStream } from '../lib/tradeStream';
+import { subscribePnLStream, getPnLSnapshot } from '../lib/pnlTracker';
 import { executeTradeServerFast } from '../trade';
 import { requireAuth } from '../lib/authMiddleware';
 import { tradeRateLimit } from '../lib/rateLimit';
@@ -35,7 +36,7 @@ router.get('/', async (req, res) => {
 
     const { data, error: queryError } = await supabaseClient
         .from('trades')
-        .select('id, contract_id, symbol, stake, duration, duration_unit, profit, status, bot_id, bot_run_id, entry_profile_id, created_at')
+        .select('id, contract_id, symbol, stake, duration, duration_unit, profit, buy_price, payout, direction, status, bot_id, bot_run_id, entry_profile_id, created_at')
         .eq('account_id', activeAccount)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -107,6 +108,62 @@ router.post('/execute', async (req, res) => {
         }
         return res.status(400).json({ error: message });
     }
+});
+
+/**
+ * GET /api/trades/pnl — Current PnL snapshot (polling fallback)
+ */
+router.get('/pnl', (req, res) => {
+    const activeAccount = req.auth?.accountId;
+    if (!activeAccount) {
+        return res.status(401).json({ error: 'No active account' });
+    }
+
+    const snapshot = getPnLSnapshot(activeAccount);
+    if (!snapshot) {
+        return res.json({
+            realizedPnL: 0,
+            unrealizedPnL: 0,
+            netPnL: 0,
+            openPositionCount: 0,
+            openExposure: 0,
+            winCount: 0,
+            lossCount: 0,
+            avgWin: 0,
+            avgLoss: 0,
+            balanceDrift: null,
+            lastKnownBalance: null,
+            lastUpdated: Date.now(),
+            positions: [],
+        });
+    }
+
+    return res.json(snapshot);
+});
+
+/**
+ * GET /api/trades/pnl/stream — Real-time PnL SSE stream
+ */
+router.get('/pnl/stream', (req, res) => {
+    const activeAccount = req.auth?.accountId;
+    if (!activeAccount) {
+        return res.status(401).json({ error: 'No active account' });
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    res.write(`event: ready\ndata: {"ok":true}\n\n`);
+
+    const unsubscribe = subscribePnLStream(activeAccount, res);
+
+    req.on('close', () => {
+        unsubscribe();
+    });
 });
 
 export default router;

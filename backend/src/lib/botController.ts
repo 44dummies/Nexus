@@ -21,6 +21,7 @@ import { persistenceQueue } from './persistenceQueue';
 import type { TradeRiskConfig } from './riskConfig';
 import { writePersistenceFallback } from './persistenceFallback';
 import { record as recordObstacle } from './obstacleLog';
+import { SmartLayer } from './smartLayer';
 
 interface BotRunConfig {
     strategyId: string;
@@ -61,6 +62,8 @@ interface BotRunConfig {
         aggressiveness?: number;
         minEdgePct?: number;
     };
+    /** Enable Smart Layer auto mode: regime detection + strategy switching */
+    autoMode?: boolean;
 }
 
 export interface ActiveBotRun {
@@ -373,6 +376,12 @@ export async function startBotRun(
 
     primeRiskConfig(botRunId, accountId, config.risk ?? null);
 
+    // Initialize Smart Layer auto mode if enabled
+    if (config.autoMode) {
+        SmartLayer.getInstance().enableAutoMode(accountId, config.symbol);
+        botLogger.info({ botRunId, symbol: config.symbol }, 'Smart Layer auto mode enabled');
+    }
+
     try {
         const actor = await getOrCreateSymbolActor(accountId, token, config.symbol);
         actor.addRun(botRunId);
@@ -380,6 +389,9 @@ export async function startBotRun(
         activeBotRuns.delete(botRunId);
         dropRiskConfig(botRunId);
         unregisterProfitCallback(botRunId);
+        if (config.autoMode) {
+            SmartLayer.getInstance().disableAutoMode(accountId, config.symbol);
+        }
         throw error;
     }
 
@@ -461,10 +473,10 @@ function queueBotLog(payload: {
 }
 
 /**
- * Enqueue incoming tick for micro-batching
- */
-/**
- * Handle incoming tick for a bot run
+ * Handle incoming tick for a bot run.
+ * When autoMode is enabled, the Smart Layer orchestrates:
+ *   features → regime → param suggestion → strategy selection → strategy eval
+ * When autoMode is disabled, the original manual strategy path is used.
  */
 function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     if (botRun.status !== 'running') return;
@@ -477,13 +489,88 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         return;
     }
 
-    const requiredTicks = getRequiredTicks(config.strategyId, config.strategyConfig);
+    // --- Determine strategy ID (auto mode may override) ---
+    let activeStrategyId = config.strategyId;
+    const useAutoMode = config.autoMode === true;
+    let smartCycle: ReturnType<SmartLayer['executeCycle']> | null = null;
+
+    const requiredTicks = getRequiredTicks(activeStrategyId, config.strategyConfig);
     const prices = getTickWindowView(accountId, config.symbol, requiredTicks);
 
     if (!prices || prices.length < requiredTicks) {
         return;
     }
 
+    // --- Smart Layer cycle (when auto mode is on) ---
+    if (useAutoMode) {
+        const sl = SmartLayer.getInstance();
+        try {
+            smartCycle = sl.executeCycle({
+                accountId,
+                symbol: config.symbol,
+                prices,
+                lastPrice: prices.get(prices.length - 1),
+                lossStreak: getRiskCache(accountId)?.lossStreak ?? 0,
+                tick: { quote: tick.quote, epoch: tick.epoch, receivedPerfMs: tick.receivedPerfMs ?? Date.now() },
+            });
+
+            // Smart Layer gated → skip this tick
+            if (smartCycle.gated) {
+                metrics.counter('smartlayer.gated');
+                botLogger.debug({ botRunId: botRun.id, reason: smartCycle.gateReason }, 'Smart Layer gated tick');
+                return;
+            }
+
+            // Use auto-selected strategy
+            activeStrategyId = smartCycle.backendStrategyId;
+
+            // Emit switch events
+            if (smartCycle.switchEvent) {
+                metrics.counter('smartlayer.strategy_switch');
+                botLogger.info({
+                    botRunId: botRun.id,
+                    from: smartCycle.switchEvent.from,
+                    to: smartCycle.switchEvent.to,
+                    reason: smartCycle.switchEvent.reason,
+                }, 'Smart Layer strategy switch');
+                queueBotLog({
+                    bot_run_id: botRun.id,
+                    account_id: accountId,
+                    level: 'info',
+                    message: `Strategy switch: ${smartCycle.switchEvent.from} → ${smartCycle.switchEvent.to}`,
+                    data: {
+                        correlationId: smartCycle.switchEvent.correlationId,
+                        regimeConfidence: smartCycle.switchEvent.metrics.regimeConfidence,
+                        stableCycles: smartCycle.switchEvent.metrics.stableCycles,
+                    },
+                });
+            }
+
+            // Emit regime/decision telemetry to SSE
+            botEvents.emit('event', {
+                type: 'smartlayer',
+                botRunId: botRun.id,
+                data: {
+                    regime: smartCycle.regime.current,
+                    regimeConfidence: smartCycle.regime.confidence,
+                    strategyId: smartCycle.strategyId,
+                    riskGate: smartCycle.decision.params.riskGate,
+                    correlationId: smartCycle.decision.correlationId,
+                    cooldownMs: smartCycle.decision.params.cooldownMs,
+                    maxConcurrent: smartCycle.decision.params.maxConcurrentTrades,
+                    confidenceThreshold: smartCycle.decision.params.signalConfidenceThreshold,
+                },
+            });
+        } catch (error) {
+            // Smart Layer failure is non-fatal — fall back to manual strategy
+            botLogger.error({ error, botRunId: botRun.id }, 'Smart Layer cycle failed — falling back to manual strategy');
+            metrics.counter('smartlayer.error');
+            activeStrategyId = config.strategyId;
+            smartCycle = null;
+        }
+    }
+
+    // --- Volatility guard (original) ---
     const volatilityThreshold = config.risk?.volatilityThreshold;
     if (typeof volatilityThreshold === 'number' && volatilityThreshold > 0) {
         const window = config.risk?.volatilityWindow ?? 20;
@@ -497,8 +584,10 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         }
     }
 
+    // --- Cooldown: use Smart Layer's dynamic cooldown or config's static cooldown ---
+    const effectiveCooldownMs = smartCycle?.decision.params.cooldownMs ?? config.cooldownMs;
     const now = Date.now();
-    if (botRun.lastTradeAt && now - botRun.lastTradeAt < config.cooldownMs) {
+    if (botRun.lastTradeAt && now - botRun.lastTradeAt < effectiveCooldownMs) {
         return;
     }
 
@@ -511,7 +600,7 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
 
     const strategyStart = nowMs();
     latencyTrace.strategyStartTs = strategyStart;
-    const microContext = config.strategyId === 'microstructure'
+    const microContext = activeStrategyId === 'microstructure'
         ? {
             imbalance: getImbalanceTopN(accountId, config.symbol, config.strategyConfig?.imbalanceLevels ?? 10),
             spread: getSpread(accountId, config.symbol),
@@ -521,7 +610,7 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         : undefined;
 
     const evaluation = evaluateStrategy(
-        config.strategyId,
+        activeStrategyId,
         prices,
         config.strategyConfig,
         lossStreak,
@@ -543,6 +632,14 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     }
 
     if (!evaluation.signal) return;
+
+    // --- Smart Layer confidence filter ---
+    if (smartCycle && typeof evaluation.confidence === 'number') {
+        if (evaluation.confidence < smartCycle.decision.params.signalConfidenceThreshold) {
+            metrics.counter('smartlayer.confidence_filter');
+            return;
+        }
+    }
 
     metrics.counter(`strategy.signal.${evaluation.signal.toLowerCase()}`);
 
@@ -571,6 +668,11 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     }
 
     recordLatency(LATENCY_METRICS.strategyToGate, latencyTrace.strategyEndTs, latencyTrace.gateStartTs);
+
+    // --- Mark order in-flight (blocks strategy switching) ---
+    if (useAutoMode) {
+        SmartLayer.getInstance().markOrderInFlight(accountId, config.symbol);
+    }
 
     executeTradeForRun(
         botRun,
@@ -631,6 +733,20 @@ function executeTradeForRun(
         botRun.tradesExecuted += 1;
         // Track the open contract for profit attribution on settlement
         registerBotContract(result.contractId, botRun.id);
+
+        // Clear order-in-flight (unblocks Smart Layer strategy switching)
+        if (config.autoMode) {
+            SmartLayer.getInstance().clearOrderInFlight(accountId, config.symbol);
+        }
+
+        // Update Smart Layer telemetry
+        SmartLayer.updateTelemetry(accountId, {
+            totalTradesSession: botRun.tradesExecuted,
+            totalProfitSession: botRun.totalProfit,
+            lastTradeTimeMs: Date.now(),
+            avgLatencyMs: result.executionTimeMs,
+        });
+
         botLogger.info({
             botRunId: botRun.id,
             signal,
@@ -654,8 +770,21 @@ function executeTradeForRun(
             },
         });
     }).catch((error) => {
+        // Clear order-in-flight even on failure
+        if (config.autoMode) {
+            SmartLayer.getInstance().clearOrderInFlight(accountId, config.symbol);
+        }
+
         const message = error instanceof Error ? error.message : 'Trade failed';
         botLogger.error({ botRunId: botRun.id, signal, stake, error: message }, 'Trade failed');
+
+        // Track error rate in telemetry
+        const currentTelemetry = SmartLayer.getTelemetry(accountId);
+        const totalTrades = (currentTelemetry?.totalTradesSession ?? 0) + 1;
+        SmartLayer.updateTelemetry(accountId, {
+            errorRate: Math.min(1, ((currentTelemetry?.errorRate ?? 0) * (totalTrades - 1) + 1) / totalTrades),
+        });
+
         queueBotLog({
             bot_run_id: botRun.id,
             account_id: accountId,
@@ -736,6 +865,11 @@ export async function stopBotRun(botRunId: string): Promise<void> {
     if (!botRun) return;
 
     botRun.status = 'stopped';
+
+    // Clean up Smart Layer auto mode state
+    if (botRun.config.autoMode) {
+        SmartLayer.getInstance().disableAutoMode(botRun.accountId, botRun.config.symbol);
+    }
 
     const actorKey = getSymbolKey(botRun.accountId, botRun.config.symbol);
     const actor = symbolActors.get(actorKey);

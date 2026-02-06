@@ -12,6 +12,8 @@ import { recordReject, recordSlippageReject, recordStuckOrder } from './lib/risk
 import { preTradeGate } from './lib/preTradeGate';
 import type { TradeRiskConfig } from './lib/riskConfig';
 import { finalizeOpenContract, trackOpenContract } from './lib/openContracts';
+import { recordSettledPnL, trackOpenPosition, markPosition } from './lib/pnlTracker';
+import { checkExecutionCircuit, recordExecutionSuccess, recordExecutionFailure } from './lib/executionCircuitBreaker';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 interface DerivResponse {
@@ -254,6 +256,17 @@ export async function executeTradeServerFast(
     preGate?: { stake: number; risk: TradeRiskConfig }
 ): Promise<TradeResultFast> {
     const startTime = Date.now();
+    const { accountId } = auth;
+
+    // Circuit breaker check — block trades if too many consecutive failures
+    const cbCheck = checkExecutionCircuit(accountId);
+    if (!cbCheck.allowed) {
+        metrics.counter('trade.circuit_breaker_blocked');
+        throw new ExecutionError('THROTTLE', cbCheck.reason, {
+            retryable: true,
+            context: { retryAfterMs: cbCheck.retryAfterMs, circuitState: cbCheck.state },
+        });
+    }
 
     const signalValidation = TradeSignalSchema.safeParse(signal);
     if (!signalValidation.success) {
@@ -265,7 +278,7 @@ export async function executeTradeServerFast(
         throw new Error(`Invalid trade parameters: ${paramsValidation.error.issues.map(e => e.message).join(', ')}`);
     }
 
-    const { token, accountId, accountType, accountCurrency } = auth;
+    const { token, accountType, accountCurrency } = auth;
     let stake = params.stake;
 
     const gate = preGate ?? preTradeGate({
@@ -321,6 +334,17 @@ export async function executeTradeServerFast(
             botId: params.botId ?? null,
         });
 
+        // Track open position for unrealized PnL
+        trackOpenPosition(accountId, {
+            contractId: buy.contract_id,
+            symbol: params.symbol,
+            direction: signal,
+            buyPrice: buy.buy_price,
+            payout: buy.payout ?? 0,
+            stake,
+            botRunId: params.botRunId ?? null,
+        });
+
         const executionTimeMs = Date.now() - startTime;
         metrics.histogram('trade.execution_ms', executionTimeMs);
 
@@ -336,8 +360,11 @@ export async function executeTradeServerFast(
         }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
 
         // Fire async settlement tracking (don't await)
-        trackSettlementAsync(accountId, accountType, buy.contract_id, stake, params, latencyTrace)
+        trackSettlementAsync(accountId, accountType, buy.contract_id, stake, params, signal, buy.buy_price, latencyTrace)
             .catch(err => tradeLogger.error({ err }, 'Settlement tracking failed'));
+
+        // Record execution success for circuit breaker
+        recordExecutionSuccess(accountId);
 
         return {
             contractId: buy.contract_id,
@@ -382,6 +409,13 @@ export async function executeTradeServerFast(
         }
         // Rollback concurrent trade count on failure (do not touch streaks)
         recordTradeFailedAttemptOnce(accountId, null, stake);
+
+        // Record execution failure for circuit breaker (skip throttle — those are pre-execution)
+        const errorCode = error instanceof ExecutionError ? error.code : 'UNKNOWN';
+        if (errorCode !== 'THROTTLE') {
+            recordExecutionFailure(accountId, errorCode);
+        }
+
         throw error;
     }
 }
@@ -396,6 +430,8 @@ async function trackSettlementAsync(
     contractId: number,
     stake: number,
     params: ExecuteTradeParams,
+    direction: 'CALL' | 'PUT',
+    buyPrice: number,
     latencyTrace?: LatencyTrace
 ): Promise<void> {
     const SETTLEMENT_TIMEOUT_MS = calculateSettlementTimeoutMs(
@@ -435,7 +471,7 @@ async function trackSettlementAsync(
             recordLatency(LATENCY_METRICS.buyToSettle, latencyTrace?.buyAckTs, fillPerfTs);
             recordLatency(LATENCY_METRICS.tickToSettle, latencyTrace?.tickReceivedTs, fillPerfTs);
             metrics.counter('trade.fill');
-            await handleSettlement(accountId, accountType, stake, params, initialContract);
+            await handleSettlement(accountId, accountType, stake, params, initialContract, direction, buyPrice);
             clearPendingSettlement(accountId, contractId);
             return;
         }
@@ -461,10 +497,16 @@ async function trackSettlementAsync(
                         profit: number;
                         status?: string;
                         payout?: number;
+                        current_spot?: number;
                     };
 
                     if (contract.contract_id === contractId) {
                         recordSettlementUpdate(accountId, contractId);
+
+                        // Mark-to-market: update unrealized PnL for open position
+                        if (!contract.is_sold) {
+                            markPosition(accountId, contractId, contract.profit, contract.current_spot);
+                        }
                     }
 
                     if (contract.contract_id === contractId && contract.is_sold) {
@@ -507,7 +549,7 @@ async function trackSettlementAsync(
         });
 
         if (settledContract) {
-            await handleSettlement(accountId, accountType, stake, params, settledContract);
+            await handleSettlement(accountId, accountType, stake, params, settledContract, direction, buyPrice);
         } else {
             // Timeout case - still decrement concurrent count
             recordTradeFailedAttemptOnce(accountId, contractId, stake);
@@ -536,7 +578,9 @@ async function handleSettlement(
     accountType: 'real' | 'demo',
     stake: number,
     params: ExecuteTradeParams,
-    contract: { contract_id: number; is_sold: boolean; profit: number; status?: string; payout?: number }
+    contract: { contract_id: number; is_sold: boolean; profit: number; status?: string; payout?: number },
+    direction?: 'CALL' | 'PUT',
+    buyPrice?: number
 ): Promise<void> {
     await withSettlementLock(`${accountId}:${contract.contract_id}`, async () => {
         const state = getFinalizationState(accountId, contract.contract_id);
@@ -550,7 +594,16 @@ async function handleSettlement(
 
         finalizeOpenContract(accountId, contract.contract_id);
 
-        // Persist trade to database (queued)
+        // Record settled PnL in centralized tracker
+        recordSettledPnL(accountId, contract.contract_id, contract.profit, {
+            symbol: params.symbol,
+            direction: direction ?? undefined,
+            buyPrice: buyPrice ?? undefined,
+            payout: contract.payout ?? undefined,
+            stake,
+        });
+
+        // Persist trade to database (queued) — now includes direction, buyPrice, payout
         persistTrade({
             accountId,
             accountType,
@@ -562,6 +615,9 @@ async function handleSettlement(
             duration: params.duration || 5,
             durationUnit: params.durationUnit || 't',
             profit: contract.profit,
+            buyPrice: buyPrice ?? null,
+            payout: contract.payout ?? null,
+            direction: direction ?? null,
             status: contract.status || 'settled',
             entryProfileId: params.entryProfileId ?? null,
         }).then((tradeId) => {

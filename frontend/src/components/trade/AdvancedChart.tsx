@@ -1,65 +1,97 @@
 'use client';
 
-import { useMemo, useRef, useState, useCallback, type MouseEvent } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
 import { useTradingStore } from '@/store/tradingStore';
 import { getMarketDisplayName } from '@/components/trade/MarketSelector';
-import { BarChart2, ChartCandlestick, Minus, Plus, Maximize2, Minimize2 } from 'lucide-react';
+import {
+    createChart,
+    type IChartApi,
+    type ISeriesApi,
+    type CandlestickData,
+    type Time,
+    ColorType,
+    CrosshairMode,
+    CandlestickSeries,
+    type CandlestickSeriesPartialOptions,
+} from 'lightweight-charts';
+import { ChartCandlestick, Maximize2, Minimize2 } from 'lucide-react';
 
-type Candle = {
+// ==================== CANDLE AGGREGATION ====================
+
+interface OHLCCandle {
+    time: number; // Unix seconds
     open: number;
     high: number;
     low: number;
     close: number;
+}
+
+const TIMEFRAME_SECONDS: Record<string, number> = {
+    '1s': 1,
+    '5s': 5,
+    '15s': 15,
+    '1m': 60,
+    '5m': 300,
 };
 
-const TIMEFRAMES = [
-    { id: '1s', label: '1s', targetCandles: 60 },
-    { id: '5s', label: '5s', targetCandles: 48 },
-    { id: '15s', label: '15s', targetCandles: 36 },
-    { id: '1m', label: '1m', targetCandles: 28 },
-    { id: '5m', label: '5m', targetCandles: 20 },
-];
+/**
+ * Aggregate ticks into OHLC candles for a given timeframe.
+ * Ticks are bucketed by time alignment based on current time.
+ */
+function aggregateTicks(ticks: number[], timeframeSec: number): OHLCCandle[] {
+    if (ticks.length === 0) return [];
 
-function buildCandles(ticks: number[], targetCandles: number): Candle[] {
-    if (ticks.length === 0) {
-        return [{ open: 0, high: 0, low: 0, close: 0 }];
-    }
-    const bucketSize = Math.max(2, Math.floor(ticks.length / Math.max(targetCandles, 1)));
-    const candles: Candle[] = [];
+    const now = Math.floor(Date.now() / 1000);
+    const candles: OHLCCandle[] = [];
+    const bucketSize = Math.max(1, Math.floor(ticks.length / 60));
+
+    const startTime = now - Math.ceil(ticks.length / bucketSize) * timeframeSec;
+
     for (let i = 0; i < ticks.length; i += bucketSize) {
         const slice = ticks.slice(i, i + bucketSize);
         if (slice.length === 0) continue;
-        const open = slice[0];
-        const close = slice[slice.length - 1];
-        const high = Math.max(...slice);
-        const low = Math.min(...slice);
-        candles.push({ open, high, low, close });
+
+        const candleTime = Math.floor(startTime + (i / bucketSize) * timeframeSec);
+
+        candles.push({
+            time: candleTime,
+            open: slice[0],
+            high: Math.max(...slice),
+            low: Math.min(...slice),
+            close: slice[slice.length - 1],
+        });
     }
-    return candles.length ? candles : [{ open: ticks[0], high: ticks[0], low: ticks[0], close: ticks[0] }];
+
+    // Ensure unique ascending times
+    const seen = new Set<number>();
+    return candles.filter(c => {
+        if (seen.has(c.time)) return false;
+        seen.add(c.time);
+        return true;
+    });
 }
 
-function movingAverage(values: number[], window: number) {
-    if (values.length === 0) return [];
-    const result = new Array(values.length).fill(0);
-    let sum = 0;
-    for (let i = 0; i < values.length; i += 1) {
-        sum += values[i];
-        if (i >= window) {
-            sum -= values[i - window];
-        }
-        const divisor = i < window ? i + 1 : window;
-        result[i] = sum / divisor;
-    }
-    return result;
-}
+// ==================== CHART SIZE ====================
 
 export type ChartSize = 'compact' | 'default' | 'expanded';
 
-const CHART_HEIGHTS: Record<ChartSize, string> = {
-    compact: 'h-[280px] sm:h-[320px]',
-    default: 'h-[360px] sm:h-[420px]',
-    expanded: 'h-[500px] sm:h-[600px]',
+const CHART_HEIGHTS: Record<ChartSize, number> = {
+    compact: 320,
+    default: 420,
+    expanded: 600,
 };
+
+// ==================== TIMEFRAMES ====================
+
+const TIMEFRAMES = [
+    { id: '1s', label: '1s' },
+    { id: '5s', label: '5s' },
+    { id: '15s', label: '15s' },
+    { id: '1m', label: '1m' },
+    { id: '5m', label: '5m' },
+];
+
+// ==================== COMPONENT ====================
 
 interface AdvancedChartProps {
     isMaximized?: boolean;
@@ -67,105 +99,155 @@ interface AdvancedChartProps {
 }
 
 export default function AdvancedChart({ isMaximized = false, onToggleMaximize }: AdvancedChartProps) {
+    const chartContainerRef = useRef<HTMLDivElement>(null);
+    const chartRef = useRef<IChartApi | null>(null);
+    const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+
     const { tickHistory, lastTick, prevTick, selectedSymbol } = useTradingStore();
-    const [timeframe, setTimeframe] = useState(TIMEFRAMES[1].id);
-    const [showFastMa, setShowFastMa] = useState(true);
-    const [showSlowMa, setShowSlowMa] = useState(true);
-    const [showArea, setShowArea] = useState(true);
-    const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+    const [timeframe, setTimeframe] = useState('5s');
     const [chartSize, setChartSize] = useState<ChartSize>('default');
-    const svgRef = useRef<SVGSVGElement | null>(null);
 
     const marketName = getMarketDisplayName(selectedSymbol);
-    const chartHeightClass = isMaximized ? 'h-[calc(100vh-200px)]' : CHART_HEIGHTS[chartSize];
+    const trendUp = lastTick >= prevTick;
+
+    const chartHeight = isMaximized
+        ? (typeof window !== 'undefined' ? window.innerHeight - 200 : 600)
+        : CHART_HEIGHTS[chartSize];
+
+    // Aggregate candles
+    const candles = useMemo(() => {
+        const timeframeSec = TIMEFRAME_SECONDS[timeframe] ?? 5;
+        return aggregateTicks(tickHistory, timeframeSec);
+    }, [tickHistory, timeframe]);
+
+    // Initialize chart
+    useEffect(() => {
+        if (!chartContainerRef.current) return;
+
+        const chart = createChart(chartContainerRef.current, {
+            layout: {
+                background: { type: ColorType.Solid, color: 'transparent' },
+                textColor: 'rgba(148, 163, 184, 0.7)',
+                fontSize: 11,
+                fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace',
+            },
+            grid: {
+                vertLines: { color: 'rgba(148, 163, 184, 0.06)' },
+                horzLines: { color: 'rgba(148, 163, 184, 0.06)' },
+            },
+            crosshair: {
+                mode: CrosshairMode.Normal,
+                vertLine: {
+                    color: 'rgba(148, 163, 184, 0.3)',
+                    width: 1,
+                    style: 3,
+                    labelBackgroundColor: 'rgba(30, 41, 59, 0.9)',
+                },
+                horzLine: {
+                    color: 'rgba(148, 163, 184, 0.3)',
+                    width: 1,
+                    style: 3,
+                    labelBackgroundColor: 'rgba(30, 41, 59, 0.9)',
+                },
+            },
+            rightPriceScale: {
+                borderColor: 'rgba(148, 163, 184, 0.1)',
+                scaleMargins: { top: 0.1, bottom: 0.1 },
+            },
+            timeScale: {
+                borderColor: 'rgba(148, 163, 184, 0.1)',
+                timeVisible: true,
+                secondsVisible: true,
+            },
+            width: chartContainerRef.current.clientWidth,
+            height: chartHeight,
+        });
+
+        const candlestickOptions: CandlestickSeriesPartialOptions = {
+            upColor: 'rgba(34, 197, 94, 0.9)',
+            downColor: 'rgba(239, 68, 68, 0.9)',
+            borderUpColor: 'rgba(34, 197, 94, 1)',
+            borderDownColor: 'rgba(239, 68, 68, 1)',
+            wickUpColor: 'rgba(34, 197, 94, 0.7)',
+            wickDownColor: 'rgba(239, 68, 68, 0.7)',
+        };
+
+        const series = chart.addSeries(CandlestickSeries, candlestickOptions);
+
+        chartRef.current = chart;
+        candleSeriesRef.current = series;
+
+        // Resize observer
+        const observer = new ResizeObserver((entries) => {
+            if (entries[0] && chartRef.current) {
+                const { width } = entries[0].contentRect;
+                chartRef.current.applyOptions({ width });
+            }
+        });
+        observer.observe(chartContainerRef.current);
+
+        return () => {
+            observer.disconnect();
+            chart.remove();
+            chartRef.current = null;
+            candleSeriesRef.current = null;
+        };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Resize chart when height changes
+    useEffect(() => {
+        if (chartRef.current) {
+            chartRef.current.applyOptions({ height: chartHeight });
+        }
+    }, [chartHeight]);
+
+    // Update candle data
+    useEffect(() => {
+        if (!candleSeriesRef.current || candles.length === 0) return;
+
+        const data: CandlestickData<Time>[] = candles.map((c) => ({
+            time: c.time as Time,
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+        }));
+
+        candleSeriesRef.current.setData(data);
+
+        // Auto-scroll to latest
+        if (chartRef.current) {
+            chartRef.current.timeScale().scrollToRealTime();
+        }
+    }, [candles]);
 
     const cycleSize = useCallback(() => {
         setChartSize((prev) => {
             const order: ChartSize[] = ['compact', 'default', 'expanded'];
-            const idx = order.indexOf(prev);
-            return order[(idx + 1) % order.length];
+            return order[(order.indexOf(prev) + 1) % order.length];
         });
     }, []);
 
-    const {
-        candles,
-        closes,
-        fastMa,
-        slowMa,
-        minPrice,
-        maxPrice,
-        volatility,
-        trendUp,
-    } = useMemo(() => {
-        const baseTicks = tickHistory.length > 2 ? tickHistory : [prevTick, lastTick].filter(Number.isFinite);
-        const safeTicks = baseTicks.length ? baseTicks : [0, 0];
-        const targetCandles = TIMEFRAMES.find((frame) => frame.id === timeframe)?.targetCandles ?? 48;
-        const candleSeries = buildCandles(safeTicks, targetCandles);
-        const closeSeries = candleSeries.map((c) => c.close);
-        const fast = movingAverage(closeSeries, 6);
-        const slow = movingAverage(closeSeries, 12);
-        const lows = candleSeries.map((c) => c.low);
-        const highs = candleSeries.map((c) => c.high);
-        const minPrice = Math.min(...lows);
-        const maxPrice = Math.max(...highs);
-        const changes = closeSeries.slice(1).map((value, idx) => Math.abs(value - closeSeries[idx]));
+    // Stats from candles
+    const stats = useMemo(() => {
+        if (candles.length === 0) return { range: 0, volatility: 0, count: 0 };
+        const highs = candles.map(c => c.high);
+        const lows = candles.map(c => c.low);
+        const maxP = Math.max(...highs);
+        const minP = Math.min(...lows);
+        const closes = candles.map(c => c.close);
+        const changes = closes.slice(1).map((v, i) => Math.abs(v - closes[i]));
         const avgChange = changes.length ? changes.reduce((a, b) => a + b, 0) / changes.length : 0;
-        const volatility = avgChange ? (avgChange / Math.max(minPrice, 1)) * 100 : 0;
-        const trendUp = lastTick >= prevTick;
-
-        return {
-            candles: candleSeries,
-            closes: closeSeries,
-            fastMa: fast,
-            slowMa: slow,
-            minPrice,
-            maxPrice,
-            volatility,
-            trendUp,
-        };
-    }, [tickHistory, lastTick, prevTick, timeframe]);
-
-    const width = 1000;
-    const height = 420;
-    const padding = { top: 28, right: 70, bottom: 36, left: 18 };
-    const chartWidth = width - padding.left - padding.right;
-    const chartHeight = height - padding.top - padding.bottom;
-    const priceRange = Math.max(maxPrice - minPrice, 0.0001);
-    const xStep = chartWidth / Math.max(candles.length - 1, 1);
-    const barWidth = Math.max(4, Math.min(14, xStep * 0.6));
-
-    const xForIndex = (index: number) => padding.left + index * xStep;
-    const yForPrice = (price: number) =>
-        padding.top + (1 - (price - minPrice) / priceRange) * chartHeight;
-
-    const linePath = closes
-        .map((value, index) => `${index === 0 ? 'M' : 'L'} ${xForIndex(index)} ${yForPrice(value)}`)
-        .join(' ');
-
-    const fastPath = fastMa
-        .map((value, index) => `${index === 0 ? 'M' : 'L'} ${xForIndex(index)} ${yForPrice(value)}`)
-        .join(' ');
-
-    const slowPath = slowMa
-        .map((value, index) => `${index === 0 ? 'M' : 'L'} ${xForIndex(index)} ${yForPrice(value)}`)
-        .join(' ');
-
-    const handleMouseMove = (event: MouseEvent<SVGSVGElement>) => {
-        if (!svgRef.current || candles.length === 0) return;
-        const rect = svgRef.current.getBoundingClientRect();
-        const relativeX = event.clientX - rect.left;
-        const index = Math.round((relativeX / rect.width) * (candles.length - 1));
-        const clamped = Math.max(0, Math.min(candles.length - 1, index));
-        setHoverIndex(clamped);
-    };
-
-    const hovered = hoverIndex !== null ? candles[hoverIndex] : null;
-    const hoveredX = hoverIndex !== null ? xForIndex(hoverIndex) : 0;
-    const hoveredClose = hovered ? hovered.close : null;
+        const vol = avgChange && minP > 0 ? (avgChange / minP) * 100 : 0;
+        return { range: maxP - minP, volatility: vol, count: candles.length };
+    }, [candles]);
 
     return (
         <div className="relative h-full w-full">
             <div className="absolute inset-0 rounded-2xl bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.12),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(34,197,94,0.1),_transparent_60%)] opacity-70" />
+
+            {/* Header */}
             <div className="relative z-10 flex flex-wrap items-center justify-between gap-4 mb-4">
                 <div>
                     <p className="text-xs text-muted-foreground uppercase tracking-[0.35em]">Advanced Charting</p>
@@ -194,14 +276,16 @@ export default function AdvancedChart({ isMaximized = false, onToggleMaximize }:
                             </button>
                         )}
                     </div>
+                    {/* Timeframe buttons */}
                     {TIMEFRAMES.map((frame) => (
                         <button
                             key={frame.id}
                             onClick={() => setTimeframe(frame.id)}
-                            className={`px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest border transition-colors ${timeframe === frame.id
-                                ? 'bg-accent text-accent-foreground border-accent'
-                                : 'border-border/70 text-muted-foreground hover:text-foreground hover:border-border'
-                                }`}
+                            className={`px-3 py-1 rounded-full text-xs font-mono uppercase tracking-widest border transition-colors ${
+                                timeframe === frame.id
+                                    ? 'bg-accent text-accent-foreground border-accent'
+                                    : 'border-border/70 text-muted-foreground hover:text-foreground hover:border-border'
+                            }`}
                         >
                             {frame.label}
                         </button>
@@ -209,212 +293,35 @@ export default function AdvancedChart({ isMaximized = false, onToggleMaximize }:
                 </div>
             </div>
 
-            <div className="relative z-10 rounded-2xl border border-border/70 bg-muted/20 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                    <div className="flex items-center gap-3 text-xs uppercase tracking-widest text-muted-foreground">
-                        <BarChart2 className="w-4 h-4 text-accent" />
-                        <span>Live Candles</span>
-                        <span className={`px-2 py-0.5 rounded-full ${trendUp ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'}`}>
-                            {trendUp ? 'Bullish' : 'Bearish'}
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setShowFastMa((prev) => !prev)}
-                            className={`px-2 py-1 rounded-full text-[10px] uppercase tracking-widest border ${showFastMa ? 'border-emerald-400/60 text-emerald-600 dark:text-emerald-300' : 'border-border/60 text-muted-foreground'}`}
-                        >
-                            MA 6
-                        </button>
-                        <button
-                            onClick={() => setShowSlowMa((prev) => !prev)}
-                            className={`px-2 py-1 rounded-full text-[10px] uppercase tracking-widest border ${showSlowMa ? 'border-sky-400/60 text-sky-600 dark:text-sky-300' : 'border-border/60 text-muted-foreground'}`}
-                        >
-                            MA 12
-                        </button>
-                        <button
-                            onClick={() => setShowArea((prev) => !prev)}
-                            className={`px-2 py-1 rounded-full text-[10px] uppercase tracking-widest border ${showArea ? 'border-accent/60 text-accent' : 'border-border/60 text-muted-foreground'}`}
-                        >
-                            AREA
-                        </button>
-                    </div>
+            {/* Chart Container */}
+            <div className="relative z-10 rounded-2xl border border-border/70 bg-muted/20 overflow-hidden p-2">
+                {/* Last price overlay */}
+                <div className="absolute top-3 right-4 z-20 glass-panel rounded-xl px-3 py-2 text-xs font-mono text-accent">
+                    Last: {lastTick.toFixed(2)}
                 </div>
 
-                <div className="relative">
-                    <svg
-                        ref={svgRef}
-                        viewBox={`0 0 ${width} ${height}`}
-                        className={`w-full ${chartHeightClass}`}
-                        onMouseMove={handleMouseMove}
-                        onMouseLeave={() => setHoverIndex(null)}
-                    >
-                        <defs>
-                            <linearGradient id="priceGlow" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="rgba(59,130,246,0.35)" />
-                                <stop offset="100%" stopColor="rgba(59,130,246,0)" />
-                            </linearGradient>
-                        </defs>
+                <div ref={chartContainerRef} className="w-full" style={{ minHeight: chartHeight }} />
+            </div>
 
-                        {[0, 1, 2, 3, 4].map((tick) => {
-                            const y = padding.top + (chartHeight / 4) * tick;
-                            return (
-                                <line
-                                    key={`grid-${tick}`}
-                                    x1={padding.left}
-                                    y1={y}
-                                    x2={width - padding.right}
-                                    y2={y}
-                                    stroke="rgba(148,163,184,0.15)"
-                                    strokeWidth="1"
-                                />
-                            );
-                        })}
-
-                        {[0, 1, 2, 3, 4, 5].map((tick) => {
-                            const x = padding.left + (chartWidth / 5) * tick;
-                            return (
-                                <line
-                                    key={`vgrid-${tick}`}
-                                    x1={x}
-                                    y1={padding.top}
-                                    x2={x}
-                                    y2={height - padding.bottom}
-                                    stroke="rgba(148,163,184,0.12)"
-                                    strokeWidth="1"
-                                />
-                            );
-                        })}
-
-                        {showArea && (
-                            <path
-                                d={`${linePath} L ${padding.left + chartWidth} ${height - padding.bottom} L ${padding.left} ${height - padding.bottom} Z`}
-                                fill="url(#priceGlow)"
-                                stroke="none"
-                            />
-                        )}
-
-                        <path d={linePath} fill="none" stroke="rgba(59,130,246,0.9)" strokeWidth="2" />
-
-                        {showFastMa && <path d={fastPath} fill="none" stroke="rgba(16,185,129,0.9)" strokeWidth="1.5" />}
-                        {showSlowMa && <path d={slowPath} fill="none" stroke="rgba(56,189,248,0.8)" strokeWidth="1.2" strokeDasharray="6 6" />}
-
-                        {candles.map((candle, index) => {
-                            const x = xForIndex(index);
-                            const openY = yForPrice(candle.open);
-                            const closeY = yForPrice(candle.close);
-                            const highY = yForPrice(candle.high);
-                            const lowY = yForPrice(candle.low);
-                            const bodyTop = Math.min(openY, closeY);
-                            const bodyHeight = Math.max(2, Math.abs(openY - closeY));
-                            const isUp = candle.close >= candle.open;
-                            return (
-                                <g key={`candle-${index}`}>
-                                    <line
-                                        x1={x}
-                                        y1={highY}
-                                        x2={x}
-                                        y2={lowY}
-                                        stroke={isUp ? 'rgba(34,197,94,0.8)' : 'rgba(239,68,68,0.85)'}
-                                        strokeWidth="2"
-                                    />
-                                    <rect
-                                        x={x - barWidth / 2}
-                                        y={bodyTop}
-                                        width={barWidth}
-                                        height={bodyHeight}
-                                        rx={2}
-                                        fill={isUp ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.8)'}
-                                    />
-                                </g>
-                            );
-                        })}
-
-                        {[0, 1, 2, 3].map((tick) => {
-                            const price = minPrice + (priceRange / 3) * (3 - tick);
-                            const y = yForPrice(price);
-                            return (
-                                <text
-                                    key={`label-${tick}`}
-                                    x={width - 10}
-                                    y={y + 4}
-                                    fontSize="10"
-                                    fill="rgba(148,163,184,0.7)"
-                                    textAnchor="end"
-                                >
-                                    {price.toFixed(2)}
-                                </text>
-                            );
-                        })}
-
-                        {hovered && (
-                            <>
-                                <line
-                                    x1={hoveredX}
-                                    y1={padding.top}
-                                    x2={hoveredX}
-                                    y2={height - padding.bottom}
-                                    stroke="rgba(148,163,184,0.4)"
-                                    strokeDasharray="4 6"
-                                />
-                                {hoveredClose !== null && (
-                                    <line
-                                        x1={padding.left}
-                                        y1={yForPrice(hoveredClose)}
-                                        x2={width - padding.right}
-                                        y2={yForPrice(hoveredClose)}
-                                        stroke="rgba(148,163,184,0.35)"
-                                        strokeDasharray="4 6"
-                                    />
-                                )}
-                            </>
-                        )}
-                    </svg>
-
-                    <div className="absolute top-3 right-4 glass-panel rounded-xl px-3 py-2 text-xs font-mono text-accent">
-                        Last: {lastTick.toFixed(2)}
-                    </div>
-
-                    {hovered && (
-                        <div className="absolute left-4 top-4 glass-panel rounded-xl px-3 py-2 text-xs font-mono text-muted-foreground space-y-1">
-                            <div className="flex items-center gap-2">
-                                <Minus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                                <span>O {hovered.open.toFixed(2)}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Plus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                                <span>H {hovered.high.toFixed(2)}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Minus className="w-3 h-3 text-red-600 dark:text-red-400" />
-                                <span>L {hovered.low.toFixed(2)}</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Plus className="w-3 h-3 text-accent" />
-                                <span>C {hovered.close.toFixed(2)}</span>
-                            </div>
-                        </div>
-                    )}
+            {/* Stats */}
+            <div className="relative z-10 mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs uppercase tracking-widest text-muted-foreground">
+                <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
+                    <div className="text-[10px]">Range</div>
+                    <div className="text-sm font-mono text-foreground">{stats.range.toFixed(2)}</div>
                 </div>
-
-                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-xs uppercase tracking-widest text-muted-foreground">
-                    <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
-                        <div className="text-[10px]">Range</div>
-                        <div className="text-sm font-mono text-foreground">{(maxPrice - minPrice).toFixed(2)}</div>
+                <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
+                    <div className="text-[10px]">Volatility</div>
+                    <div className="text-sm font-mono text-foreground">{stats.volatility.toFixed(2)}%</div>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
+                    <div className="text-[10px]">Momentum</div>
+                    <div className={`text-sm font-mono ${trendUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {trendUp ? 'UPTREND' : 'DOWNTREND'}
                     </div>
-                    <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
-                        <div className="text-[10px]">Volatility</div>
-                        <div className="text-sm font-mono text-foreground">{volatility.toFixed(2)}%</div>
-                    </div>
-                    <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
-                        <div className="text-[10px]">Momentum</div>
-                        <div className={`text-sm font-mono ${trendUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                            {trendUp ? 'UPTREND' : 'DOWNTREND'}
-                        </div>
-                    </div>
-                    <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
-                        <div className="text-[10px]">Candles</div>
-                        <div className="text-sm font-mono text-foreground">{candles.length}</div>
-                    </div>
+                </div>
+                <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2">
+                    <div className="text-[10px]">Candles</div>
+                    <div className="text-sm font-mono text-foreground">{stats.count}</div>
                 </div>
             </div>
         </div>

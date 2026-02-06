@@ -170,7 +170,7 @@ router.post('/', async (req, res) => {
             return res.status(400).json({ error: 'Invalid configuration', details: validation.error.format() });
         }
 
-        const { botId, symbol, stake, maxStake, duration, durationUnit, cooldownMs, strategyConfig, risk, performance, entry } = validation.data;
+        const { botId, symbol, stake, maxStake, duration, durationUnit, cooldownMs, strategyConfig, risk, performance, entry, autoMode } = validation.data;
 
         const auth = req.auth;
         if (!auth?.token) {
@@ -238,6 +238,7 @@ router.post('/', async (req, res) => {
                     risk,
                     performance,
                     entry,
+                    autoMode,
                 },
             })
             .select('id')
@@ -273,6 +274,7 @@ router.post('/', async (req, res) => {
                     risk,
                     performance,
                     entry,
+                    autoMode,
                 },
                 auth.currency || 'USD'
             );

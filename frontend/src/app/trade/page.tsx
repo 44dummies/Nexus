@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic';
 import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '@/components/ui/ErrorFallback';
 import { useTradingStore } from '@/store/tradingStore';
+import { usePnLStream } from '@/hooks/usePnLStream';
 
 // Dynamic imports for heavy trading components
 const MarketVisualizer = dynamic(() => import('@/components/dashboard/MarketVisualizer'), { ssr: false });
@@ -12,6 +13,8 @@ const LiveFeed = dynamic(() => import('@/components/dashboard/LiveFeed'), { ssr:
 const DashboardHeader = dynamic(() => import('@/components/dashboard/DashboardHeader').then(mod => mod.DashboardHeader), { ssr: false });
 const AdvancedChart = dynamic(() => import('@/components/trade/AdvancedChart'), { ssr: false });
 const MarketSelector = dynamic(() => import('@/components/trade/MarketSelector'), { ssr: false });
+const SmartLayerPanel = dynamic(() => import('@/components/trade/SmartLayerPanel'), { ssr: false });
+const PnLPanel = dynamic(() => import('@/components/trade/PnLPanel'), { ssr: false });
 
 function TradeContent() {
     const {
@@ -24,6 +27,9 @@ function TradeContent() {
     } = useTradingStore();
 
     const [isChartMaximized, setIsChartMaximized] = useState(false);
+
+    // Subscribe to real-time PnL stream
+    usePnLStream();
 
     return (
         <div className="relative min-h-screen">
@@ -40,6 +46,16 @@ function TradeContent() {
                 {/* Market Selector Bar */}
                 <div className="flex items-center gap-4 mt-4 mb-2">
                     <MarketSelector />
+                </div>
+
+                {/* Smart Layer Panel */}
+                <div className="mt-2 mb-2">
+                    <SmartLayerPanel />
+                </div>
+
+                {/* Real-time PnL */}
+                <div className="mb-2">
+                    <PnLPanel />
                 </div>
 
                 <div className={`grid gap-6 mt-4 ${isChartMaximized ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-3'}`}>

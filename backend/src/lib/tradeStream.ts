@@ -6,6 +6,10 @@ export interface TradeStreamPayload {
     profit?: number | null;
     createdAt?: string | null;
     symbol?: string | null;
+    buyPrice?: number | null;
+    payout?: number | null;
+    direction?: 'CALL' | 'PUT' | null;
+    stake?: number | null;
 }
 
 const listeners = new Map<string, Set<Response>>();

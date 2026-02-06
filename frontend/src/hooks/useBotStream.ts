@@ -5,6 +5,7 @@ import { apiUrl } from '@/lib/api';
 export function useBotStream(botRunId: string | null) {
     const eventSourceRef = useRef<EventSource | null>(null);
     const addLog = useTradingStore((state) => state.addLog);
+    const updateSmartLayerState = useTradingStore((state) => state.updateSmartLayerState);
 
     useEffect(() => {
         if (!botRunId) {
@@ -35,10 +36,6 @@ export function useBotStream(botRunId: string | null) {
                 if (payload.type === 'log') {
                     // payload.data is the log entry
                     const log = payload.data;
-                    // Log level mapping handled in store or here?
-                    // Store expects: type: 'info' | 'error' | 'signal' | 'trade' | 'result'
-                    // Backend sends: level: 'trade' | 'error' | 'info' | 'signal' | 'result'
-                    // It matches directly.
                     addLog(log.level, log.message, log.data);
                 } else if (payload.type === 'status') {
                     // Handle status updates if needed
@@ -47,6 +44,16 @@ export function useBotStream(botRunId: string | null) {
                         addLog('info', 'Bot stopped (remote)');
                         es.close();
                     }
+                } else if (payload.type === 'smartlayer') {
+                    // Smart Layer telemetry: update regime, strategy, risk gate
+                    const d = payload.data;
+                    updateSmartLayerState({
+                        regime: d.regime ?? null,
+                        regimeConfidence: d.regimeConfidence ?? null,
+                        activeStrategy: d.strategyId ?? null,
+                        riskGate: d.riskGate ?? null,
+                        correlationId: d.correlationId ?? null,
+                    });
                 }
             } catch (error) {
                 console.error('Failed to parse bot stream message', error);
@@ -55,10 +62,6 @@ export function useBotStream(botRunId: string | null) {
 
         es.onerror = (error) => {
             console.error('Bot stream error', error);
-            // EventSource auto-reconnects, but if it's 401/403/404 we might want to close
-            if (es.readyState === EventSource.CLOSED) {
-                // Closed
-            }
         };
 
         return () => {
@@ -67,5 +70,5 @@ export function useBotStream(botRunId: string | null) {
                 eventSourceRef.current = null;
             }
         };
-    }, [botRunId, addLog]);
+    }, [botRunId, addLog, updateSmartLayerState]);
 }

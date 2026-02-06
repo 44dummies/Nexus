@@ -60,6 +60,9 @@ create table if not exists trades (
     duration integer,
     duration_unit text,
     profit numeric,
+    buy_price numeric,
+    payout numeric,
+    direction text,
     status text,
     created_at timestamptz default now()
 );

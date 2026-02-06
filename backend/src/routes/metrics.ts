@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { metrics } from '../lib/metrics';
+import { getCircuitState, resetCircuitBreaker } from '../lib/executionCircuitBreaker';
 
 const router = Router();
 
@@ -25,6 +26,17 @@ router.get('/', (_req, res) => {
 
 router.get('/snapshot', (_req, res) => {
     res.json(metrics.snapshot());
+});
+
+router.get('/circuit-breaker/:accountId', (req, res) => {
+    const { accountId } = req.params;
+    res.json(getCircuitState(accountId));
+});
+
+router.post('/circuit-breaker/:accountId/reset', (req, res) => {
+    const { accountId } = req.params;
+    resetCircuitBreaker(accountId);
+    res.json({ ok: true, message: `Circuit breaker reset for ${accountId}` });
 });
 
 export default router;

@@ -85,6 +85,7 @@ export const StartBackendSchema = z.object({
         aggressiveness: z.number().min(0).max(1).optional(),
         minEdgePct: z.number().min(0).optional(),
     }).strict().optional(),
+    autoMode: z.boolean().optional(),
 }).strict();
 
 export const StopBackendSchema = z.object({

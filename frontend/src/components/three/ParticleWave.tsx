@@ -139,7 +139,9 @@ export default function ParticleWave() {
         if (!meshRef.current) return;
         const time = state.clock.getElapsedTime();
         const positionAttribute = geometry.getAttribute('position');
+        const colorAttribute = geometry.getAttribute('color');
         const array = positionAttribute.array as Float32Array;
+        const colorArray = colorAttribute.array as Float32Array;
 
         // Convert mouse NDC to world coordinates at Z=0
         tempVector.set(mouseNDC.current.x, mouseNDC.current.y, 0.5);
@@ -148,45 +150,67 @@ export default function ParticleWave() {
         const distance = -camera.position.z / tempDirection.z;
         mouseWorldPos.copy(camera.position).add(tempDirection.multiplyScalar(distance));
 
-        // Apply very slow rotation to the entire blob
-        const rotationSpeed = 0.1;
-        const cosR = Math.cos(rotationSpeed * time * 0.1);
-        const sinR = Math.sin(rotationSpeed * time * 0.1);
+        // Slow rotation
+        const cosR = Math.cos(time * 0.012);
+        const sinR = Math.sin(time * 0.012);
 
-        // Update Particles
+        // Breathing — blob gently expands/contracts
+        const breathe = 1 + Math.sin(time * 0.3) * 0.06;
+
+        // Update Particles with organic "liquid ether" flow
         for (let i = 0; i < PARTICLE_COUNT; i++) {
             const i3 = i * 3;
-            let ox = originalPositions[i3];
-            const oy = originalPositions[i3 + 1]; // FIX: const
-            let oz = originalPositions[i3 + 2];
+            const ox = originalPositions[i3];
+            const oy = originalPositions[i3 + 1];
+            const oz = originalPositions[i3 + 2];
+
+            // Organic flow — layered sin/cos at different frequencies
+            // simulates Perlin-like noise displacement without a library
+            const freq = 0.15;
+            const flowX =
+                Math.sin(oy * freq + time * 0.4) *
+                Math.cos(oz * freq * 1.3 + time * 0.3) * 1.8;
+            const flowY =
+                Math.sin(oz * freq * 0.8 + time * 0.5) *
+                Math.cos(ox * freq * 1.1 + time * 0.35) * 1.8;
+            const flowZ =
+                Math.sin(ox * freq * 1.2 + time * 0.45) *
+                Math.cos(oy * freq * 0.9 + time * 0.25) * 1.8;
+
+            // Apply breathing + organic flow
+            const bx = (ox + flowX) * breathe;
+            const by = (oy + flowY) * breathe;
+            const bz = (oz + flowZ) * breathe;
 
             // Apply rotation
-            const rx = ox * cosR - oz * sinR;
-            const rz = ox * sinR + oz * cosR;
-            ox = rx;
-            oz = rz;
+            const rx = bx * cosR - bz * sinR;
+            const rz = bx * sinR + bz * cosR;
 
-            // Mouse Distance
-            const dx = ox - mouseWorldPos.x;
-            const dy = oy - mouseWorldPos.y;
+            // Mouse interaction — magnetic ripple
+            const dx = rx - mouseWorldPos.x;
+            const dy = by - mouseWorldPos.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
 
-            // Interaction - Push away/ripple
-            let displacement = 0;
-            const radius = 10;
-
-            if (dist < radius) {
-                const intensity = (1 - dist / radius);
-                // "Magnetic" effect - slight bulge towards camera + ripple
-                displacement = Math.sin(dist * 2 - time * 4) * intensity * 3;
+            let mouseDisp = 0;
+            const mouseRadius = 10;
+            if (dist < mouseRadius) {
+                const intensity = 1 - dist / mouseRadius;
+                mouseDisp = Math.sin(dist * 2 - time * 4) * intensity * 3;
             }
 
-            array[i3] = ox;     // Update rotated X
-            array[i3 + 1] = oy; // Update Y
-            array[i3 + 2] = oz + displacement; // Update Z with ripple
+            array[i3] = rx;
+            array[i3 + 1] = by;
+            array[i3 + 2] = rz + mouseDisp;
+
+            // Subtle color cycling — shift between blue (#2f81f7) and teal (#0ea5e9)
+            const t = Math.sin(time * 0.2 + i * 0.003) * 0.5 + 0.5;
+            colorArray[i3]     = 0.184 + t * (0.055 - 0.184);  // R
+            colorArray[i3 + 1] = 0.506 + t * (0.647 - 0.506);  // G
+            colorArray[i3 + 2] = 0.969 + t * (0.914 - 0.969);  // B
         }
 
         positionAttribute.needsUpdate = true;
+        colorAttribute.needsUpdate = true;
     });
 
     return (
