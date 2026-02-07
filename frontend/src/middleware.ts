@@ -77,7 +77,7 @@ export async function middleware(request: NextRequest) {
         // Security: Add CSP header
         response.headers.set(
             'Content-Security-Policy',
-            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com https://*.deriv.com https://*.derivws.com; frame-ancestors 'self';"
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.deriv.com https://*.derivws.com https://*.supabase.co wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com wss://*.supabase.co; frame-ancestors 'self';"
         );
         return response;
     }
@@ -86,11 +86,11 @@ export async function middleware(request: NextRequest) {
     // Security: Add CSP header for non-API routes too
     response.headers.set(
         'Content-Security-Policy',
-        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com https://*.deriv.com https://*.derivws.com; frame-ancestors 'self';"
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.deriv.com https://*.derivws.com https://*.supabase.co wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com wss://*.supabase.co; frame-ancestors 'self';"
     );
     return response;
 }
 
 export const config = {
-    matcher: '/api/:path*',
+    matcher: '/:path*',
 };
