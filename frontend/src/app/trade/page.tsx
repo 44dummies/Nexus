@@ -9,6 +9,7 @@ import { useTradingStore } from '@/store/tradingStore';
 const SmartLayerPanel = dynamic(() => import('@/components/trade/SmartLayerPanel'), { ssr: false });
 const PnLPanel = dynamic(() => import('@/components/trade/PnLPanel'), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/dashboard/AccountSwitcher'), { ssr: false });
+const BotRunToggle = dynamic(() => import('@/components/bots/BotRunToggle').then(mod => mod.BotRunToggle), { ssr: false });
 
 function TradeContent() {
     const {
@@ -38,16 +39,19 @@ function TradeContent() {
                             </div>
                         )}
                         {activeAccountType && (
-                            <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest ${
-                                activeAccountType === 'real'
+                            <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-widest ${activeAccountType === 'real'
                                     ? 'bg-emerald-500/15 text-emerald-500'
                                     : 'bg-amber-500/15 text-amber-500'
-                            }`}>
+                                }`}>
                                 {activeAccountType}
                             </span>
                         )}
                     </div>
-                    <AccountSwitcher />
+
+                    <div className="flex items-center gap-2">
+                        <BotRunToggle size="sm" />
+                        <AccountSwitcher />
+                    </div>
                 </div>
 
                 {/* Smart Layer Panel */}

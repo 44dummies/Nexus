@@ -8,9 +8,10 @@ import { apiFetch } from '@/lib/api';
 
 interface AccountSwitcherProps {
     compact?: boolean;
+    direction?: 'up' | 'down';
 }
 
-export default function AccountSwitcher({ compact = false }: AccountSwitcherProps) {
+export default function AccountSwitcher({ compact = false, direction = 'down' }: AccountSwitcherProps) {
     const { accounts, activeAccountId, switchAccount } = useTradingStore();
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -58,9 +59,8 @@ export default function AccountSwitcher({ compact = false }: AccountSwitcherProp
                 aria-expanded={isOpen}
                 aria-controls="account-switcher-menu"
                 aria-label={compact ? `Switch account (active: ${activeAccount?.id ?? 'unknown'})` : undefined}
-                className={`flex items-center gap-2 rounded-lg bg-muted/30 hover:bg-muted/50 border border-border/70 shadow-soft transition-colors ${
-                    compact ? 'h-11 w-11 justify-center p-0' : 'px-3 py-2'
-                }`}
+                className={`flex items-center gap-2 rounded-lg bg-muted/30 hover:bg-muted/50 border border-border/70 shadow-soft transition-colors ${compact ? 'h-11 w-11 justify-center p-0' : 'px-3 py-2'
+                    }`}
                 onKeyDown={(event) => {
                     if (event.key === 'ArrowDown') {
                         event.preventDefault();
@@ -83,10 +83,10 @@ export default function AccountSwitcher({ compact = false }: AccountSwitcherProp
             <AnimatePresence>
                 {isOpen && (
                     <motion.div
-                        initial={{ opacity: 0, y: -10 }}
+                        initial={{ opacity: 0, y: direction === 'up' ? 10 : -10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        className="absolute top-full mt-2 right-0 w-64 glass-panel rounded-xl overflow-hidden shadow-soft-lg ring-1 ring-border/40 z-[1000]"
+                        exit={{ opacity: 0, y: direction === 'up' ? 10 : -10 }}
+                        className={`absolute ${direction === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} right-0 w-64 glass-panel rounded-xl overflow-hidden shadow-soft-lg ring-1 ring-border/40 z-[1000]`}
                         id="account-switcher-menu"
                         role="menu"
                         aria-label="Switch account"

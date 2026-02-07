@@ -96,7 +96,7 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
 
     const sidebarClasses = `
         flex flex-col h-screen bg-sidebar border-r border-sidebar-border
-        fixed inset-y-0 left-0 z-50 w-[85vw] max-w-72 shadow-xl
+        fixed inset-y-0 left-0 z-[100] w-[80vw] max-w-64 shadow-xl
         transition-all duration-300 ease-in-out
         ${isMobileOpen ? 'translate-x-0' : '-translate-x-full'}
         lg:translate-x-0 lg:static lg:sticky lg:top-0 lg:z-auto lg:shadow-none
@@ -224,7 +224,7 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
             <div className="p-3 border-t border-sidebar-border space-y-2">
                 {/* Account Switcher — integrated into sidebar footer */}
                 <div className={`mb-1 ${isCollapsed ? 'flex justify-center' : ''}`}>
-                    <AccountSwitcher compact={isCollapsed} />
+                    <AccountSwitcher compact={isCollapsed} direction="up" />
                 </div>
                 {isCollapsed && activeAccountType && (
                     <div className="flex justify-center text-[10px] text-muted-foreground">
