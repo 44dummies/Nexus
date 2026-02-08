@@ -290,7 +290,7 @@ export async function runTradeBackfill(options: BackfillOptions = {}) {
 
                 const profit = toNumber(contract.profit) ?? 0;
                 const stake = toNumber(contract.buy_price) ?? row.stake ?? null;
-                const symbol = typeof contract.symbol === 'string' ? contract.symbol : null;
+                const symbol = typeof contract.symbol === 'string' ? contract.symbol : (row.symbol ?? null);
                 const duration = toNumber(contract.duration);
                 const durationUnit = typeof contract.duration_unit === 'string' ? contract.duration_unit : null;
                 const status = contract.status || 'settled';

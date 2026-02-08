@@ -62,6 +62,17 @@ const MIGRATIONS = [
             CREATE INDEX IF NOT EXISTS idx_trades_account_created ON trades (account_id, created_at DESC);
         `,
     },
+    {
+        name: '20260208120000_trades_defaults_not_null',
+        sql: `
+            UPDATE trades SET duration_unit = 't' WHERE duration_unit IS NULL;
+            UPDATE trades SET symbol = 'UNKNOWN' WHERE symbol IS NULL;
+            ALTER TABLE trades ALTER COLUMN duration_unit SET DEFAULT 't';
+            ALTER TABLE trades ALTER COLUMN duration_unit SET NOT NULL;
+            ALTER TABLE trades ALTER COLUMN symbol SET DEFAULT 'UNKNOWN';
+            ALTER TABLE trades ALTER COLUMN symbol SET NOT NULL;
+        `,
+    },
 ];
 
 async function runSQL(sql) {

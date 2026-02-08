@@ -25,6 +25,13 @@ export async function persistTrade(payload: {
     status: string;
     createdAt?: string | null;
 }) {
+    const normalizedSymbol = typeof payload.symbol === 'string' && payload.symbol.trim().length > 0
+        ? payload.symbol
+        : 'UNKNOWN';
+    const normalizedDurationUnit = typeof payload.durationUnit === 'string' && payload.durationUnit.trim().length > 0
+        ? payload.durationUnit
+        : 't';
+
     return persistenceQueue.enqueue(async () => {
         try {
             const { data, error } = await withSupabaseRetry('trades.insert', async (client) => await client.from('trades').insert({
@@ -34,10 +41,10 @@ export async function persistTrade(payload: {
                 bot_run_id: payload.botRunId ?? null,
                 entry_profile_id: payload.entryProfileId ?? null,
                 contract_id: payload.contractId,
-                symbol: payload.symbol ?? null,
+                symbol: normalizedSymbol,
                 stake: payload.stake ?? null,
                 duration: payload.duration ?? null,
-                duration_unit: payload.durationUnit ?? null,
+                duration_unit: normalizedDurationUnit,
                 profit: payload.profit,
                 buy_price: payload.buyPrice ?? null,
                 payout: payload.payout ?? null,
@@ -54,7 +61,7 @@ export async function persistTrade(payload: {
                 id: data?.id ?? null,
                 contractId: payload.contractId,
                 profit: payload.profit,
-                symbol: payload.symbol ?? null,
+                symbol: normalizedSymbol,
                 buyPrice: payload.buyPrice ?? null,
                 payout: payload.payout ?? null,
                 direction: payload.direction ?? null,
