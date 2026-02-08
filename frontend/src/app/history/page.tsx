@@ -11,8 +11,8 @@ interface TradeRow {
     contract_id: number;
     symbol: string;
     stake: number;
-    duration: number;
-    duration_unit: string;
+    duration: number | null;
+    duration_unit: string | null;
     profit: number;
     status: string;
     bot_id?: string;
@@ -65,7 +65,7 @@ export default function HistoryPage() {
         const q = query.toLowerCase();
         return trades.filter((trade) =>
             String(trade.contract_id).includes(q)
-            || trade.symbol.toLowerCase().includes(q)
+            || (trade.symbol || '').toLowerCase().includes(q)
             || (trade.status || '').toLowerCase().includes(q)
         );
     }, [trades, query]);
@@ -83,6 +83,12 @@ export default function HistoryPage() {
             month: 'short',
             day: 'numeric',
         });
+    };
+    const formatDuration = (duration: number | null | undefined, unit: string | null | undefined) => {
+        const amount = typeof duration === 'number' ? String(duration) : '';
+        const suffix = unit ? unit.toUpperCase() : '';
+        if (!amount && !suffix) return '-';
+        return `${amount}${suffix}`;
     };
 
     return (
@@ -161,7 +167,7 @@ export default function HistoryPage() {
                                                 )}
                                             </td>
                                             <td className="px-6 py-4 text-sm">
-                                                #{trade.contract_id} / {trade.symbol} / {trade.duration}{trade.duration_unit.toUpperCase()}
+                                                #{trade.contract_id} / {trade.symbol || '-'} / {formatDuration(trade.duration, trade.duration_unit)}
                                                 {trade.bot_id ? ` / ${trade.bot_id}` : ''}
                                             </td>
                                             <td className="px-6 py-4 text-right font-mono">
@@ -195,10 +201,10 @@ export default function HistoryPage() {
                                             </div>
                                         </div>
                                         <div className="mt-3 text-sm">
-                                            #{trade.contract_id} / {trade.symbol}
+                                            #{trade.contract_id} / {trade.symbol || '-'}
                                         </div>
                                         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                            <span>{trade.duration}{trade.duration_unit.toUpperCase()}</span>
+                                            <span>{formatDuration(trade.duration, trade.duration_unit)}</span>
                                             <span className="h-1 w-1 rounded-full bg-border" />
                                             <span>{trade.status || '-'}</span>
                                             {trade.bot_id ? (
