@@ -298,11 +298,15 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
                 throw new ExecutionError(
                     wsErr.code === 'WS_AUTH' ? 'WS_AUTH' : wsErr.code === 'WS_TIMEOUT' ? 'WS_TIMEOUT' : 'WS_NETWORK',
                     wsErr.message,
-                    { retryable: wsErr.retryable, context: wsErr.context, cause: wsErr }
+                    { retryable: wsErr.retryable, context: { ...(wsErr.context ?? {}), correlationId }, cause: wsErr }
                 );
             }
             setComponentStatus('execution', 'degraded', 'proposal request failed');
-            throw new ExecutionError('UNKNOWN', 'Proposal request failed', { cause: error as Error, retryable: true });
+            throw new ExecutionError('UNKNOWN', 'Proposal request failed', {
+                cause: error as Error,
+                retryable: true,
+                context: { correlationId },
+            });
         }
         const proposalAckTs = nowMs();
 
@@ -310,7 +314,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
             metrics.counter('execution.proposal_reject');
             throw new ExecutionError('PROPOSAL_REJECT', proposalResponse.error?.message || 'Proposal rejected', {
                 retryable: false,
-                context: { error: proposalResponse.error?.message || null },
+                context: { error: proposalResponse.error?.message || null, correlationId },
             });
         }
 
@@ -340,6 +344,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
                         maxPrice,
                         slippagePct,
                         tolerancePct: entrySlippagePct,
+                        correlationId,
                         quoteSnapshot: {
                             askPrice: proposal.ask_price,
                             spot: proposal.spot,
@@ -372,11 +377,15 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
                 throw new ExecutionError(
                     wsErr.code === 'WS_AUTH' ? 'WS_AUTH' : wsErr.code === 'WS_TIMEOUT' ? 'WS_TIMEOUT' : 'WS_NETWORK',
                     wsErr.message,
-                    { retryable: wsErr.retryable, context: wsErr.context, cause: wsErr }
+                    { retryable: wsErr.retryable, context: { ...(wsErr.context ?? {}), correlationId }, cause: wsErr }
                 );
             }
             setComponentStatus('execution', 'degraded', 'buy request failed');
-            throw new ExecutionError('UNKNOWN', 'Buy request failed', { cause: error as Error, retryable: true });
+            throw new ExecutionError('UNKNOWN', 'Buy request failed', {
+                cause: error as Error,
+                retryable: true,
+                context: { correlationId },
+            });
         }
         const buyAckTs = nowMs();
 
@@ -384,7 +393,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
             metrics.counter('execution.buy_reject');
             throw new ExecutionError('BUY_REJECT', buyResponse.error?.message || 'Buy rejected', {
                 retryable: false,
-                context: { error: buyResponse.error?.message || null },
+                context: { error: buyResponse.error?.message || null, correlationId },
             });
         }
 
@@ -412,5 +421,8 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
     if (correlationId) {
         orderIntentStore.fail(accountId, symbol, correlationId, 'Requote attempts exhausted');
     }
-    throw new ExecutionError('REQUOTE_EXHAUSTED', 'Requote attempts exhausted', { retryable: true });
+    throw new ExecutionError('REQUOTE_EXHAUSTED', 'Requote attempts exhausted', {
+        retryable: true,
+        context: { correlationId },
+    });
 }

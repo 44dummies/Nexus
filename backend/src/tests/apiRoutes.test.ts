@@ -311,7 +311,7 @@ test('Notification batch size is limited', () => {
 
 // Test: CSRF origin validation
 test('CSRF origin validation', () => {
-    const allowedOrigins = ['https://app.example.com', 'https://derivnexus.vercel.app'];
+    const allowedOrigins = ['https://app.example.com', 'https://44dummies.vercel.app'];
     
     const validateOrigin = (origin: string | undefined): boolean => {
         if (!origin) return true; // Same-origin
@@ -321,5 +321,5 @@ test('CSRF origin validation', () => {
     assert.equal(validateOrigin(undefined), true);
     assert.equal(validateOrigin('https://app.example.com'), true);
     assert.equal(validateOrigin('https://evil.com'), false);
-    assert.equal(validateOrigin('https://derivnexus.vercel.app'), true);
+    assert.equal(validateOrigin('https://44dummies.vercel.app'), true);
 });

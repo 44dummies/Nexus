@@ -5,7 +5,7 @@ import logger from './logger';
 import { record as recordObstacle } from './obstacleLog';
 
 const FALLBACK_ENABLED = (process.env.PERSIST_FALLBACK_ENABLED || 'false') === 'true';
-const FALLBACK_PATH = process.env.PERSIST_FALLBACK_PATH || '/tmp/derivnexus-persist-fallback.jsonl';
+const FALLBACK_PATH = process.env.PERSIST_FALLBACK_PATH || '/tmp/44dummies-persist-fallback.jsonl';
 const FALLBACK_MAX_BYTES = Math.max(1024 * 1024, Number(process.env.PERSIST_FALLBACK_MAX_BYTES) || 10 * 1024 * 1024);
 
 export async function writePersistenceFallback(entry: Record<string, unknown>): Promise<boolean> {

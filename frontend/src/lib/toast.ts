@@ -1,5 +1,5 @@
 /**
- * Toast notification service for DerivNexus
+ * Toast notification service for 44dummies
  * Provides centralized toast notifications that can be called from anywhere
  */
 

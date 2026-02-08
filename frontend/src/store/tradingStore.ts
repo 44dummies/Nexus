@@ -622,7 +622,7 @@ export const useTradingStore = create<TradingState>()(
             }),
         }),
         {
-            name: 'derivnexus-store',
+            name: '44dummies-store',
             storage: safeStorage,
             // Security: Exclude sensitive/ephemeral data from localStorage
             partialize: (state) => ({

@@ -26,6 +26,13 @@ export function apiUrl(path: string) {
     return `${API_BASE_URL}${path}`;
 }
 
+function createCorrelationId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `cid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -78,14 +85,19 @@ export async function apiFetch(
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const retryAuth = options?.retryAuth ?? true;
     const maxRetries = options?.retries ?? (isIdempotent(init.method) ? DEFAULT_RETRIES : 0);
+    const headers = new Headers(init.headers || {});
+    if (!headers.has('x-correlation-id')) {
+        headers.set('x-correlation-id', createCorrelationId());
+    }
+    const baseInit = { ...init, headers };
 
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
         try {
-            const res = await fetchWithTimeout(url, init, timeoutMs);
+            const res = await fetchWithTimeout(url, baseInit, timeoutMs);
 
             if (res.status === 401 && retryAuth && !url.includes('/api/auth/session')) {
                 await refreshAuthOnce();
-                return fetchWithTimeout(url, init, timeoutMs);
+                return fetchWithTimeout(url, baseInit, timeoutMs);
             }
 
             if (attempt < maxRetries && shouldRetryStatus(res.status)) {
@@ -110,7 +122,7 @@ export async function apiFetch(
         }
     }
 
-    return fetchWithTimeout(url, init, timeoutMs);
+    return fetchWithTimeout(url, baseInit, timeoutMs);
 }
 
 export async function apiJson<T>(path: string, init: RequestInit = {}, options?: { timeoutMs?: number; retries?: number }) {

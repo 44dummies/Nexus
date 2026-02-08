@@ -141,6 +141,7 @@ export class BotEngine {
         try {
             const response = await apiFetch('/api/bot-runs', {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'start-backend',
                     botId: strategyId,
@@ -184,6 +185,7 @@ export class BotEngine {
             try {
                 await apiFetch('/api/bot-runs', {
                     method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         action: 'stop-backend',
                         runId: this.backendRunId,
@@ -206,6 +208,7 @@ export class BotEngine {
         try {
             await apiFetch('/api/bot-runs', {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'pause-backend',
                     runId: this.backendRunId,
@@ -224,6 +227,7 @@ export class BotEngine {
         try {
             await apiFetch('/api/bot-runs', {
                 method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     action: 'resume-backend',
                     runId: this.backendRunId,

@@ -44,6 +44,11 @@ export function useBotStream(botRunId: string | null) {
                     if (payload.status === 'stopped') {
                         addLog('info', 'Bot stopped (remote)');
                         es.close();
+                    } else if (payload.status === 'paused') {
+                        const reason = typeof payload.reason === 'string' && payload.reason.length > 0
+                            ? `: ${payload.reason}`
+                            : '';
+                        addLog('error', `Bot paused${reason}`);
                     }
                 } else if (payload.type === 'smartlayer') {
                     // Smart Layer telemetry: update regime, strategy, risk gate

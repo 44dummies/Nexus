@@ -5,12 +5,12 @@ import AppLayout from "@/components/layout/AppLayout";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "DerivNexus | Automated Trading Terminal",
+  title: "44dummies | Automated Trading Terminal",
   description: "Next-generation 3D-enabled automated trading bot for Deriv API. High-performance trading with a sci-fi terminal experience.",
   keywords: ["trading", "deriv", "forex", "bot", "automated trading", "fintech"],
-  authors: [{ name: "DerivNexus" }],
+  authors: [{ name: "44dummies" }],
   openGraph: {
-    title: "DerivNexus | Automated Trading Terminal",
+    title: "44dummies | Automated Trading Terminal",
     description: "Next-generation 3D-enabled automated trading bot for Deriv API",
     type: "website",
   },

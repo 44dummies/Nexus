@@ -20,7 +20,7 @@ export const logger = pino({
             },
         },
     base: {
-        service: 'derivnexus-backend',
+        service: '44dummies-backend',
     },
 });
 

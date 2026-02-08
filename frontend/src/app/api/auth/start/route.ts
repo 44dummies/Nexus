@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
     }
 
     const startUrl = new URL('/api/auth/start', backendBaseUrl);
+    const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
 
     try {
         const backendResponse = await fetch(startUrl, {
@@ -36,6 +37,7 @@ export async function POST(request: NextRequest) {
             redirect: 'manual',
             headers: {
                 cookie: request.headers.get('cookie') || '',
+                ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
             },
             cache: 'no-store',
         });

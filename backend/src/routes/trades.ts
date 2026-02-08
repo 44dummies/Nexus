@@ -10,6 +10,7 @@ import { tradeLogger } from '../lib/logger';
 import { metrics } from '../lib/metrics';
 import { shouldAcceptWork } from '../lib/resourceMonitor';
 import { ExecutionError } from '../lib/executionEngine';
+import { PreTradeGateError } from '../lib/preTradeGate';
 
 const router = Router();
 
@@ -24,7 +25,7 @@ router.get('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
         metrics.counter('trade.db_unavailable');
-        return res.status(503).json({ error: configError || 'Supabase not configured', missing });
+        return res.status(503).json({ error: configError || 'Supabase not configured', code: 'DB_UNAVAILABLE', missing });
     }
 
     const limit = parseLimitParam(req.query.limit as string | undefined, 50, 1000);
@@ -81,6 +82,9 @@ router.get('/stream', (req, res) => {
 router.post('/execute', async (req, res) => {
     const signal = typeof req.body?.signal === 'string' ? req.body.signal : '';
     const params = req.body || {};
+    const correlationId = typeof params?.correlationId === 'string' && params.correlationId.trim().length > 0
+        ? params.correlationId.trim()
+        : req.requestId;
 
     const auth = req.auth;
     if (!auth?.token || !auth.accountId) {
@@ -94,7 +98,7 @@ router.post('/execute', async (req, res) => {
     }
 
     try {
-        const result = await executeTradeServerFast(signal as 'CALL' | 'PUT', params, {
+        const result = await executeTradeServerFast(signal as 'CALL' | 'PUT', { ...params, correlationId }, {
             token: auth.token,
             accountId: auth.accountId,
             accountType: auth.accountType,
@@ -103,6 +107,9 @@ router.post('/execute', async (req, res) => {
         return res.json(result);
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Trade execution failed';
+        if (error instanceof PreTradeGateError) {
+            return res.status(400).json({ error: message, code: 'RISK_REJECT', reasons: error.reasons });
+        }
         if (error instanceof ExecutionError) {
             return res.status(400).json({ error: message, code: error.code, retryable: error.retryable, context: error.context ?? null });
         }

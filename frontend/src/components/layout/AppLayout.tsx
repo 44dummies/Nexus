@@ -7,6 +7,7 @@ import { useTradingStore } from '@/store/tradingStore';
 import { BotEngine } from '@/lib/bot/engine';
 import { apiFetch } from '@/lib/api';
 import TradingStreamMonitor from '@/components/streams/TradingStreamMonitor';
+import Footer from '@/components/layout/Footer';
 
 const Sidebar = dynamic(() => import('@/components/layout/Sidebar'), { ssr: false });
 
@@ -327,7 +328,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
     }, [isMobileSidebarOpen]);
 
     return (
-        <div className={`${isLoginRoute ? '' : 'flex bg-background'} min-h-[100dvh] relative`}>
+        <div className={`min-h-[100dvh] relative ${isLoginRoute ? '' : 'flex bg-background'}`}>
             {!isLoginRoute && <TradingStreamMonitor />}
             {!isLoginRoute && (
                 <>
@@ -373,9 +374,12 @@ export default function AppLayout({ children }: AppLayoutProps) {
                     )}
                 </>
             )}
-            <main className={`${isLoginRoute ? '' : 'flex-1 overflow-auto min-h-0'} relative w-full`}>
-                {children}
-            </main>
+            <div className={`${isLoginRoute ? '' : 'flex-1'} flex min-h-[100dvh] w-full flex-col`}>
+                <main className={`${isLoginRoute ? '' : 'flex-1 overflow-auto min-h-0'} relative w-full`}>
+                    {children}
+                </main>
+                <Footer />
+            </div>
         </div>
     );
 }

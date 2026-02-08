@@ -13,6 +13,7 @@ export const ExecuteTradeParamsSchema = z.object({
     entryMode: z.enum(['HYBRID_LIMIT_MARKET', 'MARKET']).optional(),
     entryTargetPrice: z.number().positive().optional(),
     entrySlippagePct: z.number().min(0).optional(),
+    correlationId: z.string().min(1).max(200).optional(),
     // Allow payload fields that might be present in req.body
     signal: TradeSignalSchema.optional(),
     useFast: z.boolean().optional(),

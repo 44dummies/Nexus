@@ -78,12 +78,13 @@ test('ExecuteTradeParamsSchema validates strictness', () => {
     assert.equal(failures.success, false);
 });
 
-test('ExecuteTradeParamsSchema allows signal and useFast', () => {
+test('ExecuteTradeParamsSchema allows signal, useFast, and correlationId', () => {
     const validWithExtras = {
         stake: 10,
         symbol: 'R_100',
         signal: 'CALL',
         useFast: true,
+        correlationId: 'corr-test-1',
     };
 
     const result = ExecuteTradeParamsSchema.safeParse(validWithExtras);

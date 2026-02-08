@@ -81,7 +81,7 @@ export function LoginForm() {
 
                     <div className="space-y-2">
                         <h1 className="text-4xl font-semibold tracking-tighter text-foreground">
-                            DerivNexus
+                            44dummies
                         </h1>
                         <p className="text-muted-foreground text-sm font-medium tracking-widest uppercase">
                             Algorithmic Trading Terminal

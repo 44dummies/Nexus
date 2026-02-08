@@ -122,6 +122,27 @@ const refreshAuthCookies = (req: Request, res: Response) => {
     setIf('deriv_active_currency');
 };
 
+const resolveDevRedirect = (req: Request) => {
+    const fallbackBase = (process.env.FRONTEND_URL || '').replace(/\/$/, '') || 'http://localhost:3000';
+    const rawRedirect = typeof req.query.redirect === 'string' ? req.query.redirect : '';
+    if (rawRedirect && rawRedirect.startsWith('/')) {
+        return `${fallbackBase}${rawRedirect}`;
+    }
+    if (rawRedirect) {
+        try {
+            const url = new URL(rawRedirect);
+            const host = url.hostname;
+            const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+            if ((url.protocol === 'http:' || url.protocol === 'https:') && isLocalHost) {
+                return url.toString();
+            }
+        } catch {
+            // ignore invalid redirect values
+        }
+    }
+    return `${fallbackBase}/dashboard`;
+};
+
 router.post('/start', authRateLimit as any, async (_req, res) => {
     const appId = (process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '').trim();
     if (!appId) {
@@ -142,6 +163,56 @@ router.post('/start', authRateLimit as any, async (_req, res) => {
     res.cookie('deriv_oauth_state', state, buildStateCookieOptions());
 
     return res.json({ url: url.toString() });
+});
+
+router.get('/dev-session', authRateLimit as any, async (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ error: 'Not found' });
+    }
+
+    const demoToken = (process.env.DEV_DEMO_TOKEN || '').trim();
+    if (!demoToken) {
+        return res.status(400).json({ error: 'DEV_DEMO_TOKEN not set' });
+    }
+
+    try {
+        const authorize = await authorizeTokenCached(demoToken);
+        const accountId = authorize?.loginid;
+        if (!accountId) {
+            return res.status(401).json({ error: 'Demo token invalid' });
+        }
+
+        const accountList = authorize?.account_list || [];
+        const match = accountList.find((acct) => acct.loginid === accountId);
+        const isVirtual = Boolean(match ? match.is_virtual : accountId.startsWith('V'));
+        const accountType = isVirtual ? 'demo' : 'real';
+        const currency = authorize?.currency || match?.currency || 'USD';
+
+        const cookieOptions = buildCookie(60 * 60);
+        if (accountType === 'demo') {
+            res.cookie('deriv_demo_token', demoToken, cookieOptions);
+            res.cookie('deriv_demo_account', accountId, cookieOptions);
+            res.cookie('deriv_demo_currency', currency, cookieOptions);
+        } else {
+            res.cookie('deriv_token', demoToken, cookieOptions);
+            res.cookie('deriv_account', accountId, cookieOptions);
+            res.cookie('deriv_currency', currency, cookieOptions);
+        }
+
+        res.cookie('deriv_active_type', accountType, cookieOptions);
+        res.cookie('deriv_active_account', accountId, cookieOptions);
+        res.cookie('deriv_active_currency', currency, cookieOptions);
+
+        await Promise.allSettled([
+            persistSession({ accountId, accountType, token: demoToken, currency }),
+            persistAccount({ accountId, accountType, currency }),
+        ]);
+
+        return res.redirect(resolveDevRedirect(req));
+    } catch (error) {
+        authLogger.error({ error }, 'Dev session failed');
+        return res.status(500).json({ error: 'Failed to authorize demo token' });
+    }
 });
 
 router.get('/callback', authRateLimit as any, async (req, res) => {

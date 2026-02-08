@@ -20,6 +20,15 @@ export interface PreTradeGateResult {
     risk: TradeRiskConfig;
 }
 
+export class PreTradeGateError extends Error {
+    reasons: string[];
+
+    constructor(message: string, reasons: string[]) {
+        super(message);
+        this.reasons = reasons;
+    }
+}
+
 const LOW_LATENCY_MODE = (process.env.LOW_LATENCY_MODE || 'false') === 'true';
 const DEFAULT_TRADE_COOLDOWN_MS = Math.max(0, Number(process.env.DEFAULT_TRADE_COOLDOWN_MS) || (LOW_LATENCY_MODE ? 0 : 3000));
 const DEFAULT_LOSS_COOLDOWN_MS = Math.max(0, Number(process.env.DEFAULT_LOSS_COOLDOWN_MS) || 60000);
@@ -164,7 +173,7 @@ export function preTradeGate(
 ): { stake: number; risk: TradeRiskConfig } {
     const result = evaluatePreTradeGate(ctx, latency);
     if (!result.allowed) {
-        throw new Error(formatRejectionMessage(result.reasons));
+        throw new PreTradeGateError(formatRejectionMessage(result.reasons), result.reasons);
     }
     return { stake: result.stake, risk: result.risk };
 }

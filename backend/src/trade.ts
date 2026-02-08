@@ -302,6 +302,7 @@ export async function executeTradeServerFast(
             entryMode: params.entryMode || 'MARKET',
             entryTargetPrice: params.entryTargetPrice,
             entrySlippagePct: params.entrySlippagePct ?? 1.5,
+            correlationId: params.correlationId,
         });
 
         if (latencyTrace) {

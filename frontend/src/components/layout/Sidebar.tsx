@@ -116,13 +116,13 @@ export default function Sidebar({ isMobileOpen = false, onMobileClose }: Sidebar
                 >
                     <LogoMark size={40} className="shadow-soft-lg" />
                     <span className={`${isCollapsed ? 'hidden' : 'block'} text-lg font-bold text-foreground`}>
-                        DerivNexus
+                        44dummies
                     </span>
                 </button>
                 {/* Mobile: non-interactive logo + close button */}
                 <div className="lg:hidden flex items-center gap-3">
                     <LogoMark size={40} className="shadow-soft-lg" />
-                    <span className="text-lg font-bold text-foreground">DerivNexus</span>
+                    <span className="text-lg font-bold text-foreground">44dummies</span>
                 </div>
                 <button
                     type="button"

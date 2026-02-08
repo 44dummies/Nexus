@@ -26,6 +26,7 @@ export async function GET(
     }
 
     const streamUrl = new URL(`/api/bot-runs/${id}/stream`, backendBaseUrl);
+    const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
 
     try {
         const backendResponse = await fetch(streamUrl.toString(), {
@@ -33,6 +34,7 @@ export async function GET(
             headers: {
                 cookie: request.headers.get('cookie') || '',
                 Accept: 'text/event-stream',
+                ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
             },
             // @ts-expect-error - duplex is required for streaming but not in TS types
             duplex: 'half',

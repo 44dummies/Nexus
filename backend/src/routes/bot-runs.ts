@@ -45,7 +45,7 @@ router.post('/', async (req, res) => {
     const { client: supabaseClient, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseClient) {
         metrics.counter('bot.db_unavailable');
-        return res.status(503).json({ error: configError || 'Supabase not configured', missing });
+        return res.status(503).json({ error: configError || 'Supabase not configured', code: 'DB_UNAVAILABLE', missing });
     }
 
     const activeAccount = req.auth?.accountId;

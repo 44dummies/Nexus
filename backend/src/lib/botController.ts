@@ -15,7 +15,8 @@ import { metrics } from './metrics';
 import { LATENCY_METRICS, createLatencyTrace, nowMs, recordLatency } from './latencyTracker';
 import { ensureMarketData, getImbalanceTopN, getMarketDataMode, getShortHorizonMomentum, getSpread } from './marketData';
 import { isKillSwitchActive, registerKillSwitchListener, triggerKillSwitch } from './riskManager';
-import { preTradeGate } from './preTradeGate';
+import { ExecutionError } from './executionEngine';
+import { preTradeGate, PreTradeGateError } from './preTradeGate';
 import { dropRiskConfig, primeRiskConfig } from './riskConfigCache';
 import { persistenceQueue } from './persistenceQueue';
 import type { TradeRiskConfig } from './riskConfig';
@@ -691,8 +692,29 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         stake = gate.stake;
         gateResult = gate;
     } catch (error) {
+        const gateError = error instanceof PreTradeGateError ? error : null;
         const message = error instanceof Error ? error.message : 'Risk gate rejected';
-        if (message.toLowerCase().includes('daily loss') || message.toLowerCase().includes('drawdown') || message.toLowerCase().includes('risk halt') || message.toLowerCase().includes('stop-loss')) {
+        const reasons = gateError?.reasons ?? [];
+        queueBotLog({
+            bot_run_id: botRun.id,
+            account_id: accountId,
+            level: 'error',
+            message: `Pre-trade gate blocked: ${message}`,
+            data: {
+                signal: evaluation.signal,
+                stake,
+                code: 'RISK_REJECT',
+                reasons,
+                correlationId: latencyTrace?.traceId ?? null,
+            },
+        });
+        const hasHardLimit = reasons.some((reason) => (
+            reason === 'DAILY_LOSS_LIMIT'
+            || reason === 'DRAWDOWN_LIMIT'
+            || reason === 'RISK_HALT'
+            || reason === 'STOP_LOSS_REACHED'
+        ));
+        if (hasHardLimit || message.toLowerCase().includes('daily loss') || message.toLowerCase().includes('drawdown') || message.toLowerCase().includes('risk halt') || message.toLowerCase().includes('stop-loss')) {
             botLogger.warn({ botRunId: botRun.id, reason: message }, 'Bot risk halt');
             pauseBotRun(botRun.id, `Risk limit: ${message}`);
         }
@@ -739,6 +761,7 @@ function executeTradeForRun(
 
     botRun.lastTradeAt = Date.now();
 
+    const correlationId = latencyTrace?.traceId;
     executeTradeServerFast(
         signal,
         {
@@ -751,6 +774,7 @@ function executeTradeForRun(
             entryMode: config.entry?.mode || 'MARKET',
             entrySlippagePct: config.entry?.slippagePct,
             entryTargetPrice: currentPrice,
+            correlationId,
         },
         {
             token,
@@ -784,6 +808,7 @@ function executeTradeForRun(
             signal,
             contractId: result.contractId,
             executionTimeMs: result.executionTimeMs,
+            correlationId,
         }, 'Trade executed');
 
         queueBotLog({
@@ -799,6 +824,7 @@ function executeTradeForRun(
                 detail,
                 confidence,
                 reasonCodes,
+                correlationId,
             },
         });
     }).catch((error) => {
@@ -808,7 +834,8 @@ function executeTradeForRun(
         }
 
         const message = error instanceof Error ? error.message : 'Trade failed';
-        botLogger.error({ botRunId: botRun.id, signal, stake, error: message }, 'Trade failed');
+        const errorCode = error instanceof ExecutionError ? error.code : 'UNKNOWN';
+        botLogger.error({ botRunId: botRun.id, signal, stake, error: message, code: errorCode, correlationId }, 'Trade failed');
 
         // Track error rate in telemetry
         const currentTelemetry = SmartLayer.getTelemetry(accountId);
@@ -821,8 +848,8 @@ function executeTradeForRun(
             bot_run_id: botRun.id,
             account_id: accountId,
             level: 'error',
-            message: `Trade failed: ${message}`,
-            data: { signal, stake, detail },
+            message: `Trade failed [${errorCode}]: ${message}`,
+            data: { signal, stake, detail, correlationId, code: errorCode },
         });
     });
 }

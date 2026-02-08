@@ -18,7 +18,7 @@ export function LogoMark({ size = 40, className = '', priority = false }: LogoMa
             <div
                 className={`rounded-2xl bg-gradient-to-br from-accent to-sky-500 flex items-center justify-center ${className}`.trim()}
                 style={{ width: size, height: size }}
-                aria-label="DerivNexus logo"
+                aria-label="44dummies logo"
             >
                 <Zap className="w-5 h-5 text-white" />
             </div>
@@ -28,7 +28,7 @@ export function LogoMark({ size = 40, className = '', priority = false }: LogoMa
     return (
         <Image
             src="/brand-mark.png"
-            alt="DerivNexus logo"
+            alt="44dummies logo"
             width={size}
             height={size}
             priority={priority}

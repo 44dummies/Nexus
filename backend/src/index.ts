@@ -40,20 +40,37 @@ const allowedOrigins = rawOrigins
     .split(',')
     .map((o) => o.trim().replace(/\/+$/, ''))
     .filter(Boolean);
+const allowLocalhostOrigins = (process.env.CORS_ALLOW_LOCALHOST || '').toLowerCase() === 'true'
+    || process.env.NODE_ENV !== 'production';
+
+function isLocalhostOrigin(origin: string) {
+    try {
+        const url = new URL(origin);
+        const host = url.hostname;
+        return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+    } catch {
+        return false;
+    }
+}
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Fail closed: reject if no origins configured
-        if (allowedOrigins.length === 0) {
-            logger.error({ origin }, 'CORS: No origins configured - set CORS_ORIGIN or FRONTEND_URL env var');
-            return callback(new Error('CORS not configured - set CORS_ORIGIN or FRONTEND_URL'));
-        }
         // Allow requests with no origin (same-origin, curl, etc.)
         if (!origin) {
             return callback(null, true);
         }
         // Normalize incoming origin (strip trailing slash)
         const normalizedOrigin = origin.replace(/\/+$/, '');
+
+        if (allowLocalhostOrigins && isLocalhostOrigin(normalizedOrigin)) {
+            return callback(null, true);
+        }
+
+        // Fail closed: reject if no origins configured
+        if (allowedOrigins.length === 0) {
+            logger.error({ origin }, 'CORS: No origins configured - set CORS_ORIGIN or FRONTEND_URL env var');
+            return callback(new Error('CORS not configured - set CORS_ORIGIN or FRONTEND_URL'));
+        }
 
         // Check exact match first
         if (allowedOrigins.includes(normalizedOrigin)) {
@@ -226,7 +243,7 @@ async function startServer() {
         if (bindPort !== port) {
             logger.warn({ configuredPort: port, bindPort }, 'Using safe port due to privileged port restriction');
         }
-        logger.info({ port: bindPort, origins: allowedOrigins }, 'DerivNexus backend started');
+        logger.info({ port: bindPort, origins: allowedOrigins }, '44dummies backend started');
         startTradeBackfillJob();
     });
     server.on('error', (error: NodeJS.ErrnoException) => {
@@ -242,6 +259,6 @@ async function startServer() {
 }
 
 startServer().catch((error) => {
-    logger.error({ error }, 'Failed to start DerivNexus backend');
+    logger.error({ error }, 'Failed to start 44dummies backend');
     process.exit(1);
 });

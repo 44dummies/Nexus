@@ -29,12 +29,14 @@ export async function GET(request: NextRequest) {
     }
 
     const sessionUrl = new URL('/api/auth/session', backendBaseUrl);
+    const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
 
     try {
         const backendResponse = await fetch(sessionUrl, {
             method: 'GET',
             headers: {
                 cookie: request.headers.get('cookie') || '',
+                ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
             },
             cache: 'no-store',
         });
@@ -70,6 +72,7 @@ export async function POST(request: NextRequest) {
     }
 
     const sessionUrl = new URL('/api/auth/session', backendBaseUrl);
+    const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
 
     try {
         const body = await request.text();
@@ -78,6 +81,7 @@ export async function POST(request: NextRequest) {
             headers: {
                 cookie: request.headers.get('cookie') || '',
                 'Content-Type': 'application/json',
+                ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
             },
             body,
             cache: 'no-store',
