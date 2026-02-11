@@ -5,6 +5,7 @@ import { metrics } from './metrics';
 import { tradeLogger } from './logger';
 import { writePersistenceFallback } from './persistenceFallback';
 import { attributeSettledProfit } from './botProfitAttribution';
+import { audit } from './auditLogger';
 
 
 export async function persistTrade(payload: {
@@ -73,6 +74,24 @@ export async function persistTrade(payload: {
             attributeSettledProfit(payload.contractId, payload.profit);
 
             metrics.counter('persistence.trade_ok');
+
+            // Audit: log trade execution
+            audit({
+                eventType: 'trade_execution',
+                accountId: payload.accountId,
+                timestamp: Date.now(),
+                data: {
+                    contractId: payload.contractId,
+                    symbol: normalizedSymbol,
+                    stake: payload.stake,
+                    profit: payload.profit,
+                    direction: payload.direction,
+                    botRunId: payload.botRunId,
+                },
+                outcome: 'success',
+                botRunId: payload.botRunId,
+            });
+
             return data?.id ?? null;
         } catch (error) {
             const info = classifySupabaseError(error);

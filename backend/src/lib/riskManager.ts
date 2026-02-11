@@ -7,6 +7,8 @@ import { getOrCreateConnection, registerStreamingListener, sendMessage, sendMess
 import { getRiskCache, initializeRiskCache, recordTradeSettled, setOpenTradeState } from './riskCache';
 import { record as recordObstacle } from './obstacleLog';
 import { setComponentStatus } from './healthStatus';
+import { isBehaviorBlocked } from './behaviorDetection';
+import { auditRiskCheck } from './auditLogger';
 
 interface RollingCounterConfig {
     windowMs: number;
@@ -419,7 +421,7 @@ export function isKillSwitchActive(accountId: string): boolean {
         if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
             // Expired — clear asynchronously, don't block this trade
             clearKillSwitch(accountId);
-            recordRiskEvent(accountId, 'kill_switch_auto_clear', accountState.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+            recordRiskEvent(accountId, 'kill_switch_auto_clear', accountState.reason ?? 'unknown', { ageMs: age }).catch(() => { });
             return globalKillSwitch.active === true;
         }
     }
@@ -429,7 +431,7 @@ export function isKillSwitchActive(accountId: string): boolean {
         const age = typeof globalKillSwitch.triggeredAt === 'number' ? now - globalKillSwitch.triggeredAt : 0;
         if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
             clearKillSwitch(null);
-            recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+            recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => { });
             return accountState?.active === true;
         }
     }
@@ -440,6 +442,13 @@ export function isKillSwitchActive(accountId: string): boolean {
 export function preTradeCheck(accountId: string, stake: number, limits: RiskLimits): { allowed: boolean; reason?: string } {
     const now = Date.now();
     const entry = getRiskCache(accountId);
+
+    // Behavior detection: block if overtrading/revenge pause is active
+    const behavior = isBehaviorBlocked(accountId);
+    if (behavior.blocked) {
+        auditRiskCheck(accountId, { allowed: false, reason: behavior.reason, stake, checks: { behaviorBlock: true } });
+        return { allowed: false, reason: behavior.reason };
+    }
 
     if (limits.maxOrderSize && stake > limits.maxOrderSize) {
         return { allowed: false, reason: 'MAX_ORDER_SIZE' };
@@ -550,7 +559,7 @@ export async function initRiskManager(): Promise<void> {
             if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
                 riskLogger.info({ accountId, reason: state.reason, ageMs: age }, 'Auto-clearing expired kill switch');
                 clearKillSwitch(accountId);
-                recordRiskEvent(accountId, 'kill_switch_auto_clear', state.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+                recordRiskEvent(accountId, 'kill_switch_auto_clear', state.reason ?? 'unknown', { ageMs: age }).catch(() => { });
             }
         }
         if (globalKillSwitch.active && !globalKillSwitch.manual) {
@@ -558,7 +567,7 @@ export async function initRiskManager(): Promise<void> {
             if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
                 riskLogger.info({ reason: globalKillSwitch.reason, ageMs: age }, 'Auto-clearing expired global kill switch');
                 clearKillSwitch(null);
-                recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => {});
+                recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => { });
             }
         }
     }, 60000); // Check every minute

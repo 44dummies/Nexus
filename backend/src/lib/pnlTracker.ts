@@ -16,6 +16,8 @@
 
 import { tradeLogger } from './logger';
 import { metrics } from './metrics';
+import { auditSettlement } from './auditLogger';
+import { recordTradeAndCheck } from './behaviorDetection';
 import type { Response } from 'express';
 
 // ==================== TYPES ====================
@@ -169,6 +171,20 @@ export function recordSettledPnL(
 
     metrics.counter('pnl.settlement_recorded');
     broadcastPnL(accountId, state);
+
+    // Audit: record settlement event
+    auditSettlement(accountId, {
+        contractId,
+        profit,
+        symbol: details?.symbol,
+        direction: details?.direction,
+        stake: details?.stake,
+    });
+
+    // Behavior detection: check for overtrading/revenge patterns
+    if (state.lastKnownBalance !== null && state.lastKnownBalance > 0) {
+        recordTradeAndCheck(accountId, profit, details?.stake ?? 0, state.lastKnownBalance);
+    }
 }
 
 /**
