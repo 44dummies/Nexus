@@ -120,9 +120,9 @@ export const DEFAULT_ADAPTER_CONFIG: AdapterConfig = {
     highVolThreshold: 2.0,
     chopThresholdRange: 0.55,
     spreadThreshold: 0.005,
-    trendPullbackConfidence: 0.5,
-    meanRevConfidence: 0.45,
-    breakoutConfidence: 0.6,
+    trendPullbackConfidence: 0.65,
+    meanRevConfidence: 0.6,
+    breakoutConfidence: 0.75,
     breakoutLookback: 15,
     pullbackProximity: 1.2,
     zscoreThreshold: 1.8,
@@ -340,6 +340,26 @@ function applyHysteresis(
     return state.current;
 }
 
+// ==================== HELPERS ====================
+
+/**
+ * Tick direction persistence for adapter: ratio of ticks in dominant direction.
+ */
+function computeAdapterTickPersistence(prices: PriceSeries, window: number): number | null {
+    if (prices.length < window + 1) return null;
+    let ups = 0;
+    let downs = 0;
+    const start = prices.length - window;
+    for (let i = start; i < prices.length; i++) {
+        const diff = prices.get(i) - prices.get(i - 1);
+        if (diff > 0) ups++;
+        else if (diff < 0) downs++;
+    }
+    const total = ups + downs;
+    if (total === 0) return 0.5;
+    return Math.max(ups, downs) / total;
+}
+
 // ==================== SUB-STRATEGY SIGNALS ====================
 
 function trendPullbackSignal(
@@ -373,10 +393,18 @@ function trendPullbackSignal(
 
     if (!rsiConfirm) return { signal: null };
 
-    // Confidence: stronger trend + closer to EMA = higher
+    // Tick direction persistence: must agree with signal
+    const tickPersistence = computeAdapterTickPersistence(prices, 15);
+    const tickAligned = tickPersistence !== null && (
+        (direction === 'CALL' && tickPersistence > 0.55) ||
+        (direction === 'PUT' && tickPersistence > 0.55)
+    );
+
+    // Confidence: stronger trend + closer to EMA + tick alignment = higher
     const trendConf = features.trendStrength !== null ? Math.min(1, features.trendStrength / 2) : 0.3;
     const proximityConf = 1 - (distanceToEma / pullbackZone);
-    const confidence = Math.min(0.95, (trendConf * 0.6 + proximityConf * 0.4));
+    const tickBonus = tickAligned ? 0.1 : 0;
+    const confidence = Math.min(0.95, (trendConf * 0.5 + proximityConf * 0.3 + tickBonus));
 
     if (confidence < config.trendPullbackConfidence) return { signal: null };
 
@@ -404,13 +432,20 @@ function meanReversionSignal(
     const direction: TradeSignal = zscore < 0 ? 'CALL' : 'PUT';
 
     // Check momentum stalling (RSI not trending further into extreme)
+    // AND must be turning back — require RSI to be reversing from extreme
     const momentumStall =
         (direction === 'CALL' && features.rsi > 25 && features.rsi < 45) ||
         (direction === 'PUT' && features.rsi < 75 && features.rsi > 55);
 
     if (!momentumStall) return { signal: null };
 
-    const confidence = Math.min(0.9, 0.3 + (absZ - config.zscoreThreshold) * 0.25);
+    // Extra: check if RSI is reversing (not just in the zone, but moving toward center)
+    const rsiReversing = features.rsi !== null && (
+        (direction === 'CALL' && features.rsi > 30) || // RSI bouncing up from oversold
+        (direction === 'PUT' && features.rsi < 70)     // RSI dropping from overbought
+    );
+
+    const confidence = Math.min(0.9, 0.3 + (absZ - config.zscoreThreshold) * 0.25 + (rsiReversing ? 0.05 : 0));
 
     if (confidence < config.meanRevConfidence) return { signal: null };
 

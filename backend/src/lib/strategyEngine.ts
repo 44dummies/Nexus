@@ -1,7 +1,8 @@
 /**
  * Backend Strategy Engine
  * Evaluates trading strategies on the server using the unified tick stream.
- * Ports indicator calculations from frontend with optimizations.
+ * EVERY strategy MUST return a computed confidence score (0.0–1.0).
+ * Signals without confidence are treated as 0.0 and will be blocked.
  */
 
 import type { PriceSeries } from './ringBuffer';
@@ -208,20 +209,97 @@ export const DEFAULT_STRATEGY_CONFIGS: Record<string, StrategyConfig> = {
     },
 };
 
+// ==================== HELPERS ====================
+
+/**
+ * Compute tick direction persistence: ratio of ticks in the dominant direction.
+ * Returns 0.5 for balanced, approaching 1.0 for strong persistence.
+ */
+function computeTickPersistence(prices: PriceSeries, window: number): number | null {
+    if (prices.length < window + 1) return null;
+    let ups = 0;
+    let downs = 0;
+    const start = prices.length - window;
+    for (let i = start; i < prices.length; i++) {
+        const diff = prices.get(i) - prices.get(i - 1);
+        if (diff > 0) ups++;
+        else if (diff < 0) downs++;
+    }
+    const total = ups + downs;
+    if (total === 0) return 0.5;
+    return Math.max(ups, downs) / total;
+}
+
 // ==================== STRATEGY IMPLEMENTATIONS ====================
 
 function evaluateRsiStrategy(ctx: StrategyContext, config: StrategyConfig): StrategyEvaluation {
     const period = config.rsiPeriod ?? 14;
-    const lower = config.rsiLower ?? 32;
-    const upper = config.rsiUpper ?? 68;
+    const lower = config.rsiLower ?? 30; // Tightened from 32
+    const upper = config.rsiUpper ?? 70; // Tightened from 68
 
     const rsi = calculateRSI(ctx.prices, period);
-    if (rsi === null) return { signal: null };
+    if (rsi === null) return { signal: null, confidence: 0 };
 
-    if (rsi < lower) return { signal: 'CALL', detail: `RSI ${rsi.toFixed(1)}` };
-    if (rsi > upper) return { signal: 'PUT', detail: `RSI ${rsi.toFixed(1)}` };
+    // EMA slope for momentum alignment
+    const emaFast = calculateEMA(ctx.prices, 9);
+    const emaSlow = calculateEMA(ctx.prices, 21);
+    const atr = calculateATR(ctx.prices, 14);
 
-    return { signal: null };
+    if (emaFast === null || emaSlow === null || atr === null || atr <= 0) {
+        return { signal: null, confidence: 0 };
+    }
+
+    // Momentum check: is price actually reversing?
+    const prevPrice = ctx.prevPrice;
+    const priceMovingUp = prevPrice !== null && ctx.lastPrice > prevPrice;
+    const priceMovingDown = prevPrice !== null && ctx.lastPrice < prevPrice;
+
+    // EMA slope direction
+    const emaTrendUp = emaFast > emaSlow;
+    const emaTrendDown = emaFast < emaSlow;
+
+    let signal: TradeSignal | null = null;
+    let confidence = 0;
+    const reasonCodes: string[] = [];
+
+    if (rsi < lower) {
+        // Oversold — only CALL if momentum is turning up
+        if (!priceMovingUp) {
+            // Price still falling — no reversal confirmation yet
+            return { signal: null, confidence: 0, detail: `RSI ${rsi.toFixed(1)} oversold but no reversal` };
+        }
+        signal = 'CALL';
+        // RSI extremity: how far below threshold (0 = at threshold, 1 = RSI near 0)
+        const rsiExtremity = Math.min(1, (lower - rsi) / lower);
+        // Momentum alignment: bonus if EMA supports the reversal direction
+        const momentumBonus = emaTrendUp ? 0.15 : 0;
+        // Trend alignment: slight bonus if with-trend (counter-trend gets penalty)
+        const trendPenalty = emaTrendDown ? -0.1 : 0;
+
+        confidence = Math.min(0.95, 0.35 + rsiExtremity * 0.35 + momentumBonus + trendPenalty);
+        reasonCodes.push(`RSI:${rsi.toFixed(1)}`, `EXT:${rsiExtremity.toFixed(2)}`, 'MOM:UP');
+    } else if (rsi > upper) {
+        // Overbought — only PUT if momentum is turning down
+        if (!priceMovingDown) {
+            return { signal: null, confidence: 0, detail: `RSI ${rsi.toFixed(1)} overbought but no reversal` };
+        }
+        signal = 'PUT';
+        const rsiExtremity = Math.min(1, (rsi - upper) / (100 - upper));
+        const momentumBonus = emaTrendDown ? 0.15 : 0;
+        const trendPenalty = emaTrendUp ? -0.1 : 0;
+
+        confidence = Math.min(0.95, 0.35 + rsiExtremity * 0.35 + momentumBonus + trendPenalty);
+        reasonCodes.push(`RSI:${rsi.toFixed(1)}`, `EXT:${rsiExtremity.toFixed(2)}`, 'MOM:DOWN');
+    }
+
+    if (!signal) return { signal: null, confidence: 0 };
+
+    return {
+        signal,
+        confidence,
+        detail: `RSI ${rsi.toFixed(1)} | conf ${confidence.toFixed(2)}`,
+        reasonCodes,
+    };
 }
 
 function evaluateTrendRiderStrategy(ctx: StrategyContext, config: StrategyConfig): StrategyEvaluation {
@@ -237,24 +315,43 @@ function evaluateTrendRiderStrategy(ctx: StrategyContext, config: StrategyConfig
     const atr = calculateATR(ctx.prices, Math.max(emaSlowPeriod, 14));
     const rsi = calculateRSI(ctx.prices, rsiPeriod);
 
-    if (emaFast === null || emaSlow === null || rsi === null || atr === null) {
-        return { signal: null };
+    if (emaFast === null || emaSlow === null || rsi === null || atr === null || atr <= 0) {
+        return { signal: null, confidence: 0 };
     }
 
-    const trendStrength = Math.abs(emaFast - emaSlow);
-    if (trendStrength < atr * strengthMultiplier) return { signal: null };
+    const trendStrength = Math.abs(emaFast - emaSlow) / atr;
+    if (trendStrength < strengthMultiplier) return { signal: null, confidence: 0 };
+
+    // Tick direction persistence: checks if recent ticks agree with trend
+    const tickDirPersistence = computeTickPersistence(ctx.prices, 15);
 
     const trendUp = emaFast > emaSlow && ctx.lastPrice > emaFast && rsi > rsiUpper;
     const trendDown = emaFast < emaSlow && ctx.lastPrice < emaFast && rsi < rsiLower;
 
-    if (trendUp) {
-        return { signal: 'CALL', detail: `EMA ${emaFast.toFixed(2)} > ${emaSlow.toFixed(2)} | RSI ${rsi.toFixed(1)}` };
-    }
-    if (trendDown) {
-        return { signal: 'PUT', detail: `EMA ${emaFast.toFixed(2)} < ${emaSlow.toFixed(2)} | RSI ${rsi.toFixed(1)}` };
-    }
+    if (!trendUp && !trendDown) return { signal: null, confidence: 0 };
 
-    return { signal: null };
+    const signal: TradeSignal = trendUp ? 'CALL' : 'PUT';
+
+    // Check tick direction agrees with signal
+    const tickAgrees = trendUp
+        ? (tickDirPersistence !== null && tickDirPersistence > 0.55)
+        : (tickDirPersistence !== null && tickDirPersistence > 0.55);
+
+    // Confidence: trend strength × RSI alignment × direction persistence
+    const strengthScore = Math.min(1, trendStrength / 2);
+    const rsiScore = trendUp
+        ? Math.min(1, (rsi - rsiUpper) / (100 - rsiUpper))
+        : Math.min(1, (rsiLower - rsi) / rsiLower);
+    const directionScore = tickAgrees ? 0.2 : 0;
+
+    const confidence = Math.min(0.95, 0.3 + strengthScore * 0.35 + rsiScore * 0.2 + directionScore);
+
+    return {
+        signal,
+        confidence,
+        detail: `EMA ${emaFast.toFixed(2)} vs ${emaSlow.toFixed(2)} | str ${trendStrength.toFixed(2)} | RSI ${rsi.toFixed(1)} | conf ${confidence.toFixed(2)}`,
+        reasonCodes: [`TREND:${trendStrength.toFixed(2)}`, `RSI:${rsi.toFixed(1)}`, `DIR:${tickDirPersistence?.toFixed(2) ?? 'N/A'}`],
+    };
 }
 
 function evaluateBreakoutAtrStrategy(ctx: StrategyContext, config: StrategyConfig): StrategyEvaluation {
@@ -267,15 +364,18 @@ function evaluateBreakoutAtrStrategy(ctx: StrategyContext, config: StrategyConfi
     const atrFast = calculateATR(ctx.prices, atrFastPeriod);
     const atrSlow = calculateATR(ctx.prices, atrSlowPeriod);
 
-    if (atrFast === null || atrSlow === null) return { signal: null };
+    if (atrFast === null || atrSlow === null || atrSlow <= 0) return { signal: null, confidence: 0 };
+
+    // Volume expansion check: ATR ratio must confirm real breakout, not noise
+    const volExpansionRatio = atrFast / atrSlow;
+    if (volExpansionRatio < 1.2) return { signal: null, confidence: 0 };
 
     const expanding = atrFast > atrSlow * expansionMultiplier;
-    if (!expanding) return { signal: null };
+    if (!expanding) return { signal: null, confidence: 0 };
 
-    // Get recent high/low excluding current price
     const endIdx = ctx.prices.length - 1;
     const startIdx = Math.max(0, endIdx - lookback);
-    if (endIdx - startIdx < lookback) return { signal: null };
+    if (endIdx - startIdx < lookback) return { signal: null, confidence: 0 };
 
     let high = Number.NEGATIVE_INFINITY;
     let low = Number.POSITIVE_INFINITY;
@@ -285,16 +385,35 @@ function evaluateBreakoutAtrStrategy(ctx: StrategyContext, config: StrategyConfi
         if (price < low) low = price;
     }
 
+    const range = high - low;
+    if (range <= 0) return { signal: null, confidence: 0 };
+
     const buffer = atrFast * bufferMultiplier;
 
     if (ctx.lastPrice > high + buffer) {
-        return { signal: 'CALL', detail: `Breakout +${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)}` };
+        const breakMagnitude = (ctx.lastPrice - high) / range;
+        const volScore = Math.min(1, (volExpansionRatio - 1) * 0.5);
+        const confidence = Math.min(0.9, 0.3 + breakMagnitude * 0.3 + volScore * 0.25);
+        return {
+            signal: 'CALL',
+            confidence,
+            detail: `Breakout HIGH +${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)} | volX ${volExpansionRatio.toFixed(2)} | conf ${confidence.toFixed(2)}`,
+            reasonCodes: [`BREAK:HIGH`, `MAG:${breakMagnitude.toFixed(3)}`, `VOLX:${volExpansionRatio.toFixed(2)}`],
+        };
     }
     if (ctx.lastPrice < low - buffer) {
-        return { signal: 'PUT', detail: `Breakout -${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)}` };
+        const breakMagnitude = (low - ctx.lastPrice) / range;
+        const volScore = Math.min(1, (volExpansionRatio - 1) * 0.5);
+        const confidence = Math.min(0.9, 0.3 + breakMagnitude * 0.3 + volScore * 0.25);
+        return {
+            signal: 'PUT',
+            confidence,
+            detail: `Breakout LOW -${buffer.toFixed(2)} | ATR ${atrFast.toFixed(3)} | volX ${volExpansionRatio.toFixed(2)} | conf ${confidence.toFixed(2)}`,
+            reasonCodes: [`BREAK:LOW`, `MAG:${breakMagnitude.toFixed(3)}`, `VOLX:${volExpansionRatio.toFixed(2)}`],
+        };
     }
 
-    return { signal: null };
+    return { signal: null, confidence: 0 };
 }
 
 function evaluateCapitalGuardStrategy(ctx: StrategyContext, config: StrategyConfig): StrategyEvaluation {
@@ -312,46 +431,101 @@ function evaluateCapitalGuardStrategy(ctx: StrategyContext, config: StrategyConf
     const rsi = calculateRSI(ctx.prices, rsiPeriod);
     const sma = calculateSMA(ctx.prices, smaPeriod);
 
-    if (atrFast === null || atrSlow === null || rsi === null || sma === null) {
-        return { signal: null };
+    if (atrFast === null || atrSlow === null || rsi === null || sma === null || atrFast <= 0) {
+        return { signal: null, confidence: 0 };
     }
 
     const calmMarket = atrFast < atrSlow * calmMultiplier;
-    if (!calmMarket) return { signal: null };
+    if (!calmMarket) return { signal: null, confidence: 0 };
 
     const distanceFromMean = Math.abs(ctx.lastPrice - sma);
-    if (distanceFromMean > atrFast * meanDistanceMultiplier) return { signal: null };
+    if (distanceFromMean > atrFast * meanDistanceMultiplier) return { signal: null, confidence: 0 };
 
-    if (rsi < rsiLower) return { signal: 'CALL', detail: `RSI ${rsi.toFixed(1)} | calm` };
-    if (rsi > rsiUpper) return { signal: 'PUT', detail: `RSI ${rsi.toFixed(1)} | calm` };
+    let signal: TradeSignal | null = null;
+    let confidence = 0;
+    const reasonCodes: string[] = [];
 
-    return { signal: null };
+    if (rsi < rsiLower) {
+        signal = 'CALL';
+        // Bounce probability: how extreme the RSI + how close to SMA
+        const rsiExtremity = Math.min(1, (rsiLower - rsi) / rsiLower);
+        const proximityScore = 1 - (distanceFromMean / (atrFast * meanDistanceMultiplier));
+        // Calmness: how much below the threshold
+        const calmnessScore = Math.min(1, (atrSlow * calmMultiplier - atrFast) / (atrSlow * calmMultiplier));
+
+        confidence = Math.min(0.9, 0.25 + rsiExtremity * 0.3 + proximityScore * 0.2 + calmnessScore * 0.15);
+        reasonCodes.push(`RSI:${rsi.toFixed(1)}`, `PROX:${proximityScore.toFixed(2)}`, `CALM:${calmnessScore.toFixed(2)}`);
+    } else if (rsi > rsiUpper) {
+        signal = 'PUT';
+        const rsiExtremity = Math.min(1, (rsi - rsiUpper) / (100 - rsiUpper));
+        const proximityScore = 1 - (distanceFromMean / (atrFast * meanDistanceMultiplier));
+        const calmnessScore = Math.min(1, (atrSlow * calmMultiplier - atrFast) / (atrSlow * calmMultiplier));
+
+        confidence = Math.min(0.9, 0.25 + rsiExtremity * 0.3 + proximityScore * 0.2 + calmnessScore * 0.15);
+        reasonCodes.push(`RSI:${rsi.toFixed(1)}`, `PROX:${proximityScore.toFixed(2)}`, `CALM:${calmnessScore.toFixed(2)}`);
+    }
+
+    if (!signal) return { signal: null, confidence: 0 };
+
+    return {
+        signal,
+        confidence,
+        detail: `RSI ${rsi.toFixed(1)} | calm | conf ${confidence.toFixed(2)}`,
+        reasonCodes,
+    };
 }
 
 function evaluateRecoveryLiteStrategy(ctx: StrategyContext, config: StrategyConfig): StrategyEvaluation {
     const rsiPeriod = config.rsiPeriod ?? 14;
-    const lower = config.recoveryRsiLower ?? 32;
-    const upper = config.recoveryRsiUpper ?? 68;
+    const lower = config.recoveryRsiLower ?? 30;
+    const upper = config.recoveryRsiUpper ?? 70;
     const maxLossStreak = config.recoveryMaxLossStreak ?? 4;
     const stepMultiplier = config.recoveryStepMultiplier ?? 0.15;
     const maxSteps = config.recoveryMaxSteps ?? 3;
 
     const rsi = calculateRSI(ctx.prices, rsiPeriod);
-    if (rsi === null) return { signal: null };
-    if (ctx.lossStreak >= maxLossStreak) return { signal: null };
+    if (rsi === null) return { signal: null, confidence: 0 };
+    if (ctx.lossStreak >= maxLossStreak) return { signal: null, confidence: 0, detail: 'Loss streak exceeded' };
+
+    // EMA alignment check
+    const emaFast = calculateEMA(ctx.prices, 9);
+    const emaSlow = calculateEMA(ctx.prices, 21);
+    if (emaFast === null || emaSlow === null) return { signal: null, confidence: 0 };
 
     let signal: TradeSignal | null = null;
-    if (rsi < lower) signal = 'CALL';
-    if (rsi > upper) signal = 'PUT';
-    if (!signal) return { signal: null };
+    let baseConfidence = 0;
+    const reasonCodes: string[] = [];
+
+    if (rsi < lower) {
+        signal = 'CALL';
+        const rsiExtremity = Math.min(1, (lower - rsi) / lower);
+        // EMA alignment bonus
+        const emaAligned = emaFast > emaSlow ? 0.15 : 0;
+        baseConfidence = 0.35 + rsiExtremity * 0.3 + emaAligned;
+        reasonCodes.push(`RSI:${rsi.toFixed(1)}`, `EXT:${rsiExtremity.toFixed(2)}`);
+    } else if (rsi > upper) {
+        signal = 'PUT';
+        const rsiExtremity = Math.min(1, (rsi - upper) / (100 - upper));
+        const emaAligned = emaFast < emaSlow ? 0.15 : 0;
+        baseConfidence = 0.35 + rsiExtremity * 0.3 + emaAligned;
+        reasonCodes.push(`RSI:${rsi.toFixed(1)}`, `EXT:${rsiExtremity.toFixed(2)}`);
+    }
+
+    if (!signal) return { signal: null, confidence: 0 };
+
+    // Loss streak penalty: reduce confidence per consecutive loss
+    const streakPenalty = ctx.lossStreak * 0.08;
+    const confidence = Math.max(0.1, Math.min(0.9, baseConfidence - streakPenalty));
 
     const reduction = ctx.lossStreak > 0 ? Math.min(ctx.lossStreak, maxSteps) * stepMultiplier : 0;
     const multiplier = Math.max(0.5, 1 - reduction);
 
     return {
         signal,
-        detail: `RSI ${rsi.toFixed(1)} | streak ${ctx.lossStreak}`,
+        confidence,
+        detail: `RSI ${rsi.toFixed(1)} | streak ${ctx.lossStreak} | conf ${confidence.toFixed(2)}`,
         stakeMultiplier: multiplier < 1 ? multiplier : undefined,
+        reasonCodes,
     };
 }
 

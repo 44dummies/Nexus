@@ -698,20 +698,23 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
 
     if (!evaluation.signal) return;
 
+    // --- Signal confidence: treat undefined as 0.0 (BLOCK) ---
+    // Every strategy MUST provide a confidence score. If missing, it is blocked.
+    const signalConfidence = typeof evaluation.confidence === 'number' ? evaluation.confidence : 0;
+
     // --- Smart Layer confidence filter ---
-    if (smartCycle && typeof evaluation.confidence === 'number') {
-        // Apply recovery confidence boost (stricter signal filtering during recovery)
+    if (smartCycle) {
         const recoveryBoost = smartCycle.recoveryOverrides?.confidenceBoost ?? 0;
         const effectiveThreshold = smartCycle.decision.params.signalConfidenceThreshold + recoveryBoost;
-        if (evaluation.confidence < effectiveThreshold) {
+        if (signalConfidence < effectiveThreshold) {
             metrics.counter('smartlayer.confidence_filter');
             return;
         }
     }
 
     // --- Recovery precision gate: hard-block low-quality signals during recovery ---
-    if (smartCycle?.recoveryOverrides && typeof evaluation.confidence === 'number') {
-        if (evaluation.confidence < smartCycle.recoveryOverrides.precisionThreshold) {
+    if (smartCycle?.recoveryOverrides) {
+        if (signalConfidence < smartCycle.recoveryOverrides.precisionThreshold) {
             metrics.counter('recovery.precision_gate');
             return;
         }
