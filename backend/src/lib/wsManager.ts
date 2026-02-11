@@ -480,7 +480,8 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
             reject(err);
         }, CONNECTION_TIMEOUT_MS);
 
-        const ws = new WebSocket(`wss://ws.derivws.com/websockets/v3?app_id=${appId}`);
+        const baseUrl = process.env.DERIV_WS_URL || 'wss://ws.binaryws.com/websockets/v3';
+        const ws = new WebSocket(`${baseUrl}?app_id=${appId}`);
         state.ws = ws;
         let opened = false;
 
