@@ -10,6 +10,9 @@ interface PendingSettlement {
 
 const pendingSettlements = new Map<string, Map<number, PendingSettlement>>();
 const registeredAccounts = new Set<string>();
+const lastDisconnectTimes = new Map<string, number>();
+
+import { registerDisconnectListener, unregisterDisconnectListener } from './wsManager';
 
 const RESUBSCRIBE_STALE_MS = Math.max(10_000, Number(process.env.SETTLEMENT_STALE_MS) || 60_000);
 const RESUBSCRIBE_INTERVAL_MS = Math.max(5_000, Number(process.env.SETTLEMENT_RESUBSCRIBE_INTERVAL_MS) || 30_000);
@@ -40,7 +43,16 @@ export function registerPendingSettlement(accountId: string, contractId: number)
     if (!registeredAccounts.has(accountId)) {
         registerConnectionReadyListener(accountId, (accId, isReconnect) => {
             if (!isReconnect) return;
+            const disconnectTime = lastDisconnectTimes.get(accId);
+            if (disconnectTime) {
+                const gapMs = Date.now() - disconnectTime;
+                tradeLogger.warn({ accountId: accId, gapMs }, 'Settlement gap detected - resubscribing pending');
+                lastDisconnectTimes.delete(accId);
+            }
             resubscribePendingSettlements(accId);
+        });
+        registerDisconnectListener(accountId, (accId) => {
+            lastDisconnectTimes.set(accId, Date.now());
         });
         registeredAccounts.add(accountId);
     }

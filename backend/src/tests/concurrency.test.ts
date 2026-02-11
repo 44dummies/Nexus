@@ -22,7 +22,7 @@ import {
 // 1. PARALLEL OPEN → SETTLE CYCLE (no deadlocks)
 // ====================================================
 
-test('concurrent: parallel open+settle cycle maintains zero open count', () => {
+test('concurrent: parallel open+settle cycle maintains zero open count', async () => {
     clearAllRiskCaches();
     initializeRiskCache('para-1', { equity: 10000 });
 
@@ -46,9 +46,12 @@ test('concurrent: parallel open+settle cycle maintains zero open count', () => {
     assert.equal(cache.openExposure, MAX_CONCURRENT * 10);
 
     // Now settle all concurrently (simulate async settlements resolving)
+    // Now settle all concurrently (simulate async settlements resolving)
+    const settlements = [];
     for (let i = 0; i < MAX_CONCURRENT; i++) {
-        recordTradeSettled('para-1', 10, i % 2 === 0 ? 8 : -10); // Alternating win/loss
+        settlements.push(recordTradeSettled('para-1', 10, i % 2 === 0 ? 8 : -10)); // Alternating win/loss
     }
+    await Promise.all(settlements);
 
     assert.equal(cache.openTradeCount, 0);
     assert.equal(cache.openExposure, 0);
@@ -58,14 +61,14 @@ test('concurrent: parallel open+settle cycle maintains zero open count', () => {
 // 2. OPEN TRADE COUNT NEVER GOES NEGATIVE
 // ====================================================
 
-test('concurrent: openTradeCount never goes below zero on excess settlements', () => {
+test('concurrent: openTradeCount never goes below zero on excess settlements', async () => {
     clearAllRiskCaches();
     initializeRiskCache('neg-guard', { equity: 1000 });
 
     recordTradeOpened('neg-guard', 10);
-    recordTradeSettled('neg-guard', 10, 5);
+    await recordTradeSettled('neg-guard', 10, 5);
     // Settle again (double settle — should not go negative)
-    recordTradeSettled('neg-guard', 10, 5);
+    await recordTradeSettled('neg-guard', 10, 5);
 
     const cache = getRiskCache('neg-guard')!
     assert.equal(cache.openTradeCount, 0); // Clamped at 0 via Math.max(0, ...)
@@ -96,7 +99,7 @@ test('concurrent: multiple failed attempt rollbacks do not corrupt state', () =>
 // 4. INTERLEAVED OPEN/SETTLE/FAIL SEQUENCE
 // ====================================================
 
-test('concurrent: interleaved open→fail→open→settle keeps counters correct', () => {
+test('concurrent: interleaved open→fail→open→settle keeps counters correct', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('interleave', { equity: 5000 });
 
@@ -122,14 +125,14 @@ test('concurrent: interleaved open→fail→open→settle keeps counters correct
     assert.equal(entry.openExposure, 35); // 20 + 15
 
     // Trade 2: settles (win)
-    recordTradeSettled('interleave', 20, 15);
+    await recordTradeSettled('interleave', 20, 15);
     assert.equal(entry.openTradeCount, 1);
     assert.equal(entry.openExposure, 15);
     assert.equal(entry.dailyPnL, 15);
     assert.equal(entry.consecutiveWins, 1);
 
     // Trade 3: settles (loss)
-    recordTradeSettled('interleave', 15, -15);
+    await recordTradeSettled('interleave', 15, -15);
     assert.equal(entry.openTradeCount, 0);
     assert.equal(entry.openExposure, 0);
     assert.equal(entry.dailyPnL, 0); // 15 - 15 = 0
@@ -165,7 +168,7 @@ test('concurrent: exactly N trades allowed, N+1 blocked', () => {
 // 6. SETTLEMENT CORRECTLY FREES SLOTS
 // ====================================================
 
-test('concurrent: settling one trade frees slot for next trade', () => {
+test('concurrent: settling one trade frees slot for next trade', async () => {
     clearAllRiskCaches();
     initializeRiskCache('slot-free', { equity: 10000 });
     const LIMIT = 2;
@@ -179,7 +182,7 @@ test('concurrent: settling one trade frees slot for next trade', () => {
     assert.equal(blocked.allowed, false);
 
     // Settle one
-    recordTradeSettled('slot-free', 10, 5);
+    await recordTradeSettled('slot-free', 10, 5);
 
     // Now should be allowed
     const freed = recordTradeOpened('slot-free', 10, LIMIT);
@@ -190,7 +193,7 @@ test('concurrent: settling one trade frees slot for next trade', () => {
 // 7. HIGH-VOLUME SEQUENTIAL TRADES (stress)
 // ====================================================
 
-test('concurrent: 100 sequential open→settle cycles maintain invariants', () => {
+test('concurrent: 100 sequential open→settle cycles maintain invariants', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('stress-100', { equity: 10000 });
     const LIMIT = 5;
@@ -202,7 +205,7 @@ test('concurrent: 100 sequential open→settle cycles maintain invariants', () =
 
         const profit = i % 3 === 0 ? -10 : 8;
         totalProfit += profit;
-        recordTradeSettled('stress-100', 10, profit);
+        await recordTradeSettled('stress-100', 10, profit);
     }
 
     assert.equal(entry.openTradeCount, 0);
@@ -217,23 +220,23 @@ test('concurrent: 100 sequential open→settle cycles maintain invariants', () =
 // 8. EQUITY PEAK TRACKING THROUGH OSCILLATION
 // ====================================================
 
-test('concurrent: equity peak tracks highest point through win/loss cycles', () => {
+test('concurrent: equity peak tracks highest point through win/loss cycles', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('peak-track', { equity: 1000 });
 
     // Win → peak rises
     recordTradeOpened('peak-track', 10);
-    recordTradeSettled('peak-track', 10, 50); // equity = 1050, peak = 1050
+    await recordTradeSettled('peak-track', 10, 50); // equity = 1050, peak = 1050
     assert.equal(entry.equityPeak, 1050);
 
     // Lose → peak unchanged
     recordTradeOpened('peak-track', 10);
-    recordTradeSettled('peak-track', 10, -30); // equity = 1020, peak still 1050
+    await recordTradeSettled('peak-track', 10, -30); // equity = 1020, peak still 1050
     assert.equal(entry.equityPeak, 1050);
 
     // Win bigger → peak rises again
     recordTradeOpened('peak-track', 10);
-    recordTradeSettled('peak-track', 10, 100); // equity = 1120, peak = 1120
+    await recordTradeSettled('peak-track', 10, 100); // equity = 1120, peak = 1120
     assert.equal(entry.equityPeak, 1120);
 });
 
@@ -241,20 +244,20 @@ test('concurrent: equity peak tracks highest point through win/loss cycles', () 
 // 9. LOSS STREAK RESETS ON WIN
 // ====================================================
 
-test('concurrent: loss streak resets to zero on first win', () => {
+test('concurrent: loss streak resets to zero on first win', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('streak-reset', { equity: 5000 });
 
     // 3 losses
     for (let i = 0; i < 3; i++) {
         recordTradeOpened('streak-reset', 10);
-        recordTradeSettled('streak-reset', 10, -10);
+        await recordTradeSettled('streak-reset', 10, -10);
     }
     assert.equal(entry.lossStreak, 3);
 
     // 1 win resets
     recordTradeOpened('streak-reset', 10);
-    recordTradeSettled('streak-reset', 10, 8);
+    await recordTradeSettled('streak-reset', 10, 8);
     assert.equal(entry.lossStreak, 0);
     assert.equal(entry.consecutiveWins, 1);
 });

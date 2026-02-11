@@ -76,6 +76,8 @@ const pnlStates = new Map<string, PnLState>();
 // SSE listeners for PnL stream
 const pnlListeners = new Map<string, Set<Response>>();
 const PNL_HEARTBEAT_MS = 25_000;
+const MAX_SSE_CONNECTIONS = 50;
+let activeSseCount = 0;
 
 // ==================== CORE API ====================
 
@@ -338,7 +340,14 @@ export function subscribePnLStream(accountId: string, res: Response): () => void
         bucket = new Set<Response>();
         pnlListeners.set(accountId, bucket);
     }
+
+    if (activeSseCount >= MAX_SSE_CONNECTIONS) {
+        res.status(503).end('Too many active streams');
+        return () => { };
+    }
+
     bucket.add(res);
+    activeSseCount++;
 
     const heartbeat = setInterval(() => {
         try {
@@ -361,6 +370,7 @@ export function subscribePnLStream(accountId: string, res: Response): () => void
 
     return () => {
         clearInterval(heartbeat);
+        activeSseCount = Math.max(0, activeSseCount - 1);
         const set = pnlListeners.get(accountId);
         if (set) {
             set.delete(res);

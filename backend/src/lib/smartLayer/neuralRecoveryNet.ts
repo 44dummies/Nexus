@@ -25,6 +25,8 @@ import type {
     RecoveryConfig,
 } from './recoveryTypes';
 import { DEFAULT_RECOVERY_PARAMS, DEFAULT_RECOVERY_CONFIG } from './recoveryTypes';
+import { getSupabaseAdmin } from '../supabaseAdmin';
+import { tradeLogger } from '../logger';
 
 // ==================== CONSTANTS ====================
 
@@ -307,6 +309,66 @@ export function getWeights(accountId: string): NeuralWeights | null {
 }
 
 /**
+ * Persist weights to Supabase neural_weights table.
+ * Falling back to log if table missing/error.
+ */
+export async function persistWeights(accountId: string): Promise<void> {
+    const weights = getWeights(accountId);
+    if (!weights) return;
+
+    const { client } = getSupabaseAdmin();
+    if (!client) return;
+
+    try {
+        const { error } = await client
+            .from('neural_weights')
+            .upsert({
+                account_id: accountId,
+                weights: weights,
+                updated_at: new Date().toISOString(),
+            }, { onConflict: 'account_id' });
+
+        if (error) {
+            tradeLogger.warn({ accountId, error }, 'Failed to persist neural weights');
+        }
+    } catch (err) {
+        tradeLogger.error({ accountId, err }, 'Exception persisting neural weights');
+    }
+}
+
+/**
+ * Load all weights from Supabase on startup.
+ */
+export async function hydrateAllNetworks(): Promise<void> {
+    const { client } = getSupabaseAdmin();
+    if (!client) return;
+
+    try {
+        const { data, error } = await client
+            .from('neural_weights')
+            .select('account_id, weights');
+
+        if (error) {
+            tradeLogger.warn({ error }, 'Failed to hydrate neural weights');
+            return;
+        }
+
+        if (data) {
+            let loaded = 0;
+            for (const row of data) {
+                if (row.account_id && row.weights) {
+                    loadWeights(row.account_id, row.weights as NeuralWeights);
+                    loaded++;
+                }
+            }
+            tradeLogger.info({ loaded }, 'Hydrated neural recovery networks');
+        }
+    } catch (err) {
+        tradeLogger.error({ err }, 'Exception hydrating neural weights');
+    }
+}
+
+/**
  * Predict optimal recovery parameters given current features.
  * Returns safe defaults if network is untrained (< MIN_TRAINING_EPISODES).
  */
@@ -376,6 +438,11 @@ export function train(
 
     weights.iterations += 1;
     weights.lastTrainedAt = Date.now();
+
+    // Persist async (fire and forget)
+    persistWeights(accountId).catch(err => {
+        tradeLogger.error({ accountId, err }, 'Failed to persist weights after training');
+    });
 
     return { loss, iterations: weights.iterations };
 }

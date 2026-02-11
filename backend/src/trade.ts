@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { ExecuteTradeParamsSchema, TradeSignalSchema, type ExecuteTradeParams } from './lib/validation';
-import { getOrCreateConnection, sendMessage, cleanupConnection, registerStreamingListener, unregisterStreamingListener } from './lib/wsManager';
+import { getOrCreateConnection, sendMessage, cleanupConnection, registerStreamingListener, unregisterStreamingListener, closeAllConnections } from './lib/wsManager';
 import { recordTradeSettled, recordTradeFailedAttempt } from './lib/riskCache';
 import { tradeLogger } from './lib/logger';
 import { registerPendingSettlement, clearPendingSettlement, recordSettlementUpdate } from './lib/settlementSubscriptions';
@@ -14,6 +14,7 @@ import type { TradeRiskConfig } from './lib/riskConfig';
 import { finalizeOpenContract, trackOpenContract } from './lib/openContracts';
 import { recordSettledPnL, trackOpenPosition, markPosition } from './lib/pnlTracker';
 import { checkExecutionCircuit, recordExecutionSuccess, recordExecutionFailure } from './lib/executionCircuitBreaker';
+import { recordOutcome } from './lib/rollingPerformanceTracker';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 interface DerivResponse {
@@ -47,14 +48,14 @@ async function withSettlementLock<T>(key: string, fn: () => T | Promise<T>): Pro
     while (settlementLocks.has(key)) {
         await settlementLocks.get(key);
     }
-    
+
     // Create our lock
     let releaseLock: () => void;
     const lock = new Promise<void>(resolve => {
         releaseLock = resolve;
     });
     settlementLocks.set(key, lock);
-    
+
     try {
         return await fn();
     } finally {
@@ -99,9 +100,9 @@ function getFinalizationState(accountId: string, contractId: number): ContractFi
     return state;
 }
 
-function recordTradeSettledOnce(accountId: string, contractId: number, stake: number, profit: number): boolean {
+async function recordTradeSettledOnce(accountId: string, contractId: number, stake: number, profit: number): Promise<boolean> {
     if (!Number.isFinite(contractId)) {
-        recordTradeSettled(accountId, stake, profit);
+        await recordTradeSettled(accountId, stake, profit);
         return true;
     }
     const state = getFinalizationState(accountId, contractId);
@@ -114,7 +115,7 @@ function recordTradeSettledOnce(accountId: string, contractId: number, stake: nu
     const skipExposure = state.exposureClosed;
     state.exposureClosed = true;
 
-    recordTradeSettled(accountId, stake, profit, { skipExposure });
+    await recordTradeSettled(accountId, stake, profit, { skipExposure });
 
     if (contractFinalizations.size > MAX_SETTLED_CONTRACTS) {
         pruneContractFinalizations(state.timestamp);
@@ -286,6 +287,9 @@ export async function executeTradeServerFast(
         stake,
         botRunId: params.botRunId ?? null,
         riskOverrides,
+        strategy: params.strategy,
+        regime: params.regime,
+        symbol: params.symbol,
     }, latencyTrace);
     stake = gate.stake;
 
@@ -589,7 +593,7 @@ async function handleSettlement(
             return;
         }
 
-        if (!recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit)) {
+        if (!await recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit)) {
             return;
         }
 
@@ -603,6 +607,16 @@ async function handleSettlement(
             payout: contract.payout ?? undefined,
             stake,
         });
+
+        // Record outcome for rolling EV tracking
+        if (params.strategy && params.symbol) {
+            recordOutcome(
+                `${params.strategy}:${params.regime ?? 'UNKNOWN'}:${params.symbol}`,
+                contract.profit,
+                stake,
+                contract.payout ?? 0
+            );
+        }
 
         // Persist trade to database (queued) — now includes direction, buyPrice, payout
         persistTrade({
@@ -651,6 +665,14 @@ async function handleSettlement(
 
         markContractFinalized(accountId, contract.contract_id);
     });
+}
+
+export async function initiateGracefulShutdown(): Promise<void> {
+    tradeLogger.info('Initiating graceful shutdown of trade engine...');
+    // Close all connections to stop new trades/updates
+    closeAllConnections();
+    // Allow meaningful time for closing frames to send
+    await new Promise(resolve => setTimeout(resolve, 500));
 }
 
 export const __test = {

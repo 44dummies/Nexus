@@ -27,6 +27,7 @@ import { getHealthSnapshot, setComponentStatus } from './lib/healthStatus';
 import { initResourceMonitor } from './lib/resourceMonitor';
 import { printConfigDoctorReport, runConfigDoctor, waitForSupabaseReady } from './lib/configDoctor';
 import { initRecoveryManager } from './lib/recoveryManager';
+import { initiateGracefulShutdown } from './trade';
 
 const app = express();
 initMetrics();
@@ -262,6 +263,22 @@ async function startServer() {
         }
         process.exit(1);
     });
+
+    const shutdown = async (signal: string) => {
+        logger.info({ signal }, 'Signal received — initiating graceful shutdown');
+        await initiateGracefulShutdown();
+        server.close(() => {
+            logger.info('HTTP server closed');
+            process.exit(0);
+        });
+        setTimeout(() => {
+            logger.error('Shutdown timed out — forcing exit');
+            process.exit(1);
+        }, 30000).unref();
+    };
+
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 startServer().catch((error) => {

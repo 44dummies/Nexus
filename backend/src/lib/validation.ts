@@ -17,6 +17,8 @@ export const ExecuteTradeParamsSchema = z.object({
     // Allow payload fields that might be present in req.body
     signal: TradeSignalSchema.optional(),
     useFast: z.boolean().optional(),
+    strategy: z.string().optional(),
+    regime: z.string().optional(),
 }).strict();
 
 export type TradeSignal = z.infer<typeof TradeSignalSchema>;

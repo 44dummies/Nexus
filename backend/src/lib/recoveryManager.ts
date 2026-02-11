@@ -43,7 +43,14 @@ function evaluateRecovery(): void {
     }
 }
 
+import { hydrateAllNetworks } from './smartLayer/neuralRecoveryNet';
+
 export function initRecoveryManager(): void {
+    // Load persisted weights
+    hydrateAllNetworks().catch(err => {
+        logger.error({ err }, 'Failed to hydrate neural networks');
+    });
+
     const recoveryTimer = setInterval(() => {
         evaluateRecovery();
     }, RECOVERY_INTERVAL_MS);

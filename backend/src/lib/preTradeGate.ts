@@ -5,12 +5,19 @@ import { getRiskConfigCached } from './riskConfigCache';
 import { nowMs, recordLatency, LATENCY_METRICS, type LatencyTrace, markTrace } from './latencyTracker';
 import { riskLogger } from './logger';
 import { metrics } from './metrics';
+import { isStrategyViable } from './rollingPerformanceTracker';
 
 export interface PreTradeGateContext {
     accountId: string;
     stake: number;
     botRunId?: string | null;
     riskOverrides?: Partial<TradeRiskConfig>;
+    /** Strategy ID for EV gate lookup */
+    strategy?: string | null;
+    /** Current regime for EV gate lookup */
+    regime?: string | null;
+    /** Symbol being traded for EV gate lookup */
+    symbol?: string | null;
 }
 
 export interface PreTradeGateResult {
@@ -107,6 +114,14 @@ export function evaluatePreTradeGate(
 
     if (riskStatus.status === 'COOLDOWN') {
         reasons.push(riskStatus.reason === 'LOSS_STREAK' ? 'LOSS_COOLDOWN' : 'TRADE_COOLDOWN');
+    }
+
+    // EV Gate: block strategies with negative expected value
+    if (ctx.strategy && ctx.symbol) {
+        const evKey = `${ctx.strategy}:${ctx.regime ?? 'UNKNOWN'}:${ctx.symbol}`;
+        if (!isStrategyViable(evKey)) {
+            reasons.push('NEGATIVE_EV');
+        }
     }
 
     let stake = ctx.stake;

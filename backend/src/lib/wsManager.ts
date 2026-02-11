@@ -262,6 +262,40 @@ function notifyConnectionReady(accountId: string, isReconnect: boolean) {
     }
 }
 
+type DisconnectListener = (accountId: string) => void;
+const disconnectListeners = new Map<string, Set<DisconnectListener>>();
+
+export function registerDisconnectListener(accountId: string, listener: DisconnectListener) {
+    let listeners = disconnectListeners.get(accountId);
+    if (!listeners) {
+        listeners = new Set();
+        disconnectListeners.set(accountId, listeners);
+    }
+    listeners.add(listener);
+}
+
+export function unregisterDisconnectListener(accountId: string, listener: DisconnectListener) {
+    const listeners = disconnectListeners.get(accountId);
+    if (listeners) {
+        listeners.delete(listener);
+        if (listeners.size === 0) {
+            disconnectListeners.delete(accountId);
+        }
+    }
+}
+
+function notifyDisconnect(accountId: string) {
+    const listeners = disconnectListeners.get(accountId);
+    if (!listeners) return;
+    for (const listener of listeners) {
+        try {
+            listener(accountId);
+        } catch (error) {
+            wsLogger.error({ accountId, error }, 'Disconnect listener error');
+        }
+    }
+}
+
 async function connectAndAuthorize(state: WSConnectionState, appId: string, isReconnect: boolean): Promise<void> {
     if (state.connecting) {
         return state.connecting;
@@ -489,6 +523,7 @@ function connect(state: WSConnectionState, appId: string): Promise<void> {
                 context: { code, reason: closeReason },
             }));
             setComponentStatus('ws', 'degraded', `closed:${code}`);
+            notifyDisconnect(state.accountId);
 
             if (intentional) {
                 return;
@@ -985,5 +1020,22 @@ export function clearConnectionStateForTest(accountId?: string): void {
         connectionPool.delete(accountId);
     } else {
         connectionPool.clear();
+    }
+}
+
+/**
+ * Close all active connections (graceful shutdown)
+ */
+export function closeAllConnections(): void {
+    wsLogger.info('Closing all WebSocket connections...');
+    for (const [accountId, state] of connectionPool.entries()) {
+        if (state.ws) {
+            try {
+                state.ws.close();
+            } catch {
+                // Ignore
+            }
+        }
+        cleanupConnection(accountId);
     }
 }

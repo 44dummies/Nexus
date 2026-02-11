@@ -34,6 +34,19 @@ const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const RISK_STATE_KEY = 'risk_state';
 const PERSIST_DEBOUNCE_MS = 1000;
 
+// Mutex for serializing settlement updates per account
+const settlementMutexes = new Map<string, Promise<void>>();
+
+async function withAccountMutex(accountId: string, fn: () => void | Promise<void>): Promise<void> {
+    const prev = settlementMutexes.get(accountId) ?? Promise.resolve();
+    // Chain onto previous promise, catch errors to prevent breaks
+    const current = prev.then(fn).catch((err) => {
+        riskLogger.error({ err, accountId }, 'Risk mutex execution failed');
+    });
+    settlementMutexes.set(accountId, current);
+    await current;
+}
+
 interface PersistedRiskState {
     date?: string;
     dailyStartEquity?: number;
@@ -318,46 +331,48 @@ export function recordTradeOpened(
 /**
  * Record a trade settlement (updates PnL and removes from open exposure)
  */
-export function recordTradeSettled(
+export async function recordTradeSettled(
     accountId: string,
     stake: number,
     profit: number,
     options?: { skipExposure?: boolean }
-): void {
-    const entry = riskCache.get(accountId);
+): Promise<void> {
+    await withAccountMutex(accountId, async () => {
+        const entry = riskCache.get(accountId);
 
-    if (!entry) {
-        return;
-    }
+        if (!entry) {
+            return;
+        }
 
-    if (!options?.skipExposure) {
-        // Update open exposure
-        entry.openTradeCount = Math.max(0, entry.openTradeCount - 1);
-        entry.openExposure = Math.max(0, entry.openExposure - stake);
-    }
+        if (!options?.skipExposure) {
+            // Update open exposure
+            entry.openTradeCount = Math.max(0, entry.openTradeCount - 1);
+            entry.openExposure = Math.max(0, entry.openExposure - stake);
+        }
 
-    // Update PnL
-    entry.dailyPnL += profit;
-    entry.equity += profit;
+        // Update PnL
+        entry.dailyPnL += profit;
+        entry.equity += profit;
 
-    if (profit < 0) {
-        entry.totalLossToday += Math.abs(profit);
-        entry.lossStreak += 1;
-        entry.consecutiveWins = 0;
-        entry.lastLossTime = Date.now();
-    } else {
-        entry.totalProfitToday += profit;
-        entry.consecutiveWins += 1;
-        entry.lossStreak = 0;
-    }
+        if (profit < 0) {
+            entry.totalLossToday += Math.abs(profit);
+            entry.lossStreak += 1;
+            entry.consecutiveWins = 0;
+            entry.lastLossTime = Date.now();
+        } else {
+            entry.totalProfitToday += profit;
+            entry.consecutiveWins += 1;
+            entry.lossStreak = 0;
+        }
 
-    // Update equity peak
-    if (entry.equity > entry.equityPeak) {
-        entry.equityPeak = entry.equity;
-    }
+        // Update equity peak
+        if (entry.equity > entry.equityPeak) {
+            entry.equityPeak = entry.equity;
+        }
 
-    entry.lastUpdated = Date.now();
-    schedulePersist(accountId, entry);
+        entry.lastUpdated = Date.now();
+        schedulePersist(accountId, entry);
+    });
 }
 
 /**
@@ -424,6 +439,7 @@ export function evaluateCachedRisk(
         lossCooldownMs?: number;
         maxConcurrentTrades?: number;
         stopLoss?: number;
+        maxExposure?: number;
     }
 ): {
     status: 'OK' | 'COOLDOWN' | 'HALT' | 'REDUCE_STAKE' | 'MAX_CONCURRENT';
@@ -442,6 +458,17 @@ export function evaluateCachedRisk(
     }
 
     const now = Date.now();
+
+    // Check projected exposure (open + proposed)
+    if (params.maxExposure && params.maxExposure > 0) {
+        const projectedExposure = entry.openExposure + params.proposedStake;
+        if (projectedExposure > params.maxExposure) {
+            return {
+                status: 'HALT',
+                reason: 'PROJECTED_EXPOSURE',
+            };
+        }
+    }
 
 
     // Check concurrent trade limit

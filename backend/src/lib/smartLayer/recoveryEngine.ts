@@ -182,6 +182,16 @@ export function onTradeSettled(
         const lossAmount = Math.abs(profit);
 
         if (state.mode === 'IDLE' || state.mode === 'GRADUATED') {
+            // Check if initial loss is too large for recovery
+            const deficitPct = context.equity > 0
+                ? (lossAmount / context.equity) * 100
+                : 100;
+
+            if (deficitPct > config.maxDeficitPct) {
+                // Too large to recover safely — skip recovery
+                return failRecovery(state, context, config);
+            }
+
             // Not in recovery — enter recovery mode
             state.mode = 'RECOVERING';
             state.deficit = lossAmount;

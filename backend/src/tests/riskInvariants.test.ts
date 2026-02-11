@@ -242,7 +242,7 @@ test('kill switch: auto-clear for non-manual triggers after TTL', () => {
 // 9. RISK CACHE: Settlement Accounting
 // ====================================================
 
-test('recordTradeSettled: updates equity, PnL, and streaks on loss', () => {
+test('recordTradeSettled: updates equity, PnL, and streaks on loss', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('settle-loss', { equity: 1000 });
 
@@ -250,7 +250,7 @@ test('recordTradeSettled: updates equity, PnL, and streaks on loss', () => {
     assert.equal(entry.openTradeCount, 1);
     assert.equal(entry.openExposure, 10);
 
-    recordTradeSettled('settle-loss', 10, -10); // Lost the stake
+    await recordTradeSettled('settle-loss', 10, -10); // Lost the stake
     assert.equal(entry.openTradeCount, 0);
     assert.equal(entry.openExposure, 0);
     assert.equal(entry.equity, 990);
@@ -260,12 +260,12 @@ test('recordTradeSettled: updates equity, PnL, and streaks on loss', () => {
     assert.equal(entry.consecutiveWins, 0);
 });
 
-test('recordTradeSettled: updates equity, PnL, and streaks on win', () => {
+test('recordTradeSettled: updates equity, PnL, and streaks on win', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('settle-win', { equity: 1000 });
 
     recordTradeOpened('settle-win', 10);
-    recordTradeSettled('settle-win', 10, 8.5); // Won 8.5 profit
+    await recordTradeSettled('settle-win', 10, 8.5); // Won 8.5 profit
 
     assert.equal(entry.openTradeCount, 0);
     assert.equal(entry.equity, 1008.5);
@@ -275,25 +275,25 @@ test('recordTradeSettled: updates equity, PnL, and streaks on win', () => {
     assert.equal(entry.lossStreak, 0);
 });
 
-test('recordTradeSettled: equity peak updates on new high', () => {
+test('recordTradeSettled: equity peak updates on new high', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('settle-peak', { equity: 1000 });
     assert.equal(entry.equityPeak, 1000);
 
     recordTradeOpened('settle-peak', 10);
-    recordTradeSettled('settle-peak', 10, 50); // Won big
+    await recordTradeSettled('settle-peak', 10, 50); // Won big
 
     assert.equal(entry.equity, 1050);
     assert.equal(entry.equityPeak, 1050); // Peak should update
 });
 
-test('recordTradeSettled: equity peak does NOT update on loss', () => {
+test('recordTradeSettled: equity peak does NOT update on loss', async () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('settle-nopeak', { equity: 1000 });
     entry.equityPeak = 1100;
 
     recordTradeOpened('settle-nopeak', 10);
-    recordTradeSettled('settle-nopeak', 10, -10);
+    await recordTradeSettled('settle-nopeak', 10, -10);
 
     assert.equal(entry.equity, 990);
     assert.equal(entry.equityPeak, 1100); // Peak unchanged
@@ -439,7 +439,7 @@ test('evaluatePreTradeGate: returns original stake when within limits', () => {
 // 15. LOSS STREAK → DAILY LOSS ESCALATION
 // ====================================================
 
-test('sequential losses trigger HALT via daily loss accumulation', () => {
+test('sequential losses trigger HALT via daily loss accumulation', async () => {
     clearAllRiskCaches();
     clearKillSwitch('escalate');
     const entry = initializeRiskCache('escalate', { equity: 1000 });
@@ -447,7 +447,7 @@ test('sequential losses trigger HALT via daily loss accumulation', () => {
     // Simulate 4 losses of $5 each = $20 = 2% of 1000
     for (let i = 0; i < 4; i++) {
         recordTradeOpened('escalate', 5);
-        recordTradeSettled('escalate', 5, -5);
+        await recordTradeSettled('escalate', 5, -5);
     }
 
     assert.equal(entry.totalLossToday, 20);
