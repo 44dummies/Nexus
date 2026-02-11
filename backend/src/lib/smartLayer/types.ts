@@ -14,6 +14,7 @@
 
 import type { TradeSignal, StrategyConfig, StrategyEvaluation } from '../strategyEngine';
 import type { PriceSeries } from '../ringBuffer';
+import type { RecoveryMode, RecoveryParams } from './recoveryTypes';
 
 // ==================== FEATURE SNAPSHOT ====================
 
@@ -225,6 +226,10 @@ export interface ExecutionCycleOutput {
     gated: boolean;
     gateReason?: string;
     correlationId: string;
+    /** Current recovery mode for this account */
+    recoveryMode: RecoveryMode;
+    /** Recovery parameter overrides (null when not recovering) */
+    recoveryOverrides: RecoveryParams | null;
 }
 
 // ==================== TELEMETRY ====================
@@ -239,6 +244,14 @@ export interface BotTelemetry {
     lastTradeTimeMs: number | null;
     consecutiveLosses: number;
     consecutiveWins: number;
+    /** Current recovery mode */
+    recoveryMode?: RecoveryMode;
+    /** Deficit remaining in recovery */
+    recoveryDeficit?: number;
+    /** Amount recovered in current episode */
+    recoveryRecovered?: number;
+    /** Total recovery episodes (success + failed) */
+    recoveryEpisodes?: number;
 }
 
 // ==================== PNL ====================

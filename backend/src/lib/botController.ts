@@ -110,7 +110,7 @@ export async function reconcileBotRunsOnStartup(): Promise<void> {
         botLogger.warn('Supabase not configured - skipping bot run reconciliation');
         return;
     }
-    
+
     try {
         const now = new Date().toISOString();
         const { data, error } = await withSupabaseRetry('bot_runs.reconcile', async (client) => await client
@@ -122,12 +122,12 @@ export async function reconcileBotRunsOnStartup(): Promise<void> {
             .eq('backend_mode', true)
             .eq('run_status', 'running')
             .select('id'));
-        
+
         if (error) {
             botLogger.error({ error }, 'Failed to reconcile stale bot runs');
             return;
         }
-        
+
         const count = data?.length ?? 0;
         if (count > 0) {
             const ids = Array.isArray(data) ? data.map((d: { id: string }) => d.id) : [];
@@ -394,6 +394,35 @@ export async function startBotRun(
     // Register profit attribution callback so settlements update totalProfit
     registerProfitCallback(botRunId, (contractId, profit) => {
         botRun.totalProfit += profit;
+
+        // Feed settlement into recovery engine
+        const riskEntryForRecovery = getRiskCache(accountId);
+        SmartLayer.onSettlement(accountId, profit, config.stake, {
+            equity: riskEntryForRecovery?.equity ?? 0,
+            lossStreak: riskEntryForRecovery?.lossStreak ?? 0,
+            recentWinRate: (() => {
+                const tel = SmartLayer.getTelemetry(accountId);
+                return tel?.winRate ?? 0;
+            })(),
+            regimeConfidence: SmartLayer.getInstance().getRegimeState(accountId, config.symbol)?.confidence ?? 0,
+            volatilityRatio: null, // Not available in settlement context
+            lastWinTimeMs: profit >= 0 ? Date.now() : null,
+            drawdownPct: riskEntryForRecovery
+                ? Math.max(0, (riskEntryForRecovery.equityPeak - riskEntryForRecovery.equity) / Math.max(1, riskEntryForRecovery.equityPeak))
+                : 0,
+        });
+
+        // Update recovery telemetry
+        const recoverySnap = SmartLayer.getRecoverySnapshot(accountId);
+        if (recoverySnap) {
+            SmartLayer.updateTelemetry(accountId, {
+                recoveryMode: recoverySnap.mode,
+                recoveryDeficit: recoverySnap.deficit,
+                recoveryRecovered: recoverySnap.recovered,
+                recoveryEpisodes: recoverySnap.failedEpisodes + recoverySnap.successfulEpisodes,
+            });
+        }
+
         botEvents.emit('event', {
             type: 'log',
             botRunId,
@@ -592,6 +621,8 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
                     cooldownMs: smartCycle.decision.params.cooldownMs,
                     maxConcurrent: smartCycle.decision.params.maxConcurrentTrades,
                     confidenceThreshold: smartCycle.decision.params.signalConfidenceThreshold,
+                    recoveryMode: smartCycle.recoveryMode,
+                    recoveryOverrides: smartCycle.recoveryOverrides,
                 },
             });
         } catch (error) {
@@ -618,6 +649,7 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     }
 
     // --- Cooldown: use Smart Layer's dynamic cooldown or config's static cooldown ---
+    // Recovery does NOT manipulate cooldown — trade at full speed
     const effectiveCooldownMs = smartCycle?.decision.params.cooldownMs ?? config.cooldownMs;
     const now = Date.now();
     if (botRun.lastTradeAt && now - botRun.lastTradeAt < effectiveCooldownMs) {
@@ -668,8 +700,19 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
 
     // --- Smart Layer confidence filter ---
     if (smartCycle && typeof evaluation.confidence === 'number') {
-        if (evaluation.confidence < smartCycle.decision.params.signalConfidenceThreshold) {
+        // Apply recovery confidence boost (stricter signal filtering during recovery)
+        const recoveryBoost = smartCycle.recoveryOverrides?.confidenceBoost ?? 0;
+        const effectiveThreshold = smartCycle.decision.params.signalConfidenceThreshold + recoveryBoost;
+        if (evaluation.confidence < effectiveThreshold) {
             metrics.counter('smartlayer.confidence_filter');
+            return;
+        }
+    }
+
+    // --- Recovery precision gate: hard-block low-quality signals during recovery ---
+    if (smartCycle?.recoveryOverrides && typeof evaluation.confidence === 'number') {
+        if (evaluation.confidence < smartCycle.recoveryOverrides.precisionThreshold) {
+            metrics.counter('recovery.precision_gate');
             return;
         }
     }
@@ -679,6 +722,10 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     let stake = config.stake;
     if (evaluation.stakeMultiplier) {
         stake = Math.max(0.35, stake * evaluation.stakeMultiplier);
+    }
+    // Apply recovery stake multiplier (anti-martingale scaling during recovery)
+    if (smartCycle?.recoveryOverrides) {
+        stake = Math.max(0.35, stake * smartCycle.recoveryOverrides.stakeMultiplier);
     }
 
     let gateResult: { stake: number; risk: TradeRiskConfig } | undefined;

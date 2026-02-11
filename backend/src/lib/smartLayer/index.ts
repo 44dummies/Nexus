@@ -52,6 +52,17 @@ import {
     type AdapterConfig,
     DEFAULT_ADAPTER_CONFIG,
 } from './adapterStrategy';
+import {
+    onTradeSettled as recoveryOnSettled,
+    getRecoveryOverrides,
+    getRecoveryState,
+    getRecoverySnapshot,
+    isRecoveryActive,
+    resetRecoveryState,
+    resetAllRecoveryStates,
+} from './recoveryEngine';
+import { resetAllNetworks } from './neuralRecoveryNet';
+import type { RecoveryMode, RecoveryParams } from './recoveryTypes';
 
 // Re-export everything for convenience
 export type {
@@ -73,6 +84,9 @@ export type {
     AdapterRegime,
     AdapterSubStrategy,
     AdapterConfig,
+    // Recovery types
+    RecoveryMode,
+    RecoveryParams,
 };
 
 export {
@@ -95,6 +109,11 @@ export {
     resetAdapterState,
     resetAllAdapterState,
     DEFAULT_ADAPTER_CONFIG,
+    // Recovery exports
+    getRecoveryOverrides,
+    getRecoveryState,
+    getRecoverySnapshot,
+    isRecoveryActive,
 };
 
 // ==================== TELEMETRY STORE ====================
@@ -141,6 +160,8 @@ export class SmartLayer {
         switchEvent: StrategySwitchEvent | null;
         gated: boolean;
         gateReason?: string;
+        recoveryMode: RecoveryMode;
+        recoveryOverrides: RecoveryParams | null;
     } {
         const { accountId, symbol, prices, tick, microContext } = input;
 
@@ -169,6 +190,24 @@ export class SmartLayer {
             ? decision.reasonCodes.find(r => r.param === 'riskGate')?.reason
             : undefined;
 
+        // 7. Get recovery state
+        const recoveryState = getRecoveryState(accountId);
+        const recoveryMode: RecoveryMode = recoveryState?.mode ?? 'IDLE';
+
+        // 8. Get recovery overrides if in RECOVERING mode
+        let recoveryOverrides: RecoveryParams | null = null;
+        if (recoveryMode === 'RECOVERING') {
+            recoveryOverrides = getRecoveryOverrides(accountId, {
+                equity: 0, // Will be overridden by botController with actual equity
+                lossStreak: input.lossStreak,
+                recentWinRate: telemetry?.winRate ?? 0,
+                regimeConfidence: regime.confidence,
+                volatilityRatio: features.volatilityRatio,
+                lastWinTimeMs: null,
+                drawdownPct: 0,
+            });
+        }
+
         return {
             features,
             regime,
@@ -178,6 +217,8 @@ export class SmartLayer {
             switchEvent,
             gated,
             gateReason,
+            recoveryMode,
+            recoveryOverrides,
         };
     }
 
@@ -255,6 +296,36 @@ export class SmartLayer {
         return getRegimeState(accountId, symbol);
     }
 
+    // ==================== RECOVERY ====================
+
+    /**
+     * Called after each trade settlement to update recovery state.
+     * This is the bridge between botController and the recovery engine.
+     */
+    static onSettlement(
+        accountId: string,
+        profit: number,
+        stake: number,
+        context: {
+            equity: number;
+            lossStreak: number;
+            recentWinRate: number;
+            regimeConfidence: number;
+            volatilityRatio: number | null;
+            lastWinTimeMs: number | null;
+            drawdownPct: number;
+        },
+    ): { previousMode: RecoveryMode; currentMode: RecoveryMode; transition: string } {
+        return recoveryOnSettled(accountId, profit, stake, context);
+    }
+
+    /**
+     * Get recovery snapshot for an account (for telemetry/SSE).
+     */
+    static getRecoverySnapshot(accountId: string) {
+        return getRecoverySnapshot(accountId);
+    }
+
     // ==================== TEST SUPPORT ====================
 
     /** Full reset for tests */
@@ -264,5 +335,7 @@ export class SmartLayer {
         resetAllRegimeState();
         resetAllAutoMode();
         resetAllAdapterState();
+        resetAllRecoveryStates();
+        resetAllNetworks();
     }
 }
