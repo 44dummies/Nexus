@@ -2,7 +2,7 @@
  * Order Intent Store — Idempotency Guard
  *
  * Prevents duplicate orders on retry/reconnect by tracking order intents
- * keyed by accountId:symbol:correlationId.
+ * keyed by accountId:correlationId.
  *
  * Uses LRU+TTL eviction to bound memory usage.
  *
@@ -53,8 +53,9 @@ class OrderIntentStore {
         }
     }
 
-    private makeKey(accountId: string, symbol: string, correlationId: string): string {
-        return `${accountId}:${symbol}:${correlationId}`;
+    private makeKey(accountId: string, _symbol: string, correlationId: string): string {
+        // Strict idempotency is scoped per account + correlationId.
+        return `${accountId}:${correlationId}`;
     }
 
     /**

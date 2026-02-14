@@ -1,4 +1,4 @@
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 
 export function parseLimitParam(value: string | undefined, defaultLimit: number, maxLimit: number) {
     const parsed = Number(value);
@@ -53,6 +53,25 @@ export function buildStateCookieOptions() {
  */
 export function getValidatedAccountId(req: Request): string | null {
     return req.auth?.accountId ?? null;
+}
+
+export function enforceAccountScope(
+    req: Request,
+    res: Response,
+    routeAccountId: string
+): routeAccountId is string {
+    const authAccountId = req.auth?.accountId;
+    if (!authAccountId) {
+        res.status(401).json({ error: 'User not authenticated' });
+        return false;
+    }
+
+    if (routeAccountId !== authAccountId) {
+        res.status(403).json({ error: 'Forbidden', code: 'ACCOUNT_SCOPE_MISMATCH' });
+        return false;
+    }
+
+    return true;
 }
 
 export function buildClearCookieOptions() {

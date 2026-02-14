@@ -55,10 +55,10 @@ create table if not exists trades (
     bot_run_id uuid,
     entry_profile_id text,
     contract_id bigint,
-    symbol text not null default 'UNKNOWN',
+    symbol text,
     stake numeric,
     duration integer,
-    duration_unit text not null default 't',
+    duration_unit text,
     profit numeric,
     buy_price numeric,
     payout numeric,
@@ -78,6 +78,23 @@ create table if not exists order_status (
     latency_ms integer,
     payload jsonb,
     created_at timestamptz default now()
+);
+
+create table if not exists execution_ledger (
+    id uuid primary key default gen_random_uuid(),
+    correlation_id text not null,
+    account_id text not null,
+    symbol text not null,
+    state text not null check (state in ('PENDING', 'SETTLED', 'FAILED')),
+    pnl numeric not null default 0,
+    fees numeric not null default 0,
+    timestamp_ms bigint not null,
+    contract_id bigint not null,
+    metadata jsonb,
+    last_error text,
+    created_at timestamptz default now(),
+    updated_at timestamptz default now(),
+    unique (account_id, correlation_id)
 );
 
 create table if not exists notifications (
@@ -116,5 +133,7 @@ create index if not exists idx_trades_account_id on trades (account_id);
 create index if not exists idx_trades_contract_id on trades (contract_id);
 create index if not exists idx_order_status_account_id on order_status (account_id);
 create index if not exists idx_order_status_contract_id on order_status (contract_id);
+create index if not exists idx_execution_ledger_state on execution_ledger (state);
+create index if not exists idx_execution_ledger_account_contract on execution_ledger (account_id, contract_id);
 create index if not exists idx_notifications_account_id on notifications (account_id);
 create index if not exists idx_risk_events_account_id on risk_events (account_id);

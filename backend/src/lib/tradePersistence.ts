@@ -5,7 +5,6 @@ import { metrics } from './metrics';
 import { tradeLogger } from './logger';
 import { writePersistenceFallback } from './persistenceFallback';
 import { attributeSettledProfit } from './botProfitAttribution';
-import { audit } from './auditLogger';
 
 
 export async function persistTrade(payload: {
@@ -26,13 +25,6 @@ export async function persistTrade(payload: {
     status: string;
     createdAt?: string | null;
 }) {
-    const normalizedSymbol = typeof payload.symbol === 'string' && payload.symbol.trim().length > 0
-        ? payload.symbol
-        : 'UNKNOWN';
-    const normalizedDurationUnit = typeof payload.durationUnit === 'string' && payload.durationUnit.trim().length > 0
-        ? payload.durationUnit
-        : 't';
-
     return persistenceQueue.enqueue(async () => {
         try {
             const { data, error } = await withSupabaseRetry('trades.insert', async (client) => await client.from('trades').insert({
@@ -42,10 +34,10 @@ export async function persistTrade(payload: {
                 bot_run_id: payload.botRunId ?? null,
                 entry_profile_id: payload.entryProfileId ?? null,
                 contract_id: payload.contractId,
-                symbol: normalizedSymbol,
+                symbol: payload.symbol ?? null,
                 stake: payload.stake ?? null,
                 duration: payload.duration ?? null,
-                duration_unit: normalizedDurationUnit,
+                duration_unit: payload.durationUnit ?? null,
                 profit: payload.profit,
                 buy_price: payload.buyPrice ?? null,
                 payout: payload.payout ?? null,
@@ -62,7 +54,7 @@ export async function persistTrade(payload: {
                 id: data?.id ?? null,
                 contractId: payload.contractId,
                 profit: payload.profit,
-                symbol: normalizedSymbol,
+                symbol: payload.symbol ?? null,
                 buyPrice: payload.buyPrice ?? null,
                 payout: payload.payout ?? null,
                 direction: payload.direction ?? null,
@@ -74,24 +66,6 @@ export async function persistTrade(payload: {
             attributeSettledProfit(payload.contractId, payload.profit);
 
             metrics.counter('persistence.trade_ok');
-
-            // Audit: log trade execution
-            audit({
-                eventType: 'trade_execution',
-                accountId: payload.accountId,
-                timestamp: Date.now(),
-                data: {
-                    contractId: payload.contractId,
-                    symbol: normalizedSymbol,
-                    stake: payload.stake,
-                    profit: payload.profit,
-                    direction: payload.direction,
-                    botRunId: payload.botRunId,
-                },
-                outcome: 'success',
-                botRunId: payload.botRunId,
-            });
-
             return data?.id ?? null;
         } catch (error) {
             const info = classifySupabaseError(error);

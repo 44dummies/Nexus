@@ -15,6 +15,7 @@ interface TokenBucketConfig {
 
 export type ExecutionErrorCode =
     | 'THROTTLE'
+    | 'DUPLICATE_REJECTED'
     | 'PROPOSAL_REJECT'
     | 'BUY_REJECT'
     | 'SLIPPAGE_EXCEEDED'
@@ -188,6 +189,10 @@ export interface ExecutionRequest {
     requoteDelayMs?: number;
     /** Correlation ID for idempotency. If provided, duplicate requests are rejected. */
     correlationId?: string;
+    /** Optional stop-loss amount to attach to the buy payload when required by strategy/risk policy. */
+    stopLoss?: number;
+    /** Whether stop-loss attachment is mandatory for this execution. */
+    strategyRequiresStopLoss?: boolean;
 }
 
 export interface ExecutionResult {
@@ -227,6 +232,8 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
         requoteMaxAttempts = REQUOTE_MAX_ATTEMPTS,
         requoteDelayMs = REQUOTE_DELAY_MS,
         correlationId,
+        stopLoss,
+        strategyRequiresStopLoss = false,
     } = request;
 
     await wsDeps.getOrCreateConnection(token, accountId, APP_ID);
@@ -236,30 +243,21 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
     if (correlationId) {
         const existing = orderIntentStore.check(accountId, symbol, correlationId);
         if (existing) {
-            if (existing.status === 'FULFILLED' && existing.contractId) {
-                metrics.counter('execution.idempotent_hit');
-                return {
-                    proposal: { id: 'cached', ask_price: existing.buyPrice ?? 0 },
-                    buy: { contract_id: existing.contractId, buy_price: existing.buyPrice ?? 0 },
-                    proposalSentTs: nowMs(),
-                    proposalAckTs: nowMs(),
-                    buySentTs: nowMs(),
-                    buyAckTs: nowMs(),
-                    attempts: 0,
-                };
-            }
-            if (existing.status === 'PENDING') {
-                metrics.counter('execution.idempotent_pending');
-                throw new ExecutionError('THROTTLE', 'Duplicate order intent still pending', {
-                    retryable: false,
-                    context: { correlationId },
-                });
-            }
-            // FAILED — allow retry by re-registering below
+            metrics.counter('execution.idempotent_duplicate');
+            metrics.counter('duplicate_order_reject_total');
+            throw new ExecutionError('DUPLICATE_REJECTED', 'Duplicate correlationId rejected', {
+                retryable: false,
+                context: {
+                    correlationId,
+                    priorStatus: existing.status,
+                    priorContractId: existing.contractId ?? null,
+                },
+            });
         }
         if (!orderIntentStore.register(accountId, symbol, correlationId)) {
             metrics.counter('execution.idempotent_duplicate');
-            throw new ExecutionError('THROTTLE', 'Duplicate order intent', {
+            metrics.counter('duplicate_order_reject_total');
+            throw new ExecutionError('DUPLICATE_REJECTED', 'Duplicate correlationId rejected', {
                 retryable: false,
                 context: { correlationId },
             });
@@ -309,6 +307,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
             });
         }
         const proposalAckTs = nowMs();
+        metrics.histogram('proposal_rtt_ms', proposalAckTs - proposalSentTs);
 
         if (proposalResponse.error || !proposalResponse.proposal?.id) {
             metrics.counter('execution.proposal_reject');
@@ -357,6 +356,16 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
 
         await throttleOrWait(throttle.buyLimiter, 'execution.buy');
         const buySentTs = nowMs();
+        const buyPayload: Record<string, unknown> = {
+            buy: proposal.id,
+            price: proposal.ask_price,
+        };
+        if (strategyRequiresStopLoss && typeof stopLoss === 'number' && Number.isFinite(stopLoss) && stopLoss > 0) {
+            buyPayload.parameters = {
+                stop_loss: stopLoss,
+            };
+            metrics.counter('execution.stop_loss_attached');
+        }
         let buyResponse: {
             buy?: { contract_id: number; buy_price: number; payout?: number };
             error?: { message: string };
@@ -366,8 +375,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
                 buy?: { contract_id: number; buy_price: number; payout?: number };
                 error?: { message: string };
             }>(accountId, {
-                buy: proposal.id,
-                price: proposal.ask_price,
+                ...buyPayload,
             }, buyTimeoutMs);
         } catch (error) {
             const wsErr = error as WsError;
@@ -388,6 +396,7 @@ export async function executeProposalAndBuy(request: ExecutionRequest): Promise<
             });
         }
         const buyAckTs = nowMs();
+        metrics.histogram('buy_rtt_ms', buyAckTs - buySentTs);
 
         if (buyResponse.error || !buyResponse.buy?.contract_id) {
             metrics.counter('execution.buy_reject');

@@ -271,6 +271,23 @@ function processTick(
 
     const quote = typeof tick.quote === 'string' ? parseFloat(tick.quote) : tick.quote;
     if (!Number.isFinite(quote)) return;
+    if (!Number.isFinite(tick.epoch)) return;
+
+    if (typeof subscription.lastEpoch === 'number') {
+        if (tick.epoch <= subscription.lastEpoch) {
+            metrics.counter('tick.out_of_order_drop');
+            return;
+        }
+        if (tick.epoch > subscription.lastEpoch + 1) {
+            metrics.counter('tick.seq_gap');
+            tickLogger.warn({
+                accountId: subscription.accountId,
+                symbol: subscription.symbol,
+                previousEpoch: subscription.lastEpoch,
+                incomingEpoch: tick.epoch,
+            }, 'SEQ_GAP detected in tick stream');
+        }
+    }
 
     metrics.counter('tick.received');
     const bufferStart = performance.now();
@@ -467,3 +484,49 @@ export function unsubscribeAll(accountId: string): void {
     }
     tickLogger.info({ accountId }, 'Unsubscribed all ticks');
 }
+
+export const __test = {
+    createSubscription(accountId: string, symbol: string): void {
+        const key = getSubscriptionKey(accountId, symbol);
+        subscriptions.set(key, {
+            symbol,
+            accountId,
+            subscriptionId: null,
+            tickBuffer: new RingBuffer(TICK_BUFFER_SIZE),
+            bufferSize: TICK_BUFFER_SIZE,
+            lastTick: null,
+            lastEpoch: null,
+            listeners: new Set(),
+            isActive: true,
+        });
+    },
+    processTick(accountId: string, symbol: string, tick: { quote: number; epoch: number; symbol?: string }): void {
+        const key = getSubscriptionKey(accountId, symbol);
+        const subscription = subscriptions.get(key);
+        if (!subscription) {
+            throw new Error(`No test subscription for ${key}`);
+        }
+        processTick(subscription, {
+            symbol,
+            quote: tick.quote,
+            epoch: tick.epoch,
+        });
+    },
+    getSnapshot(accountId: string, symbol: string): { lastEpoch: number | null; lastTick: number | null; history: number[] } | null {
+        const key = getSubscriptionKey(accountId, symbol);
+        const subscription = subscriptions.get(key);
+        if (!subscription) return null;
+        return {
+            lastEpoch: subscription.lastEpoch,
+            lastTick: subscription.lastTick,
+            history: subscription.tickBuffer.toArray(),
+        };
+    },
+    clear(): void {
+        subscriptions.clear();
+        registeredAccounts.clear();
+        registeredReconnectListeners.clear();
+        accountListeners.clear();
+        reconnectListenerRefs.clear();
+    },
+};

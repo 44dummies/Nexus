@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 import { ExecuteTradeParamsSchema, TradeSignalSchema, type ExecuteTradeParams } from './lib/validation';
-import { getOrCreateConnection, sendMessage, cleanupConnection, registerStreamingListener, unregisterStreamingListener, closeAllConnections } from './lib/wsManager';
+import { getOrCreateConnection, sendMessage, registerStreamingListener, unregisterStreamingListener, closeAllConnections } from './lib/wsManager';
 import { recordTradeSettled, recordTradeFailedAttempt } from './lib/riskCache';
 import { tradeLogger } from './lib/logger';
 import { registerPendingSettlement, clearPendingSettlement, recordSettlementUpdate } from './lib/settlementSubscriptions';
@@ -14,7 +14,14 @@ import type { TradeRiskConfig } from './lib/riskConfig';
 import { finalizeOpenContract, trackOpenContract } from './lib/openContracts';
 import { recordSettledPnL, trackOpenPosition, markPosition } from './lib/pnlTracker';
 import { checkExecutionCircuit, recordExecutionSuccess, recordExecutionFailure } from './lib/executionCircuitBreaker';
-import { recordOutcome } from './lib/rollingPerformanceTracker';
+import {
+    writeExecutionLedgerPending,
+    markExecutionLedgerSettled,
+    markExecutionLedgerFailed,
+    replayNonSettledExecutionLedger,
+} from './lib/executionLedger';
+import { calculateTradeFees } from './lib/feeModel';
+import { getSupabaseAdmin } from './lib/supabaseAdmin';
 
 const APP_ID = process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 interface DerivResponse {
@@ -31,6 +38,9 @@ const MAX_SETTLED_CONTRACTS = 10000;
 const SETTLEMENT_SUBSCRIBE_MAX_ATTEMPTS = Math.max(1, Number(process.env.SETTLEMENT_SUBSCRIBE_MAX_ATTEMPTS) || 3);
 const SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS = Math.max(100, Number(process.env.SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS) || 500);
 const SETTLEMENT_SUBSCRIBE_MAX_DELAY_MS = Math.max(SETTLEMENT_SUBSCRIBE_BASE_DELAY_MS, Number(process.env.SETTLEMENT_SUBSCRIBE_MAX_DELAY_MS) || 5000);
+const SETTLEMENT_LOCK_TIMEOUT_MS = Math.max(100, Number(process.env.SETTLEMENT_LOCK_TIMEOUT_MS) || 5000);
+const LIVE_COMMISSION_FLAT = Number(process.env.LIVE_COMMISSION_FLAT) || 0;
+const LIVE_COMMISSION_BPS = Number(process.env.LIVE_COMMISSION_BPS) || 0;
 type ContractFinalizationState = {
     timestamp: number;
     exposureClosed: boolean;
@@ -40,27 +50,80 @@ type ContractFinalizationState = {
 
 const contractFinalizations = new Map<string, ContractFinalizationState>();
 
-// Mutex locks for settlement to prevent race conditions (SEC: TRADE-01)
-const settlementLocks = new Map<string, Promise<void>>();
+interface SettlementLockWaiter {
+    resolve: (release: () => void) => void;
+    reject: (error: Error) => void;
+    enqueuedAt: number;
+    timeout: ReturnType<typeof setTimeout>;
+}
 
-async function withSettlementLock<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
-    // Wait for any existing lock
-    while (settlementLocks.has(key)) {
-        await settlementLocks.get(key);
+interface SettlementLockState {
+    locked: boolean;
+    queue: SettlementLockWaiter[];
+}
+
+const settlementLockStates = new Map<string, SettlementLockState>();
+
+function releaseSettlementLock(key: string): void {
+    const state = settlementLockStates.get(key);
+    if (!state) return;
+
+    const next = state.queue.shift();
+    if (!next) {
+        settlementLockStates.delete(key);
+        return;
     }
 
-    // Create our lock
-    let releaseLock: () => void;
-    const lock = new Promise<void>(resolve => {
-        releaseLock = resolve;
+    clearTimeout(next.timeout);
+    metrics.histogram('settlement_lock_wait_ms', Date.now() - next.enqueuedAt);
+    next.resolve(() => releaseSettlementLock(key));
+}
+
+async function acquireSettlementLock(key: string): Promise<() => void> {
+    const existing = settlementLockStates.get(key);
+    if (!existing) {
+        settlementLockStates.set(key, { locked: true, queue: [] });
+        metrics.histogram('settlement_lock_wait_ms', 0);
+        return () => releaseSettlementLock(key);
+    }
+
+    metrics.counter('settlement.lock_contention');
+
+    return new Promise<() => void>((resolve, reject) => {
+        const enqueuedAt = Date.now();
+        const waiter: SettlementLockWaiter = {
+            enqueuedAt,
+            resolve,
+            reject,
+            timeout: setTimeout(() => {
+                const state = settlementLockStates.get(key);
+                if (!state) {
+                    reject(new Error('Settlement lock timeout'));
+                    return;
+                }
+                state.queue = state.queue.filter((item) => item !== waiter);
+                metrics.counter('settlement.lock_timeout');
+                reject(new Error('Settlement lock timeout'));
+            }, SETTLEMENT_LOCK_TIMEOUT_MS),
+        };
+
+        existing.queue.push(waiter);
     });
-    settlementLocks.set(key, lock);
+}
+
+async function withSettlementLock<T>(key: string, fn: () => T | Promise<T>): Promise<T> {
+    const release = await acquireSettlementLock(key);
+    let released = false;
+    const safeRelease = () => {
+        if (released) return;
+        released = true;
+        release();
+    };
 
     try {
         return await fn();
     } finally {
-        settlementLocks.delete(key);
-        releaseLock!();
+        safeRelease();
     }
 }
 
@@ -287,9 +350,6 @@ export async function executeTradeServerFast(
         stake,
         botRunId: params.botRunId ?? null,
         riskOverrides,
-        strategy: params.strategy,
-        regime: params.regime,
-        symbol: params.symbol,
     }, latencyTrace);
     stake = gate.stake;
 
@@ -307,6 +367,8 @@ export async function executeTradeServerFast(
             entryTargetPrice: params.entryTargetPrice,
             entrySlippagePct: params.entrySlippagePct ?? 1.5,
             correlationId: params.correlationId,
+            stopLoss: gate.risk.stopLoss,
+            strategyRequiresStopLoss: (gate.risk.stopLoss ?? 0) > 0,
         });
 
         if (latencyTrace) {
@@ -395,6 +457,9 @@ export async function executeTradeServerFast(
             }
             if (error.code === 'THROTTLE') {
                 metrics.counter('trade.throttle_reject');
+            }
+            if (error.code === 'DUPLICATE_REJECTED') {
+                metrics.counter('trade.duplicate_reject');
             }
             if (error.code === 'PROPOSAL_REJECT') {
                 metrics.counter('trade.proposal_reject');
@@ -588,54 +653,86 @@ async function handleSettlement(
     buyPrice?: number
 ): Promise<void> {
     await withSettlementLock(`${accountId}:${contract.contract_id}`, async () => {
+        let ledgerId: string | null = null;
+        const fees = calculateTradeFees({
+            stake,
+            commissionFlat: LIVE_COMMISSION_FLAT,
+            commissionBps: LIVE_COMMISSION_BPS,
+        });
+        const netProfit = contract.profit - fees;
+        const correlationId = typeof params.correlationId === 'string' && params.correlationId.trim().length > 0
+            ? params.correlationId.trim()
+            : `settlement:${accountId}:${contract.contract_id}`;
+
         const state = getFinalizationState(accountId, contract.contract_id);
         if (state.pnlApplied) {
             return;
         }
 
-        if (!await recordTradeSettledOnce(accountId, contract.contract_id, stake, contract.profit)) {
-            return;
-        }
+        try {
+            ledgerId = await writeExecutionLedgerPending({
+                correlationId,
+                accountId,
+                symbol: params.symbol,
+                pnl: netProfit,
+                fees,
+                contractId: contract.contract_id,
+                tradePayload: {
+                    accountId,
+                    accountType,
+                    botId: params.botId ?? null,
+                    botRunId: params.botRunId ?? null,
+                    contractId: contract.contract_id,
+                    symbol: params.symbol,
+                    stake,
+                    duration: params.duration || 5,
+                    durationUnit: params.durationUnit || 't',
+                    profit: netProfit,
+                    buyPrice: buyPrice ?? null,
+                    payout: contract.payout ?? null,
+                    direction: direction ?? null,
+                    status: contract.status || 'settled',
+                    entryProfileId: params.entryProfileId ?? null,
+                },
+            });
 
-        finalizeOpenContract(accountId, contract.contract_id);
+            if (!(await recordTradeSettledOnce(accountId, contract.contract_id, stake, netProfit))) {
+                await markExecutionLedgerSettled(ledgerId);
+                return;
+            }
 
-        // Record settled PnL in centralized tracker
-        recordSettledPnL(accountId, contract.contract_id, contract.profit, {
-            symbol: params.symbol,
-            direction: direction ?? undefined,
-            buyPrice: buyPrice ?? undefined,
-            payout: contract.payout ?? undefined,
-            stake,
-        });
+            finalizeOpenContract(accountId, contract.contract_id);
 
-        // Record outcome for rolling EV tracking
-        if (params.strategy && params.symbol) {
-            recordOutcome(
-                `${params.strategy}:${params.regime ?? 'UNKNOWN'}:${params.symbol}`,
-                contract.profit,
+            // Record settled PnL in centralized tracker
+            recordSettledPnL(accountId, contract.contract_id, netProfit, {
+                symbol: params.symbol,
+                direction: direction ?? undefined,
+                buyPrice: buyPrice ?? undefined,
+                payout: contract.payout ?? undefined,
                 stake,
-                contract.payout ?? 0
-            );
-        }
+            });
 
-        // Persist trade to database (queued) — now includes direction, buyPrice, payout
-        persistTrade({
-            accountId,
-            accountType,
-            botId: params.botId ?? null,
-            botRunId: params.botRunId ?? null,
-            contractId: contract.contract_id,
-            symbol: params.symbol,
-            stake,
-            duration: params.duration || 5,
-            durationUnit: params.durationUnit || 't',
-            profit: contract.profit,
-            buyPrice: buyPrice ?? null,
-            payout: contract.payout ?? null,
-            direction: direction ?? null,
-            status: contract.status || 'settled',
-            entryProfileId: params.entryProfileId ?? null,
-        }).then((tradeId) => {
+            // Persist trade to database (queued) after in-memory mutation.
+            const tradeId = await persistTrade({
+                accountId,
+                accountType,
+                botId: params.botId ?? null,
+                botRunId: params.botRunId ?? null,
+                contractId: contract.contract_id,
+                symbol: params.symbol,
+                stake,
+                duration: params.duration || 5,
+                durationUnit: params.durationUnit || 't',
+                profit: netProfit,
+                buyPrice: buyPrice ?? null,
+                payout: contract.payout ?? null,
+                direction: direction ?? null,
+                status: contract.status || 'settled',
+                entryProfileId: params.entryProfileId ?? null,
+            });
+
+            await markExecutionLedgerSettled(ledgerId);
+
             persistOrderStatus({
                 accountId,
                 tradeId: tradeId ?? null,
@@ -643,36 +740,69 @@ async function handleSettlement(
                 event: 'contract_settled',
                 status: contract.status || 'settled',
                 payload: {
-                    profit: contract.profit,
+                    grossProfit: contract.profit,
+                    fees,
+                    netProfit,
                     payout: contract.payout,
                 },
             }).catch(err => tradeLogger.error({ err }, 'Order status persist failed'));
-        }).catch((err) => tradeLogger.error({ err }, 'Trade persistence failed'));
 
-        // Send notification (queued)
-        persistNotification({
-            accountId,
-            title: contract.profit >= 0 ? 'Trade Won' : 'Trade Lost',
-            body: `Contract #${contract.contract_id} settled with ${contract.profit >= 0 ? '+' : ''}${contract.profit.toFixed(2)}`,
-            type: 'trade_result',
-            data: {
-                contractId: contract.contract_id,
-                profit: contract.profit,
-                status: contract.status,
-                symbol: params.symbol,
-            },
-        }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
+            // Send notification (queued)
+            persistNotification({
+                accountId,
+                title: netProfit >= 0 ? 'Trade Won' : 'Trade Lost',
+                body: `Contract #${contract.contract_id} settled with ${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)}`,
+                type: 'trade_result',
+                data: {
+                    contractId: contract.contract_id,
+                    profit: netProfit,
+                    grossProfit: contract.profit,
+                    fees,
+                    status: contract.status,
+                    symbol: params.symbol,
+                },
+            }).catch((err) => tradeLogger.error({ err }, 'Notification persistence failed'));
 
-        markContractFinalized(accountId, contract.contract_id);
+            markContractFinalized(accountId, contract.contract_id);
+        } catch (error) {
+            if (ledgerId) {
+                const message = error instanceof Error ? error.message : 'Unknown settlement error';
+                await markExecutionLedgerFailed(ledgerId, message);
+            }
+            throw error;
+        }
+    });
+}
+
+export async function recoverUnsettledExecutionLedger(): Promise<number> {
+    return replayNonSettledExecutionLedger(async (entry) => {
+        if (!entry.tradePayload) {
+            throw new Error('Missing trade payload for ledger replay');
+        }
+
+        const { client: supabaseAdmin } = getSupabaseAdmin();
+        if (supabaseAdmin) {
+            const { data, error } = await supabaseAdmin
+                .from('trades')
+                .select('id')
+                .eq('account_id', entry.tradePayload.accountId)
+                .eq('contract_id', entry.tradePayload.contractId)
+                .maybeSingle();
+            if (error) {
+                throw new Error(`Replay duplicate-check failed: ${error.message}`);
+            }
+            if (data?.id) {
+                return;
+            }
+        }
+
+        await persistTrade(entry.tradePayload);
     });
 }
 
 export async function initiateGracefulShutdown(): Promise<void> {
-    tradeLogger.info('Initiating graceful shutdown of trade engine...');
-    // Close all connections to stop new trades/updates
+    tradeLogger.info({ lockKeys: settlementLockStates.size }, 'Initiating graceful shutdown');
     closeAllConnections();
-    // Allow meaningful time for closing frames to send
-    await new Promise(resolve => setTimeout(resolve, 500));
 }
 
 export const __test = {

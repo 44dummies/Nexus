@@ -150,6 +150,15 @@ export interface StrategyContext {
     lossStreak: number;
 }
 
+export class UnknownStrategyError extends Error {
+    strategyId: string;
+
+    constructor(strategyId: string) {
+        super(`Unknown strategy: ${strategyId}`);
+        this.strategyId = strategyId;
+    }
+}
+
 // ==================== DEFAULT CONFIGS ====================
 
 export const DEFAULT_STRATEGY_CONFIGS: Record<string, StrategyConfig> = {
@@ -591,8 +600,7 @@ export function evaluateStrategy(
             // If called here directly (non-SmartLayer path), fall back to capital-guard.
             return evaluateCapitalGuardStrategy(ctx, mergedConfig);
         default:
-            // Unknown strategy falls back to RSI - this masks misconfiguration
-            return evaluateRsiStrategy(ctx, mergedConfig);
+            throw new UnknownStrategyError(strategyId);
     }
 }
 
@@ -626,7 +634,7 @@ export function getRequiredTicks(strategyId: string, config?: StrategyConfig): n
         case 'adapter':
             return Math.max(32, (mergedConfig.emaSlow ?? 21) + 2, 30);
         default:
-            return 15;
+            throw new UnknownStrategyError(strategyId);
     }
 }
 

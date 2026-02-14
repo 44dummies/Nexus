@@ -50,7 +50,7 @@ router.post('/run', requireAuth, async (req, res) => {
             return;
         }
 
-        const accountId = (req as { accountId?: string }).accountId;
+        const accountId = req.auth?.accountId;
         if (!accountId) {
             res.status(401).json({ error: 'Account not identified' });
             return;

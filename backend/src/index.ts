@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import crypto from 'crypto';
 import helmet from 'helmet';
 
 import authRouter from './routes/auth';
@@ -27,7 +26,8 @@ import { getHealthSnapshot, setComponentStatus } from './lib/healthStatus';
 import { initResourceMonitor } from './lib/resourceMonitor';
 import { printConfigDoctorReport, runConfigDoctor, waitForSupabaseReady } from './lib/configDoctor';
 import { initRecoveryManager } from './lib/recoveryManager';
-import { initiateGracefulShutdown } from './trade';
+import { initiateGracefulShutdown, recoverUnsettledExecutionLedger } from './trade';
+import { attachCspNonce, buildHelmetSecurityOptions } from './lib/securityHeaders';
 
 const app = express();
 initMetrics();
@@ -36,7 +36,8 @@ initResourceMonitor();
 initRecoveryManager();
 
 app.set('trust proxy', 1);
-app.use(helmet());
+app.use(attachCspNonce);
+app.use(helmet(buildHelmetSecurityOptions()));
 
 const rawOrigins = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '';
 // Normalize origins: trim whitespace and remove trailing slashes
@@ -243,6 +244,10 @@ async function startServer() {
 
     await waitForSupabaseReady();
     await initRiskManager();
+    const replayedLedgerRows = await recoverUnsettledExecutionLedger();
+    if (replayedLedgerRows > 0) {
+        logger.warn({ replayedLedgerRows }, 'Recovered unsettled execution ledger rows');
+    }
     await reconcileBotRunsOnStartup();
     startZombieCleanupJob();
     const bindPort = resolvePort();

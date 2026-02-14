@@ -10,6 +10,7 @@
 import { sendMessage } from './wsManager';
 import { logger } from './logger';
 import { metrics } from './metrics';
+import { calculateTradeFees } from './feeModel';
 
 // ==================== TYPES ====================
 
@@ -229,7 +230,11 @@ function simulateTrades(ticks: TickData[], config: BacktestConfig): BacktestTrad
             }
 
             const payout = won ? config.stake * PAYOUT_RATE : 0;
-            const profit = payout - config.stake - config.commissionFlat;
+            const fees = calculateTradeFees({
+                stake: config.stake,
+                commissionFlat: config.commissionFlat,
+            });
+            const profit = payout - config.stake - fees;
 
             trades.push({
                 entryIndex: i,

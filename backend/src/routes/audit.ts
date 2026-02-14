@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { requireAuth } from '../lib/authMiddleware';
 import { getRecentAuditEvents, queryAuditEvents } from '../lib/auditLogger';
 import type { AuditEventType } from '../lib/auditLogger';
+import { enforceAccountScope } from '../lib/requestUtils';
 
 const router = Router();
 
@@ -16,6 +17,9 @@ const router = Router();
  */
 router.get('/:accountId', requireAuth, (req, res) => {
     const { accountId } = req.params;
+    if (!enforceAccountScope(req, res, accountId)) {
+        return;
+    }
     const { eventType, limit, since, source, startDate, endDate, offset } = req.query;
 
     if (source === 'db') {

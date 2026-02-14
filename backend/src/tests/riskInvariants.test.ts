@@ -57,7 +57,7 @@ test('evaluateCachedRisk: HALT when daily loss limit exceeded', () => {
     assert.equal(result.reason, 'DAILY_LOSS');
 });
 
-test('evaluateCachedRisk: OK when daily loss is within limit', () => {
+test('evaluateCachedRisk: ALLOWED when daily loss is within limit', () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('dl-ok', { equity: 1000 });
     entry.totalLossToday = 15;
@@ -68,7 +68,7 @@ test('evaluateCachedRisk: OK when daily loss is within limit', () => {
         maxStake: 100,
         dailyLossLimitPct: 2, // 2% = 20 limit, 15 < 20
     });
-    assert.equal(result.status, 'OK');
+    assert.equal(result.status, 'ALLOWED');
 });
 
 // ====================================================
@@ -90,7 +90,7 @@ test('evaluateCachedRisk: HALT when drawdown limit exceeded', () => {
     assert.equal(result.reason, 'DRAWDOWN');
 });
 
-test('evaluateCachedRisk: OK when drawdown is within limit', () => {
+test('evaluateCachedRisk: ALLOWED when drawdown is within limit', () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('dd-ok', { equity: 1000 });
     entry.equityPeak = 1020;
@@ -101,7 +101,7 @@ test('evaluateCachedRisk: OK when drawdown is within limit', () => {
         maxStake: 100,
         drawdownLimitPct: 6,
     });
-    assert.equal(result.status, 'OK');
+    assert.equal(result.status, 'ALLOWED');
 });
 
 // ====================================================
@@ -121,7 +121,7 @@ test('evaluateCachedRisk: MAX_CONCURRENT when concurrent trade limit reached', (
     assert.equal(result.status, 'MAX_CONCURRENT');
 });
 
-test('evaluateCachedRisk: OK when below concurrent trade limit', () => {
+test('evaluateCachedRisk: ALLOWED when below concurrent trade limit', () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('mc-ok', { equity: 1000 });
     entry.openTradeCount = 2;
@@ -131,7 +131,7 @@ test('evaluateCachedRisk: OK when below concurrent trade limit', () => {
         maxStake: 100,
         maxConcurrentTrades: 3,
     });
-    assert.equal(result.status, 'OK');
+    assert.equal(result.status, 'ALLOWED');
 });
 
 // ====================================================
@@ -152,7 +152,7 @@ test('evaluateCachedRisk: COOLDOWN when within trade cooldown period', () => {
     assert.equal(result.reason, 'TRADE_COOLDOWN');
 });
 
-test('evaluateCachedRisk: OK when cooldown has expired', () => {
+test('evaluateCachedRisk: ALLOWED when cooldown has expired', () => {
     clearAllRiskCaches();
     const entry = initializeRiskCache('cd-ok', { equity: 1000 });
     entry.lastTradeTime = Date.now() - 5000; // 5s ago
@@ -162,7 +162,7 @@ test('evaluateCachedRisk: OK when cooldown has expired', () => {
         maxStake: 100,
         cooldownMs: 3000,
     });
-    assert.equal(result.status, 'OK');
+    assert.equal(result.status, 'ALLOWED');
 });
 
 // ====================================================

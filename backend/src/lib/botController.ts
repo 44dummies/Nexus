@@ -6,7 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { subscribeTicks, unsubscribeTicks, getTickWindowView, type TickData } from './tickStream';
-import { calculateATR, evaluateStrategy, getRequiredTicks, type StrategyConfig, type TradeSignal } from './strategyEngine';
+import { calculateATR, evaluateStrategy, getRequiredTicks, UnknownStrategyError, type StrategyConfig, type TradeSignal } from './strategyEngine';
 import { getRiskCache, initializeRiskCache } from './riskCache';
 import { executeTradeServerFast } from '../trade';
 import { classifySupabaseError, getSupabaseAdmin, withSupabaseRetry } from './supabaseAdmin';
@@ -556,7 +556,17 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     const useAutoMode = config.autoMode === true;
     let smartCycle: ReturnType<SmartLayer['executeCycle']> | null = null;
 
-    const requiredTicks = getRequiredTicks(activeStrategyId, config.strategyConfig);
+    let requiredTicks: number;
+    try {
+        requiredTicks = getRequiredTicks(activeStrategyId, config.strategyConfig);
+    } catch (error) {
+        if (error instanceof UnknownStrategyError) {
+            metrics.counter('strategy.unknown');
+            botLogger.error({ botRunId: botRun.id, strategyId: activeStrategyId }, 'Unknown strategy configured');
+            return;
+        }
+        throw error;
+    }
     const prices = getTickWindowView(accountId, config.symbol, requiredTicks);
 
     if (!prices || prices.length < requiredTicks) {
@@ -674,13 +684,23 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
         }
         : undefined;
 
-    const evaluation = evaluateStrategy(
-        activeStrategyId,
-        prices,
-        config.strategyConfig,
-        lossStreak,
-        microContext
-    );
+    let evaluation;
+    try {
+        evaluation = evaluateStrategy(
+            activeStrategyId,
+            prices,
+            config.strategyConfig,
+            lossStreak,
+            microContext
+        );
+    } catch (error) {
+        if (error instanceof UnknownStrategyError) {
+            metrics.counter('strategy.unknown');
+            botLogger.error({ botRunId: botRun.id, strategyId: activeStrategyId }, 'Unknown strategy evaluation blocked');
+            return;
+        }
+        throw error;
+    }
     const strategyEnd = nowMs();
     latencyTrace.strategyEndTs = strategyEnd;
     latencyTrace.decisionTs = strategyEnd;

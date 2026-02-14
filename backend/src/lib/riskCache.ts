@@ -442,7 +442,7 @@ export function evaluateCachedRisk(
         maxExposure?: number;
     }
 ): {
-    status: 'OK' | 'COOLDOWN' | 'HALT' | 'REDUCE_STAKE' | 'MAX_CONCURRENT';
+    status: 'ALLOWED' | 'COOLDOWN' | 'HALT' | 'REDUCE_STAKE' | 'MAX_CONCURRENT';
     reason?: string;
     cooldownMs?: number;
 } {
@@ -465,7 +465,7 @@ export function evaluateCachedRisk(
         if (projectedExposure > params.maxExposure) {
             return {
                 status: 'HALT',
-                reason: 'PROJECTED_EXPOSURE',
+                reason: 'MAX_EXPOSURE',
             };
         }
     }
@@ -537,7 +537,7 @@ export function evaluateCachedRisk(
         return { status: 'REDUCE_STAKE', reason: 'STAKE_LIMIT' };
     }
 
-    return { status: 'OK' };
+    return { status: 'ALLOWED' };
 }
 
 /**

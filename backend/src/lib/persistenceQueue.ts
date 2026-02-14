@@ -1,5 +1,6 @@
 import { metrics } from './metrics';
 import logger from './logger';
+import os from 'os';
 
 type Task<T> = () => Promise<T>;
 
@@ -8,6 +9,7 @@ interface QueueItem<T> {
     resolve: (value: T) => void;
     reject: (error: Error) => void;
     taskName: string;
+    enqueuedAt: number;
 }
 
 // Dead-letter queue for failed persistence tasks (SEC: DATA-03)
@@ -63,7 +65,13 @@ export class AsyncTaskQueue {
             return Promise.reject(new Error(`${this.name} queue full`));
         }
         return new Promise<T>((resolve, reject) => {
-            this.queue.push({ task, resolve, reject, taskName: taskName || this.name } as QueueItem<unknown>);
+            this.queue.push({
+                task,
+                resolve,
+                reject,
+                taskName: taskName || this.name,
+                enqueuedAt: Date.now(),
+            } as QueueItem<unknown>);
             this.updateMetrics();
             this.schedule();
         });
@@ -94,6 +102,8 @@ export class AsyncTaskQueue {
     }
 
     private async runItem(item: QueueItem<unknown>): Promise<void> {
+        const waitMs = Math.max(0, Date.now() - item.enqueuedAt);
+        metrics.histogram(`${this.name}_queue_wait_ms`, waitMs);
         try {
             const result = await item.task();
             item.resolve(result as never);
@@ -117,7 +127,11 @@ export class AsyncTaskQueue {
     }
 }
 
-const QUEUE_CONCURRENCY = Math.max(1, Number(process.env.PERSIST_QUEUE_CONCURRENCY) || 2);
+const CPU_COUNT = typeof os.availableParallelism === 'function'
+    ? os.availableParallelism()
+    : os.cpus().length;
+const DEFAULT_QUEUE_CONCURRENCY = Math.min(Math.max(1, CPU_COUNT), 8);
+const QUEUE_CONCURRENCY = Math.max(1, Number(process.env.PERSIST_QUEUE_CONCURRENCY) || DEFAULT_QUEUE_CONCURRENCY);
 const QUEUE_MAX_DEPTH = Math.max(100, Number(process.env.PERSIST_QUEUE_MAX_DEPTH) || 10_000);
 
 export const persistenceQueue = new AsyncTaskQueue('persistence', QUEUE_CONCURRENCY, QUEUE_MAX_DEPTH);

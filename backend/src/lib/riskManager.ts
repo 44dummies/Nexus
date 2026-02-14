@@ -90,6 +90,88 @@ const reconciliationListeners = new Set<string>();
 
 let latencyBreaches = 0;
 
+interface RiskEventPayload {
+    accountId: string | null;
+    eventType: string;
+    detail?: string;
+    metadata?: Record<string, unknown>;
+}
+
+interface RiskEventDeadLetter {
+    payload: RiskEventPayload;
+    error: string;
+    timestamp: number;
+    attempts: number;
+}
+
+const RISK_EVENT_MAX_ATTEMPTS = Math.max(1, Number(process.env.RISK_EVENT_MAX_ATTEMPTS) || 3);
+const RISK_EVENT_BASE_BACKOFF_MS = Math.max(25, Number(process.env.RISK_EVENT_BASE_BACKOFF_MS) || 100);
+const RISK_EVENT_MAX_BACKOFF_MS = Math.max(RISK_EVENT_BASE_BACKOFF_MS, Number(process.env.RISK_EVENT_MAX_BACKOFF_MS) || 2000);
+const RISK_EVENT_DLQ_LIMIT = Math.max(10, Number(process.env.RISK_EVENT_DLQ_LIMIT) || 500);
+const riskEventDeadLetter: RiskEventDeadLetter[] = [];
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function enqueueRiskDeadLetter(payload: RiskEventPayload, error: string, attempts: number): void {
+    if (riskEventDeadLetter.length >= RISK_EVENT_DLQ_LIMIT) {
+        riskEventDeadLetter.shift();
+    }
+    riskEventDeadLetter.push({
+        payload,
+        error,
+        timestamp: Date.now(),
+        attempts,
+    });
+    metrics.counter('risk.event_dead_letter');
+}
+
+async function persistRiskEventDurable(payload: RiskEventPayload): Promise<void> {
+    const { client: supabaseAdmin } = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+        metrics.counter('risk_persist_fail_total');
+        enqueueRiskDeadLetter(payload, 'Supabase not configured', 0);
+        riskLogger.error({
+            event: payload.eventType,
+            accountId: payload.accountId,
+        }, 'Risk event persistence unavailable (no Supabase client)');
+        return;
+    }
+
+    let attempt = 0;
+    while (attempt < RISK_EVENT_MAX_ATTEMPTS) {
+        attempt += 1;
+        try {
+            await recordRiskEvent(payload.accountId, payload.eventType, payload.detail, payload.metadata);
+            if (attempt > 1) {
+                metrics.counter('risk.event_retry_success');
+            }
+            return;
+        } catch (error) {
+            metrics.counter('risk_persist_fail_total');
+            riskLogger.error({
+                event: payload.eventType,
+                accountId: payload.accountId,
+                attempt,
+                error,
+            }, 'Risk event persist attempt failed');
+
+            if (attempt >= RISK_EVENT_MAX_ATTEMPTS) {
+                enqueueRiskDeadLetter(payload, error instanceof Error ? error.message : 'Unknown error', attempt);
+                return;
+            }
+
+            const delay = Math.min(RISK_EVENT_MAX_BACKOFF_MS, RISK_EVENT_BASE_BACKOFF_MS * Math.pow(2, attempt - 1));
+            await sleep(delay);
+        }
+    }
+}
+
+export function getRiskEventDeadLetter(): readonly RiskEventDeadLetter[] {
+    return riskEventDeadLetter;
+}
+
 function getCounter(map: Map<string, RollingCounter>, key: string, windowMs: number) {
     let counter = map.get(key);
     if (!counter) {
@@ -112,6 +194,7 @@ async function recordRiskEvent(accountId: string | null, eventType: string, deta
         const info = classifySupabaseError(error);
         metrics.counter('risk.event_persist_error');
         riskLogger.error({ error: info.message, code: info.code, category: info.category }, 'Risk event persist failed');
+        throw error;
     }
 }
 
@@ -384,9 +467,7 @@ export function triggerKillSwitch(accountId: string | null, reason: string, manu
         Object.assign(globalKillSwitch, state);
     }
     setComponentStatus('risk', 'error', `kill switch: ${reason}`);
-    recordRiskEvent(accountId, 'kill_switch', reason, { manual }).catch((error) => {
-        riskLogger.error({ error, accountId, reason }, 'Kill switch event persist failed');
-    });
+    void persistRiskEventDurable({ accountId, eventType: 'kill_switch', detail: reason, metadata: { manual } });
     persistKillSwitchState(accountId, state).catch((error) => {
         riskLogger.error({ error, accountId, reason }, 'Kill switch state persist failed');
     });
@@ -421,7 +502,12 @@ export function isKillSwitchActive(accountId: string): boolean {
         if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
             // Expired — clear asynchronously, don't block this trade
             clearKillSwitch(accountId);
-            recordRiskEvent(accountId, 'kill_switch_auto_clear', accountState.reason ?? 'unknown', { ageMs: age }).catch(() => { });
+            void persistRiskEventDurable({
+                accountId,
+                eventType: 'kill_switch_auto_clear',
+                detail: accountState.reason ?? 'unknown',
+                metadata: { ageMs: age },
+            });
             return globalKillSwitch.active === true;
         }
     }
@@ -431,7 +517,12 @@ export function isKillSwitchActive(accountId: string): boolean {
         const age = typeof globalKillSwitch.triggeredAt === 'number' ? now - globalKillSwitch.triggeredAt : 0;
         if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
             clearKillSwitch(null);
-            recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => { });
+            void persistRiskEventDurable({
+                accountId: null,
+                eventType: 'kill_switch_auto_clear',
+                detail: globalKillSwitch.reason ?? 'unknown',
+                metadata: { ageMs: age },
+            });
             return accountState?.active === true;
         }
     }
@@ -521,8 +612,11 @@ export function recordReconnect(accountId: string): void {
 
 export function recordStuckOrder(accountId: string, contractId: number): void {
     metrics.counter('risk.stuck_order');
-    recordRiskEvent(accountId, 'stuck_order', 'Settlement timeout', { contractId }).catch((error) => {
-        riskLogger.error({ error, accountId, contractId }, 'Stuck order event persist failed');
+    void persistRiskEventDurable({
+        accountId,
+        eventType: 'stuck_order',
+        detail: 'Settlement timeout',
+        metadata: { contractId },
     });
 }
 
@@ -559,7 +653,12 @@ export async function initRiskManager(): Promise<void> {
             if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
                 riskLogger.info({ accountId, reason: state.reason, ageMs: age }, 'Auto-clearing expired kill switch');
                 clearKillSwitch(accountId);
-                recordRiskEvent(accountId, 'kill_switch_auto_clear', state.reason ?? 'unknown', { ageMs: age }).catch(() => { });
+                void persistRiskEventDurable({
+                    accountId,
+                    eventType: 'kill_switch_auto_clear',
+                    detail: state.reason ?? 'unknown',
+                    metadata: { ageMs: age },
+                });
             }
         }
         if (globalKillSwitch.active && !globalKillSwitch.manual) {
@@ -567,7 +666,12 @@ export async function initRiskManager(): Promise<void> {
             if (age > KILL_SWITCH_AUTO_CLEAR_MS) {
                 riskLogger.info({ reason: globalKillSwitch.reason, ageMs: age }, 'Auto-clearing expired global kill switch');
                 clearKillSwitch(null);
-                recordRiskEvent(null, 'kill_switch_auto_clear', globalKillSwitch.reason ?? 'unknown', { ageMs: age }).catch(() => { });
+                void persistRiskEventDurable({
+                    accountId: null,
+                    eventType: 'kill_switch_auto_clear',
+                    detail: globalKillSwitch.reason ?? 'unknown',
+                    metadata: { ageMs: age },
+                });
             }
         }
     }, 60000); // Check every minute

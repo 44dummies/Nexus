@@ -96,6 +96,7 @@ export function evaluatePreTradeGate(
         lossCooldownMs,
         maxConcurrentTrades: risk.maxConcurrentTrades,
         stopLoss: risk.stopLoss,
+        maxExposure: risk.maxExposure,
     });
 
     if (riskStatus.status === 'HALT') {

@@ -11,6 +11,7 @@ import {
     getStrategyBreakdown,
     getSymbolBreakdown,
 } from '../lib/performanceAnalytics';
+import { enforceAccountScope } from '../lib/requestUtils';
 
 const router = Router();
 
@@ -21,6 +22,9 @@ const router = Router();
 router.get('/:accountId', requireAuth, async (req, res) => {
     try {
         const { accountId } = req.params;
+        if (!enforceAccountScope(req, res, accountId)) {
+            return;
+        }
         const { startDate, endDate, symbol, strategy } = req.query;
 
         const analytics = await getTradeAnalytics(accountId, {
@@ -43,6 +47,9 @@ router.get('/:accountId', requireAuth, async (req, res) => {
 router.get('/:accountId/equity', requireAuth, async (req, res) => {
     try {
         const { accountId } = req.params;
+        if (!enforceAccountScope(req, res, accountId)) {
+            return;
+        }
         const { startDate, endDate } = req.query;
 
         const curve = await getEquityCurve(accountId, {
@@ -63,6 +70,9 @@ router.get('/:accountId/equity', requireAuth, async (req, res) => {
 router.get('/:accountId/strategies', requireAuth, async (req, res) => {
     try {
         const { accountId } = req.params;
+        if (!enforceAccountScope(req, res, accountId)) {
+            return;
+        }
         const { startDate, endDate } = req.query;
 
         const breakdown = await getStrategyBreakdown(accountId, {
@@ -83,6 +93,9 @@ router.get('/:accountId/strategies', requireAuth, async (req, res) => {
 router.get('/:accountId/symbols', requireAuth, async (req, res) => {
     try {
         const { accountId } = req.params;
+        if (!enforceAccountScope(req, res, accountId)) {
+            return;
+        }
         const { startDate, endDate } = req.query;
 
         const breakdown = await getSymbolBreakdown(accountId, {
