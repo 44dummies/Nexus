@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-// @ts-ignore
-import type { Redis } from 'ioredis';
+import Redis from 'ioredis';
 import { redisClient as defaultRedisClient } from './redis';
 import { randomUUID } from 'crypto';
 
@@ -193,7 +192,7 @@ export const tradeRateLimit = createRateLimit({
     maxRequests: 50,
     keyGenerator: (req: Request) => {
         // Use accountId + route when available to match distributed key design.
-        const base = req.auth?.accountId || req.ip || 'unknown';
+        const base = (req as any).auth?.accountId || req.ip || 'unknown';
         return `${base}:${req.path}`; // Result: ratelimit:trading:{accountId}:{path} if prefix is set
     },
     prefix: 'ratelimit'
