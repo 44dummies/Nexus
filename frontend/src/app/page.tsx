@@ -143,7 +143,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <LogoMark size={32} priority />
             <span className="text-[15px] font-semibold tracking-tight text-white">
-              44dummies
+              DerivNexus
             </span>
           </div>
           <button
@@ -328,7 +328,7 @@ export default function LandingPage() {
           <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-2.5 text-[#6e7681] text-xs">
               <LogoMark size={20} />
-              <span>44dummies</span>
+              <span>DerivNexus</span>
               <span className="text-[#30363d]">·</span>
               <span>Powered by Deriv API</span>
             </div>

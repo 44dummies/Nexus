@@ -6,14 +6,13 @@ import { apiUrl } from '@/lib/api';
  * Hook to subscribe to real-time PnL SSE stream from backend.
  * Updates the trading store with realized/unrealized PnL, win/loss stats, and open positions.
  */
-export function usePnLStream(enabled = true) {
+export function usePnLStream() {
     const eventSourceRef = useRef<EventSource | null>(null);
     const isAuthorized = useTradingStore((s) => s.isAuthorized);
-    const activeAccountId = useTradingStore((s) => s.activeAccountId);
     const updatePnL = useTradingStore((s) => s.updatePnL);
 
     const connect = useCallback(() => {
-        if (!enabled || !isAuthorized || !activeAccountId) return;
+        if (!isAuthorized) return;
 
         // Close existing connection
         if (eventSourceRef.current) {
@@ -38,7 +37,7 @@ export function usePnLStream(enabled = true) {
         };
 
         return es;
-    }, [enabled, isAuthorized, activeAccountId, updatePnL]);
+    }, [isAuthorized, updatePnL]);
 
     useEffect(() => {
         const es = connect();
