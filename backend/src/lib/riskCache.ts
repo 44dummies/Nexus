@@ -28,7 +28,7 @@ export interface RiskCacheEntry {
 
 // Default max concurrent trades - can be overridden per-run via risk config
 const DEFAULT_MAX_CONCURRENT_TRADES = Number(process.env.DEFAULT_MAX_CONCURRENT_TRADES) || 5;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes (staleness signal only; stale entries are still served)
 const riskCache = new Map<string, RiskCacheEntry>();
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const RISK_STATE_KEY = 'risk_state';
@@ -155,8 +155,9 @@ export function getRiskCache(accountId: string): RiskCacheEntry | null {
 
     // Check TTL
     if (Date.now() - entry.lastUpdated > CACHE_TTL_MS) {
-        riskCache.delete(accountId);
-        return null; // Expired, needs refresh from DB
+        // Serve stale entry instead of evicting it to avoid fail-closed trade halts
+        // when an account is idle for longer than the stale threshold.
+        metrics.counter('risk.cache_stale_served');
     }
 
     return entry;
