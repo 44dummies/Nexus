@@ -6,6 +6,7 @@ export function useBotStream(botRunId: string | null) {
     const eventSourceRef = useRef<EventSource | null>(null);
     const addLog = useTradingStore((state) => state.addLog);
     const updateSmartLayerState = useTradingStore((state) => state.updateSmartLayerState);
+    const setCooldownUntil = useTradingStore((state) => state.setCooldownUntil);
     const isAuthorized = useTradingStore((state) => state.isAuthorized);
 
     useEffect(() => {
@@ -50,6 +51,9 @@ export function useBotStream(botRunId: string | null) {
                             : '';
                         addLog('error', `Bot paused${reason}`);
                     }
+                } else if (payload.type === 'cooldown') {
+                    const d = payload.data;
+                    setCooldownUntil(d.cooldownUntil ?? null);
                 } else if (payload.type === 'smartlayer') {
                     // Smart Layer telemetry: update regime, strategy, risk gate
                     const d = payload.data;
@@ -76,5 +80,5 @@ export function useBotStream(botRunId: string | null) {
                 eventSourceRef.current = null;
             }
         };
-    }, [botRunId, isAuthorized, addLog, updateSmartLayerState]);
+    }, [botRunId, isAuthorized, addLog, updateSmartLayerState, setCooldownUntil]);
 }

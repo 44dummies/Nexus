@@ -219,6 +219,11 @@ app.use('/api/audit', auditRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/backtest', backtestRouter);
 
+// Catch-all 404 handler — prevents Express from exposing framework identity
+app.use((_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+});
+
 const rawPort = Number(process.env.PORT);
 const SAFE_PORT = Number(process.env.SAFE_PORT) || 8080;
 const ALLOW_PRIVILEGED_PORT = (process.env.ALLOW_PRIVILEGED_PORT || 'false') === 'true';

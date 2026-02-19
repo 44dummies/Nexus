@@ -16,6 +16,21 @@ type TokenCandidate = {
     currencyHint?: string | null;
 };
 
+function extractBearerToken(authHeader: string | undefined): string | null {
+    if (!authHeader) return null;
+    const [scheme, ...rest] = authHeader.trim().split(/\s+/);
+    if (!scheme || scheme.toLowerCase() !== 'bearer') return null;
+    const token = rest.join(' ').trim();
+    return token || null;
+}
+
+function parseAccountTypeHint(raw: string | undefined): 'real' | 'demo' | null {
+    if (!raw) return null;
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'real' || normalized === 'demo') return normalized;
+    return null;
+}
+
 function validateTokenFormat(token: string): { ok: boolean; reason?: string } {
     const trimmed = token.trim();
     if (!trimmed) return { ok: false, reason: 'Token missing' };
@@ -28,6 +43,8 @@ function buildTokenCandidates(req: Request): TokenCandidate[] {
     const realToken = req.cookies?.deriv_token as string | undefined;
     const demoToken = req.cookies?.deriv_demo_token as string | undefined;
     const activeType = req.cookies?.deriv_active_type as 'real' | 'demo' | undefined;
+    const bearerToken = extractBearerToken(req.get('authorization') || undefined);
+    const headerTypeHint = parseAccountTypeHint(req.get('x-account-type') || undefined);
 
     const candidates: TokenCandidate[] = [];
     const pushCandidate = (token: string | undefined, hintedType: 'real' | 'demo') => {
@@ -40,6 +57,19 @@ function buildTokenCandidates(req: Request): TokenCandidate[] {
                 : (req.cookies?.deriv_currency as string | undefined),
         });
     };
+
+    // Prefer explicit bearer token and do not silently cascade to cookie tokens.
+    if (bearerToken) {
+        const hintedType = headerTypeHint || activeType || 'real';
+        candidates.push({
+            token: bearerToken,
+            hintedType,
+            currencyHint: hintedType === 'demo'
+                ? (req.cookies?.deriv_demo_currency as string | undefined)
+                : (req.cookies?.deriv_currency as string | undefined),
+        });
+        return candidates;
+    }
 
     if (activeType === 'demo') {
         pushCandidate(demoToken, 'demo');

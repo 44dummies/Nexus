@@ -4,9 +4,28 @@ import type { NextRequest } from 'next/server';
 const rateLimit = new Map<string, { count: number; resetAt: number }>();
 const WINDOW_MS = 60 * 1000;
 const LIMIT = 60;
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+function buildCspHeaderValue() {
+    const scriptSrc = IS_PRODUCTION
+        ? "script-src 'self' https://va.vercel-scripts.com;"
+        : "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com;";
+
+    return [
+        "default-src 'self';",
+        scriptSrc,
+        "style-src 'self' 'unsafe-inline';",
+        "img-src 'self' data: blob:;",
+        "font-src 'self' data:;",
+        "connect-src 'self' https://*.deriv.com https://*.derivws.com https://*.supabase.co wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com wss://*.supabase.co;",
+        "object-src 'none';",
+        "base-uri 'self';",
+        "frame-ancestors 'self';",
+    ].join(' ');
+}
 
 async function incrementUpstash(ip: string) {
     if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) return null;
@@ -23,13 +42,23 @@ async function incrementUpstash(ip: string) {
     return Number.isFinite(count) ? count : null;
 }
 
+function getClientIp(request: NextRequest): string {
+    const forwardedFor = request.headers.get('x-forwarded-for');
+    if (forwardedFor) {
+        const first = forwardedFor.split(',')[0]?.trim();
+        if (first) return first;
+    }
+
+    const realIp = request.headers.get('x-real-ip');
+    if (realIp) return realIp;
+
+    return '0.0.0.0';
+}
+
 export async function middleware(request: NextRequest) {
     // Rate limit for /api routes
     if (request.nextUrl.pathname.startsWith('/api')) {
-        const forwardedFor = request.headers.get('x-forwarded-for');
-        const forwardedIp = forwardedFor ? forwardedFor.split(',')[0]?.trim() : null;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const ip = forwardedIp || (request as any).ip || '0.0.0.0';
+        const ip = getClientIp(request);
         let count: number | null = null;
         const now = Date.now();
 
@@ -77,7 +106,7 @@ export async function middleware(request: NextRequest) {
         // Security: Add CSP header
         response.headers.set(
             'Content-Security-Policy',
-            "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.deriv.com https://*.derivws.com https://*.supabase.co wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com wss://*.supabase.co; frame-ancestors 'self';"
+            buildCspHeaderValue()
         );
         return response;
     }
@@ -86,7 +115,7 @@ export async function middleware(request: NextRequest) {
     // Security: Add CSP header for non-API routes too
     response.headers.set(
         'Content-Security-Policy',
-        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.deriv.com https://*.derivws.com https://*.supabase.co wss://*.deriv.com wss://*.derivws.com wss://*.binaryws.com wss://*.supabase.co; frame-ancestors 'self';"
+        buildCspHeaderValue()
     );
     return response;
 }

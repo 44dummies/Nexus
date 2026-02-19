@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     const botRunsUrl = new URL('/api/bot-runs', backendBaseUrl);
     botRunsUrl.search = request.nextUrl.search;
     const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
+    const authorization = request.headers.get('authorization');
 
     try {
         const backendResponse = await fetch(botRunsUrl, {
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest) {
             headers: {
                 cookie: request.headers.get('cookie') || '',
                 ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
+                ...(authorization ? { authorization } : {}),
             },
             cache: 'no-store',
         });
@@ -74,6 +76,7 @@ export async function POST(request: NextRequest) {
 
     const botRunsUrl = new URL('/api/bot-runs', backendBaseUrl);
     const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
+    const authorization = request.headers.get('authorization');
 
     try {
         const body = await request.text();
@@ -83,6 +86,7 @@ export async function POST(request: NextRequest) {
                 cookie: request.headers.get('cookie') || '',
                 'Content-Type': 'application/json',
                 ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
+                ...(authorization ? { authorization } : {}),
             },
             body,
             cache: 'no-store',

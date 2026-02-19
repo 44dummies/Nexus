@@ -3,6 +3,7 @@ import { cookies } from 'next/headers';
 import crypto from 'crypto';
 
 export const runtime = 'nodejs';
+const LEGACY_API_ENABLED = process.env.ENABLE_LEGACY_NEXT_API === 'true';
 
 function buildCookieOptions() {
     return {
@@ -15,6 +16,10 @@ function buildCookieOptions() {
 }
 
 export async function POST() {
+    if (!LEGACY_API_ENABLED) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const appId = process.env.NEXT_PUBLIC_DERIV_APP_ID?.trim();
     if (!appId) {
         return NextResponse.json({ error: 'Missing Deriv app id' }, { status: 500 });

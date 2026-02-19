@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import Redis from 'ioredis';
 import { redisClient as defaultRedisClient } from './redis';
 import { randomUUID } from 'crypto';
+import logger from './logger';
 
 /**
  * Validated distributed rate limiting middleware with fallback
@@ -124,7 +125,7 @@ export function createRateLimit(options: RateLimitOptions = {}) {
                 return next();
             }
         } catch (error) {
-            console.warn('Redis rate limit error, falling back to in-memory', error);
+            logger.warn({ error }, 'Redis rate limit error, falling back to in-memory');
             // Fallthrough to in-memory on error
         }
 

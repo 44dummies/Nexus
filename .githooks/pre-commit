@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+echo "[pre-commit] running local secret checks"
+node scripts/check-secrets.js
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-commit] running gitleaks staged scan"
+  gitleaks protect --staged --redact --verbose
+else
+  echo "[pre-commit] gitleaks not found; install gitleaks for staged secret scanning"
+fi

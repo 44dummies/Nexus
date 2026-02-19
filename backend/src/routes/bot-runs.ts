@@ -196,7 +196,7 @@ router.post('/', async (req, res) => {
             // We should auto-resolve this by marking the old run as stopped.
 
             const zombieRunId = existingRuns[0].id;
-            console.warn(`Found zombie backend bot run ${zombieRunId}. Marking as stopped.`);
+            botLogger.warn({ zombieRunId }, 'Found zombie backend bot run. Marking as stopped.');
 
             const { error: stopError } = await supabaseClient
                 .from('bot_runs')

@@ -663,6 +663,17 @@ function handleTickForRun(botRun: ActiveBotRun, tick: TickData): void {
     const effectiveCooldownMs = smartCycle?.decision.params.cooldownMs ?? config.cooldownMs;
     const now = Date.now();
     if (botRun.lastTradeAt && now - botRun.lastTradeAt < effectiveCooldownMs) {
+        // Emit cooldown state to SSE so frontend can display it
+        const cooldownUntil = botRun.lastTradeAt + effectiveCooldownMs;
+        botEvents.emit('event', {
+            type: 'cooldown',
+            botRunId: botRun.id,
+            data: {
+                cooldownUntil,
+                cooldownMs: effectiveCooldownMs,
+                remainingMs: cooldownUntil - now,
+            },
+        });
         return;
     }
 

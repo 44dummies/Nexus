@@ -73,6 +73,7 @@ interface TradingState {
     lastTradeProfit: number | null;
     activeRunId: string | null;
     lastTradeTime: number | null;
+    cooldownUntil: number | null;
     currentContractId: number | null;
     potentialProfit: number | null;
     tradeResults: TradeResultEntry[];
@@ -136,6 +137,7 @@ interface TradingState {
     setEntryConfig: (config: Partial<Pick<TradingState, 'entryProfileId' | 'entryMode' | 'entryTimeoutMs' | 'entryPollingMs' | 'entrySlippagePct' | 'entryAggressiveness' | 'entryMinEdgePct'>>) => void;
     setBotConfig: (config: Partial<Pick<TradingState, 'baseStake' | 'maxStake' | 'stopLoss' | 'takeProfit' | 'cooldownMs' | 'baseRiskPct' | 'dailyLossLimitPct' | 'drawdownLimitPct' | 'maxConsecutiveLosses' | 'lossCooldownMs'>>) => void;
     setLastTradeTime: (timestamp: number | null) => void;
+    setCooldownUntil: (until: number | null) => void;
     setTradeInfo: (contractId: number | null, potentialProfit: number | null) => void;
     recordTradeResult: (result: { profit: number; contractId?: number }) => void;
     resetDailyStats: () => void;
@@ -271,6 +273,7 @@ export const useTradingStore = create<TradingState>()(
             lastTradeProfit: null,
             activeRunId: null,
             lastTradeTime: null,
+            cooldownUntil: null,
             currentContractId: null,
             potentialProfit: null,
             tradeResults: [],
@@ -453,6 +456,7 @@ export const useTradingStore = create<TradingState>()(
                 })),
 
             setLastTradeTime: (timestamp) => set({ lastTradeTime: timestamp }),
+            setCooldownUntil: (until) => set({ cooldownUntil: until }),
 
             setTradeInfo: (contractId, potentialProfit) =>
                 set({ currentContractId: contractId, potentialProfit }),

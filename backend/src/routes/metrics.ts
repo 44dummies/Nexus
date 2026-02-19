@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import { metrics } from '../lib/metrics';
 import { getCircuitState, resetCircuitBreaker } from '../lib/executionCircuitBreaker';
 
@@ -6,10 +7,15 @@ const router = Router();
 
 const ADMIN_SECRET = process.env.ADMIN_SECRET;
 
+function timingSafeCompare(a: string, b: string): boolean {
+    const aHash = crypto.createHash('sha256').update(a).digest();
+    const bHash = crypto.createHash('sha256').update(b).digest();
+    return crypto.timingSafeEqual(aHash, bHash);
+}
+
 router.use((req, res, next) => {
-    // Determine if admin
     const authHeader = req.headers['x-admin-token'];
-    if (ADMIN_SECRET && authHeader === ADMIN_SECRET) {
+    if (ADMIN_SECRET && typeof authHeader === 'string' && timingSafeCompare(authHeader, ADMIN_SECRET)) {
         return next();
     }
 

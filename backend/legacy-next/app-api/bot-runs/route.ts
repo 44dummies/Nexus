@@ -3,8 +3,13 @@ import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
 import { getActiveAccountId } from '@/lib/server/requestUtils';
 
 export const runtime = 'nodejs';
+const LEGACY_API_ENABLED = process.env.ENABLE_LEGACY_NEXT_API === 'true';
 
 export async function POST(request: Request) {
+    if (!LEGACY_API_ENABLED) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const { client: supabaseAdmin, error: configError, missing } = getSupabaseAdmin();
     if (!supabaseAdmin) {
         return NextResponse.json({ error: configError || 'Supabase not configured', missing }, { status: 503 });

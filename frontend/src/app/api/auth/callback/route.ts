@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
     const callbackUrl = new URL('/api/auth/callback', backendBaseUrl);
     callbackUrl.search = request.nextUrl.search;
     const correlationId = request.headers.get('x-correlation-id') || request.headers.get('x-request-id');
+    const authorization = request.headers.get('authorization');
 
     try {
         const backendResponse = await fetch(callbackUrl, {
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
             headers: {
                 cookie: request.headers.get('cookie') || '',
                 ...(correlationId ? { 'x-correlation-id': correlationId } : {}),
+                ...(authorization ? { authorization } : {}),
             },
             cache: 'no-store',
         });

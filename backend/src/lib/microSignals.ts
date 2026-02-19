@@ -1,4 +1,4 @@
-import type { TradeSignal } from './strategyEngine';
+import type { TradeSignal } from './strategyTypes';
 
 export interface MicrostructureContext {
     imbalance: number | null;

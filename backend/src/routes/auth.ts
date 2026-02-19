@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
-import type { Request, Response } from 'express';
+import type { Request, Response, RequestHandler } from 'express';
 import { authorizeTokenCached } from '../lib/deriv';
 import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 import { buildCookieOptions, buildStateCookieOptions, buildClearCookieOptions } from '../lib/requestUtils';
@@ -10,6 +10,7 @@ import { warmRiskCache } from '../lib/riskCache';
 import { authLogger } from '../lib/logger';
 
 const router = Router();
+const authRateLimitMiddleware: RequestHandler = authRateLimit;
 
 const { client: supabaseAdmin } = getSupabaseAdmin();
 
@@ -143,7 +144,35 @@ const resolveDevRedirect = (req: Request) => {
     return `${fallbackBase}/dashboard`;
 };
 
-router.post('/start', authRateLimit as any, async (_req, res) => {
+const extractBearerToken = (authorizationHeader: string | undefined): string | null => {
+    if (!authorizationHeader) return null;
+    const [scheme, ...rest] = authorizationHeader.trim().split(/\s+/);
+    if (!scheme || scheme.toLowerCase() !== 'bearer') return null;
+    const token = rest.join(' ').trim();
+    return token || null;
+};
+
+const resolveAuthorizedAccountType = (
+    authorize: { loginid?: string; account_list?: Array<{ loginid: string; is_virtual: number | boolean }> } | null,
+    fallbackType: 'real' | 'demo'
+): 'real' | 'demo' => {
+    const loginId = authorize?.loginid;
+    if (loginId && Array.isArray(authorize?.account_list)) {
+        const match = authorize.account_list.find((acct) => acct.loginid === loginId);
+        if (match) {
+            return match.is_virtual ? 'demo' : 'real';
+        }
+    }
+    return fallbackType;
+};
+
+const isValidOAuthState = (provided: string | null, stored: string | undefined): boolean => {
+    if (!provided || !stored) return false;
+    if (provided.length !== stored.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(stored));
+};
+
+router.post('/start', authRateLimitMiddleware, async (_req, res) => {
     const appId = (process.env.DERIV_APP_ID || process.env.NEXT_PUBLIC_DERIV_APP_ID || '').trim();
     if (!appId) {
         return res.status(500).json({ error: 'Missing Deriv app id' });
@@ -165,7 +194,7 @@ router.post('/start', authRateLimit as any, async (_req, res) => {
     return res.json({ url: url.toString() });
 });
 
-router.get('/dev-session', authRateLimit as any, async (req, res) => {
+router.get('/dev-session', authRateLimitMiddleware, async (req, res) => {
     if (process.env.NODE_ENV === 'production') {
         return res.status(404).json({ error: 'Not found' });
     }
@@ -215,7 +244,7 @@ router.get('/dev-session', authRateLimit as any, async (req, res) => {
     }
 });
 
-router.get('/callback', authRateLimit as any, async (req, res) => {
+router.get('/callback', authRateLimitMiddleware, async (req, res) => {
     const searchParams = req.query;
     const stateParam = typeof searchParams.state === 'string' ? searchParams.state : null;
     const stateCookie = req.cookies?.deriv_oauth_state;
@@ -234,7 +263,7 @@ router.get('/callback', authRateLimit as any, async (req, res) => {
     }
 
     // SECURITY: State param must match state cookie
-    if (stateParam !== stateCookie) {
+    if (!isValidOAuthState(stateParam, stateCookie)) {
         res.cookie('deriv_oauth_state', '', buildClearCookieOptions());
         return res.status(400).json({ error: 'Invalid OAuth state' });
     }
@@ -307,11 +336,13 @@ router.get('/session', async (req, res) => {
     const demoCurrency = req.cookies?.deriv_demo_currency;
 
     const activeTypeCookie = req.cookies?.deriv_active_type as 'real' | 'demo' | undefined;
-    const activeAccountCookie = req.cookies?.deriv_active_account || null;
     const activeCurrencyCookie = req.cookies?.deriv_active_currency || null;
+    const bearerToken = extractBearerToken(req.get('authorization') || undefined);
+    const usingBearerToken = Boolean(bearerToken);
 
-    const activeType = activeTypeCookie || (demoToken ? 'demo' : 'real');
-    const activeToken = activeType === 'demo' ? demoToken : token;
+    const cookieInferredType: 'real' | 'demo' = activeTypeCookie || (demoToken ? 'demo' : 'real');
+    const activeType = cookieInferredType;
+    const activeToken = bearerToken || (activeType === 'demo' ? demoToken : token);
 
     if (!activeToken) {
         clearAuthCookies(res);
@@ -327,6 +358,7 @@ router.get('/session', async (req, res) => {
         })) || [];
 
         const derivedActiveAccount = authorize?.loginid || null;
+        const derivedActiveType = resolveAuthorizedAccountType(authorize ?? null, activeType);
 
         const derivedActiveCurrency = authorize?.currency
             || activeCurrencyCookie
@@ -357,13 +389,13 @@ router.get('/session', async (req, res) => {
             authenticated: true,
             email: authorize?.email || null,
             balance: Number.isFinite(balance as number) ? balance : null,
-            account,
-            currency,
+            account: account || derivedActiveAccount,
+            currency: currency || derivedActiveCurrency,
             demoAccount,
             demoCurrency,
             accounts: accountList,
             activeAccountId: derivedActiveAccount,
-            activeAccountType: activeType,
+            activeAccountType: derivedActiveType,
             activeCurrency: derivedActiveCurrency,
         });
     } catch (error) {
@@ -371,7 +403,7 @@ router.get('/session', async (req, res) => {
         const code = err.code;
 
         // Only clear cookies if the token is definitely invalid
-        if (code === 'InvalidToken' || err.message.includes('InvalidToken')) {
+        if (!usingBearerToken && (code === 'InvalidToken' || err.message.includes('InvalidToken'))) {
             clearAuthCookies(res);
             return res.status(401).json({ authenticated: false, error: err.message, code: 'InvalidToken' });
         }
@@ -398,7 +430,7 @@ router.get('/session', async (req, res) => {
     }
 });
 
-router.post('/session', authRateLimit as any, async (req, res) => {
+router.post('/session', authRateLimitMiddleware, async (req, res) => {
     const action = typeof req.body?.action === 'string' ? req.body.action : '';
 
     if (action === 'logout') {

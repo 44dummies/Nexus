@@ -7,6 +7,8 @@
 
 import type { PriceSeries } from './ringBuffer';
 import { evaluateMicrostructureSignals, type MicrostructureContext } from './microSignals';
+import type { TradeSignal } from './strategyTypes';
+export type { TradeSignal } from './strategyTypes';
 
 // ==================== INDICATORS ====================
 
@@ -92,8 +94,6 @@ export function calculateATR(prices: PriceSeries, period: number): number | null
 }
 
 // ==================== STRATEGY TYPES ====================
-
-export type TradeSignal = 'CALL' | 'PUT';
 
 export interface StrategyConfig {
     // RSI

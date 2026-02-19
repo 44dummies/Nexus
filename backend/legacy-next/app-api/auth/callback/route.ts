@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
 
 const SESSION_ENCRYPTION_KEY = process.env.SESSION_ENCRYPTION_KEY;
+const LEGACY_API_ENABLED = process.env.ENABLE_LEGACY_NEXT_API === 'true';
 
 const { client: supabaseAdmin } = getSupabaseAdmin();
 
@@ -22,6 +23,12 @@ const buildStateClearOptions = () => ({
     path: '/',
     sameSite: 'strict' as const,
 });
+
+const isValidOAuthState = (provided: string | null, stored: string | undefined): boolean => {
+    if (!provided || !stored) return false;
+    if (provided.length !== stored.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(stored));
+};
 
 const encryptToken = (token: string) => {
     if (!SESSION_ENCRYPTION_KEY) return null;
@@ -67,6 +74,10 @@ const persistAccount = async (payload: { accountId: string; accountType: 'real' 
 };
 
 export async function GET(request: NextRequest) {
+    if (!LEGACY_API_ENABLED) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const cookieStore = await cookies();
     const stateParam = searchParams.get('state');
@@ -84,14 +95,16 @@ export async function GET(request: NextRequest) {
     const acct2 = searchParams.get('acct2');
     const cur2 = searchParams.get('cur2');
 
-    if ((stateParam || stateCookie) && stateParam !== stateCookie) {
+    if (!stateCookie) {
+        return NextResponse.json({ error: 'Missing OAuth state cookie' }, { status: 400 });
+    }
+
+    if (!isValidOAuthState(stateParam, stateCookie)) {
         cookieStore.set('deriv_oauth_state', '', buildStateClearOptions());
         return NextResponse.json({ error: 'Invalid OAuth state' }, { status: 400 });
     }
 
-    if (stateCookie) {
-        cookieStore.set('deriv_oauth_state', '', buildStateClearOptions());
-    }
+    cookieStore.set('deriv_oauth_state', '', buildStateClearOptions());
 
     if (!token1) {
         // Fallback: Check for authorization code (Code flow)

@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { getSupabaseAdmin } from '@/lib/server/supabaseAdmin';
 
 export const runtime = 'nodejs';
+const LEGACY_API_ENABLED = process.env.ENABLE_LEGACY_NEXT_API === 'true';
 
 const APP_ID = process.env.NEXT_PUBLIC_DERIV_APP_ID || '1089';
 const AUTH_CACHE_TTL_MS = 30_000;
@@ -156,6 +157,10 @@ function clearAuthCookies(cookieStore: CookieStore) {
 }
 
 export async function GET(request: NextRequest) {
+    if (!LEGACY_API_ENABLED) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const cookieStore = await cookies();
 
     const token = cookieStore.get('deriv_token')?.value;
@@ -234,6 +239,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: Request) {
+    if (!LEGACY_API_ENABLED) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    }
+
     const cookieStore = await cookies();
     const body = await request.json().catch(() => ({}));
     const action = typeof body.action === 'string' ? body.action : '';

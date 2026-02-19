@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { motion, useReducedMotion, useInView } from 'framer-motion';
 import {
@@ -64,10 +64,40 @@ const stats = [
 export default function LandingPage() {
   const shouldReduceMotion = useReducedMotion();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [enableBackgroundFx, setEnableBackgroundFx] = useState(false);
   const featuresRef = useRef<HTMLDivElement>(null);
   const featuresInView = useInView(featuresRef, { once: true, margin: '-80px' });
   const statsRef = useRef<HTMLDivElement>(null);
   const statsInView = useInView(statsRef, { once: true, margin: '-60px' });
+
+  useEffect(() => {
+    if (shouldReduceMotion) {
+      setEnableBackgroundFx(false);
+      return;
+    }
+
+    let enabled = false;
+    const enable = () => {
+      if (enabled) return;
+      enabled = true;
+      setEnableBackgroundFx(true);
+      window.removeEventListener('pointerdown', enable);
+      window.removeEventListener('keydown', enable);
+      window.removeEventListener('scroll', enable);
+    };
+
+    const idleTimer = window.setTimeout(enable, 1200);
+    window.addEventListener('pointerdown', enable, { passive: true, once: true });
+    window.addEventListener('keydown', enable, { once: true });
+    window.addEventListener('scroll', enable, { passive: true, once: true });
+
+    return () => {
+      window.clearTimeout(idleTimer);
+      window.removeEventListener('pointerdown', enable);
+      window.removeEventListener('keydown', enable);
+      window.removeEventListener('scroll', enable);
+    };
+  }, [shouldReduceMotion]);
 
   const handleLogin = async () => {
     if (isSubmitting) return;
@@ -106,24 +136,26 @@ export default function LandingPage() {
       <div className="relative min-h-screen bg-[#08090d] text-[#c9d1d9] overflow-x-hidden">
         {/* ── Background ── */}
         <div className="fixed inset-0 z-0" style={{ width: '100%', height: '100%' }}>
-          <LiquidEther
-            colors={['#5227FF', '#FF9FFC', '#B19EEF']}
-            mouseForce={20}
-            cursorSize={100}
-            isViscous
-            viscous={30}
-            iterationsViscous={32}
-            iterationsPoisson={32}
-            resolution={0.5}
-            isBounce={false}
-            autoDemo
-            autoSpeed={0.5}
-            autoIntensity={2.2}
-            takeoverDuration={0.25}
-            autoResumeDelay={3000}
-            autoRampDuration={0.6}
-            className="pointer-events-auto"
-          />
+          {enableBackgroundFx ? (
+            <LiquidEther
+              colors={['#5227FF', '#FF9FFC', '#B19EEF']}
+              mouseForce={14}
+              cursorSize={96}
+              isViscous
+              viscous={20}
+              iterationsViscous={16}
+              iterationsPoisson={16}
+              resolution={0.35}
+              isBounce={false}
+              autoDemo
+              autoSpeed={0.45}
+              autoIntensity={1.8}
+              takeoverDuration={0.25}
+              autoResumeDelay={3000}
+              autoRampDuration={0.6}
+              className="pointer-events-auto"
+            />
+          ) : null}
         </div>
 
         {/* Dark overlay gradient so text reads clearly */}
